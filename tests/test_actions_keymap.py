@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from fnd import os_labels
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.actions import (
@@ -54,6 +55,22 @@ def test_default_keymap_includes_every_action_with_default_key() -> None:
             # land in the keymap (see load_keymap — one action, multiple keys).
             for key in (k.strip() for k in a.default_key.split(",")):
                 assert km.bindings.get(key) == a.id, f"action {a.id} default key {key!r} missing"
+
+
+@pytest.mark.parametrize("mac", [True, False])
+def test_open_answers_only_to_chords(monkeypatch: pytest.MonkeyPatch, mac: bool) -> None:
+    """No key a layout types bare opens a file: Option+O's `ø` is Danish and Norwegian's own."""
+    monkeypatch.setattr(os_labels, "is_macos", lambda: mac)
+    bindings = load_keymap(path=Path("/nonexistent")).bindings
+    assert sorted(k for k, a in bindings.items() if a == "open_at_locator") == ["alt+o", "ctrl+o"]
+
+
+def test_the_help_lists_both_open_chords() -> None:
+    from fnd.tui.menu import _pretty_key
+
+    action = next(a for a in REGISTRY if a.id == "open_at_locator")
+    assert action.default_key is not None
+    assert _pretty_key(action.default_key).endswith("+O / Ctrl+O")
 
 
 def test_user_overrides_replace_default(tmp_path: Path) -> None:

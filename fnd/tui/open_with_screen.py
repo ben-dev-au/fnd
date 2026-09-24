@@ -6,14 +6,14 @@ list of "<key>  <marker> <name>" rows:
 
 * Arrow / j / k move the cursor.
 * Enter fires the cursor's app.
-* The resolved default (what `o` would fire) starts under the cursor
+* The resolved default (what Open would fire) starts under the cursor
   and is marked with ★.
 * Letter shortcuts (first unique letter of the display name) fire any
   row directly without moving the cursor.
 * Esc dismisses.
 
 No descriptions, hierarchy explainers, or app notes live here —
-that's settings territory. Resolution itself is exactly what `o` uses;
+that's settings territory. Resolution itself is exactly what Open uses;
 see ``[app_defaults]`` in config.toml for the rules.
 """
 
@@ -212,7 +212,7 @@ class OpenWithScreen(ModalScreen[str | None]):
     def on_mount(self) -> None:
         lst = self.query_one("#open_with_list", OptionList)
         # Park the cursor on the resolved default so Enter does the
-        # same thing as `o` would. Walks the populated option list
+        # same thing as Open would. Walks the populated option list
         # because OptionList doesn't expose a "highlight by id" API.
         if self._default_id:
             for idx, opt in enumerate(lst.options):

@@ -32,7 +32,7 @@ async def test_pressing_key_in_keybindings_invokes_action(built_index: Path) -> 
         assert isinstance(screen, SettingsScreen)
         # Focus the list (not the search input).
         screen.query_one(SettingsList).focus()
-        # Press `o` — should run action_open_at_locator and close menu.
+        # Press `o`: runs action_focus_outline_panel and closes the menu.
         await pilot.press("o")
         await pilot.pause()
         assert not isinstance(app.screen, SettingsScreen)
@@ -111,3 +111,139 @@ async def test_drill_mode_always_ellipsis(
         preferences = next(it for it in lst._items if it.label == "Preferences")
         # In always_ellipsis mode the trailing value is `…`.
         assert preferences.trailing_value(app) == "…"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chord", ["alt+o", "ctrl+o"])
+async def test_every_chord_a_row_lists_invokes_it(built_index: Path, chord: str) -> None:
+    """A row listing several chords ("⌥+O / Ctrl+O") runs on any of them."""
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one(SettingsList).focus()
+        invoked: list[str] = []
+        app.action_open_at_locator = lambda: invoked.append(chord)  # type: ignore[method-assign]
+        await pilot.press(chord)
+        await pilot.pause()
+        assert not isinstance(app.screen, SettingsScreen)
+        assert invoked == [chord]
+
+
+@pytest.mark.asyncio
+async def test_right_moves_around_the_sheet_and_invokes_nothing(built_index: Path) -> None:
+    """Right is bound in the app (expand), but on the sheet it only moves."""
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one(SettingsList).focus()
+        await pilot.press("right")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsScreen)
+
+
+@pytest.mark.asyncio
+async def test_a_sheet_key_the_user_rebound_still_moves_around_the_sheet(
+    built_index: Path,
+) -> None:
+    """A user binding on `j` runs in the app, but `j` still moves the sheet."""
+    from fnd.tui.actions import load_keymap
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    keymap = load_keymap(built_index / "no-such-keybindings.toml")
+    keymap.bindings["j"] = "nav_next_match"
+    app = FNDApp(index_dir=built_index, keymap=keymap)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        sheet = screen.query_one(SettingsList)
+        sheet.focus()
+        before = sheet.cursor_index
+        await pilot.press("j")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsScreen)
+        assert sheet.cursor_index == before + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chord", "action"),
+    [("O", "open_with_menu"), ("R", "reveal_in_file_manager"), ("o", "focus_outline_panel")],
+)
+async def test_a_capital_runs_its_own_row_not_the_lower_case_one(
+    built_index: Path, chord: str, action: str
+) -> None:
+    """Shift+O runs Open with, not the Outline row that `o` runs."""
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one(SettingsList).focus()
+        invoked: list[str] = []
+        for name in ("open_with_menu", "reveal_in_file_manager", "focus_outline_panel"):
+            setattr(app, f"action_{name}", lambda name=name: invoked.append(name))
+        await pilot.press(chord)
+        await pilot.pause()
+        assert invoked == [action]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["x", "Q", "N"])
+async def test_a_key_the_app_does_not_bind_runs_nothing(built_index: Path, key: str) -> None:
+    """Only what a key runs in the app runs here: never a row of another case."""
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one(SettingsList).focus()
+        await pilot.press(key)
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsScreen)
+
+
+@pytest.mark.asyncio
+async def test_page_down_pages_the_sheet_even_when_the_user_bound_it(built_index: Path) -> None:
+    """PageDown moves the sheet; a user binding on it runs only in the app."""
+    from fnd.tui.actions import load_keymap
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    keymap = load_keymap(built_index / "no-such-keybindings.toml")
+    keymap.bindings["pagedown"] = "nav_next_match"
+    app = FNDApp(index_dir=built_index, keymap=keymap)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        sheet = screen.query_one(SettingsList)
+        sheet.focus()
+        before = sheet.cursor_index
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsScreen)
+        assert sheet.cursor_index > before + 1, "PageDown moved less than a page"

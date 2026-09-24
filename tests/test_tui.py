@@ -85,7 +85,7 @@ async def test_o_key_opens_at_locator_on_focused_section(
     built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Enter does not open externally; only the explicit
-    `o` key (action_open_at_locator) does."""
+    Open chord (action_open_at_locator) does."""
     calls: list[dict[str, Any]] = []
 
     def fake_open_smart(*, path: Path, kind: str, page: int = 0, **_kw: Any) -> int:
@@ -112,10 +112,10 @@ async def test_o_key_opens_at_locator_on_focused_section(
         await pilot.pause()
         assert not calls, f"Enter should not call open_smart; got {calls}"
 
-        # Now `o` triggers action_open_at_locator → open_smart.
+        # Now Open triggers action_open_at_locator → open_smart.
         app.action_open_at_locator()
         await pilot.pause()
-        assert calls, "expected open_smart to be called via `o`"
+        assert calls, "expected open_smart to be called via Open"
         assert calls[-1]["kind"] == "pdf"
         assert calls[-1]["page"] == 7
         assert calls[-1]["path"].endswith("test.pdf")

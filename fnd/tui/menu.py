@@ -431,7 +431,7 @@ _KEYS_OPEN_WITH: tuple[tuple[str, str, str, str], ...] = (
         "Enter",
         "Open with default",
         "",
-        "Fire the highlighted (★) app: the one the resolver would have used for `o`. ★ shows which app fnd thinks is best for this hit.",
+        "Fire the highlighted (★) app: the one Open ({alt_key}+O) would have used. ★ shows which app fnd thinks is best for this hit.",
     ),
     (
         "a-z",
@@ -575,12 +575,25 @@ def _keys_results_widget() -> tuple[tuple[str, str, str, str], ...]:
     )
 
 
+# Outline-pane widget bindings: Enter is the tree's own select, not a registry key.
+_KEYS_OUTLINE_WIDGET: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "Enter",
+        "Go to the heading",
+        "",
+        "Move the preview to the heading under the cursor, landing it where "
+        "matches land. The outline's highlight then follows you as you read.",
+    ),
+)
+
+
 # Mapping from an Action's primary context (first entry of
 # ``contexts``) to the section header it lands under in the
 # Keybindings screen. ``""`` (no contexts) → Global.
 _CONTEXT_TO_SECTION: dict[str, str] = {
     "": "Global",
     "results": "Results pane",
+    "outline": "Outline panel",
     "preview": "Preview pane",
     "filters": "Filters panel",
     "collections": "Collections panel",
@@ -662,7 +675,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     Single source of truth = ``fnd.tui.actions.REGISTRY``. Sub-sections:
 
     * Global — actions with no ``contexts`` constraint.
-    * Per-pane sections (Results / Preview / Query / Filters / Collections)
+    * Per-pane sections (Results / Outline / Preview / Query / Filters / Collections)
       — actions whose primary (first) context matches that pane.
     * Static sections — Settings menu, Source form, Open-with modal,
       Accessibility prompt. These live in widget BINDINGS, not the
@@ -677,6 +690,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     sections: dict[str, list[MenuItem]] = {
         "Global": [],
         "Results pane": [],
+        "Outline panel": [],
         "Preview pane": [],
         "Query input": [],
         "Filters panel": [],
@@ -705,6 +719,9 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     sections["Results pane"].extend(
         _key_row(*row, section="results_widget") for row in _keys_results_widget()
     )
+    sections["Outline panel"][:0] = [
+        _key_row(*row, section="outline_widget") for row in _KEYS_OUTLINE_WIDGET
+    ]
 
     # Static widget bindings — append AFTER the registry-derived
     # sections in declaration order; reordering happens below.
@@ -1202,7 +1219,7 @@ def _choices_apps_for_kind(app: FNDApp, kind: str) -> list[ChoiceOption]:
         if not app_def.available():
             continue
         # `reveal` acts on the file without opening it — offering it here would
-        # let a default silently stop `o` from opening this kind. It stays in
+        # let a default silently stop Open from opening this kind. It stays in
         # the Open-with picker, which is a one-shot choice.
         if not app_def.selectable_default:
             continue

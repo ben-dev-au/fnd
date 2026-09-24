@@ -358,6 +358,18 @@ class LineBufferPreview(StripDocumentView):
         y = max(0, min(int(self.scroll_offset.y), len(self._visual_to_logical) - 1))
         return self._visual_to_logical[y]
 
+    def chunk_row_at(self, row: int) -> tuple[int, int] | None:
+        """The chunk under viewport ``row``, and that row's offset from the
+        chunk's first visual row."""
+        fv = self._fv
+        if fv is None or not self._visual_to_logical or not fv.line_to_chunk:
+            return None
+        y = max(0, min(int(self.scroll_offset.y) + row, len(self._visual_to_logical) - 1))
+        logical = min(self._visual_to_logical[y], len(fv.line_to_chunk) - 1)
+        seq = fv.line_to_chunk[logical]
+        start = fv.chunk_to_range.get(seq, (logical, logical))[0]
+        return seq, y - self._logical_to_visual_y(start)
+
     # ── Public API ──────────────────────────────────────────────
 
     def set_file_view(

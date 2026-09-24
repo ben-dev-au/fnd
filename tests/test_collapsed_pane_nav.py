@@ -24,7 +24,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 async def _collapse_all(app: FNDApp) -> None:
-    for tid in ("results_pane", "collections_panel_tree", "filters_panel_tree"):
+    for tid in ("results_pane", "outline_pane", "collections_panel_tree", "filters_panel_tree"):
         app._panel_frame(app.query_one(f"#{tid}", Tree)).add_class("collapsed")
 
 
@@ -102,24 +102,25 @@ async def test_filters_pane_is_reachable_as_a_target(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_full_cycle_visits_every_panel_both_ways(built_index: Path) -> None:
-    """A full Up sweep and a full Down sweep each visit all three panels,
-    proving the filters pane is a first-class stop in the cycle."""
+    """A full Up sweep and a full Down sweep each visit all four panels,
+    proving the filters pane and the outline are first-class stops in the cycle."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         await _collapse_all(app)
         results = app.query_one("#results_pane", Tree)
+        outline = app.query_one("#outline_pane", Tree)
         collections = app.query_one("#collections_panel_tree", Tree)
         filters = app.query_one("#filters_panel_tree", Tree)
 
         filters.focus()
         await pilot.pause()
-        for expected in (collections, results, filters):  # Up = previous, wraps
+        for expected in (collections, outline, results, filters):  # Up = previous, wraps
             await pilot.press("up")
             await pilot.pause()
             assert app.focused is expected
 
-        for expected in (results, collections, filters):  # Down = next, wraps
+        for expected in (results, outline, collections, filters):  # Down = next, wraps
             await pilot.press("down")
             await pilot.pause()
             assert app.focused is expected

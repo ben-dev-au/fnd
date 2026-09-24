@@ -132,6 +132,7 @@ reference and exposes a plain public API.
 FNDApp
 ├── SearchController   fnd/tui/search_controller.py   query → results
 ├── ResultsView        fnd/tui/results_view.py        results tree rendering
+├── OutlineView        fnd/tui/outline_view.py        outline of the previewed document
 ├── ScopeController    fnd/tui/scope_panel.py         collections/sources/filters + persistence
 ├── IndexerService     fnd/tui/indexer_service.py     background reindex task + chains
 ├── PreviewPresenter   fnd/tui/preview/presenter.py   structural preview core
@@ -322,6 +323,7 @@ fnd/
 └── tui/
     ├── app.py          FNDApp composition root
     ├── search_controller.py, results_view.py, scope_panel.py, indexer_service.py
+    ├── outline_model.py, outline_view.py   the Outline pane: headings from decoded chunks
     ├── preview/        presenter, flat_view, prefetch, lazy_mount, tuning
     ├── preview_scroll.py, preview_scrollbar.py, line_buffer.py
     ├── widgets/        markdown, results_tree, preview_container, toggle_tree, …

@@ -21,6 +21,7 @@ an explicit size, so a chunk taller than the terminal captures in full.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from textual.events import Resize
 from textual.geometry import Size
@@ -29,8 +30,16 @@ from textual.strip import Strip
 from textual.widget import Widget
 
 from fnd.matching import MatchSpec
-from fnd.tui.preview.match_row import chunk_stop_rows, row_within, rows_to_first_match
+from fnd.tui.preview.match_row import (
+    chunk_stop_rows,
+    heading_rows,
+    row_within,
+    rows_to_first_match,
+)
 from fnd.tui.widgets.markdown import FNDMarkdown, paints_match
+
+if TYPE_CHECKING:
+    from textual._compositor import Compositor
 
 
 @dataclass(slots=True)
@@ -49,6 +58,9 @@ class FrozenChunk:
     first_match_row: int | None = None
     stop_rows: list[int] = field(default_factory=list)
     cell_rows: dict[tuple[int, int, int], int] = field(default_factory=dict)
+    # Row of each heading the chunk renders, in document order: an outline
+    # jump lands on one of these.
+    heading_rows: tuple[int, ...] = ()
     # What decides whether this capture can stand in under another query; see
     # `stands_in_for`. None when the capture did not come from a markdown build.
     source: str | None = None
@@ -145,6 +157,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     )
     comp = Compositor()
     comp.reflow(chunk, full)
+    headings = _captured_heading_rows(comp, chunk) if isinstance(chunk, FNDMarkdown) else ()
     frozen = FrozenChunk(
         chunk_seq=chunk_seq,
         width=full.width,
@@ -152,6 +165,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         first_match_row=first_match_row,
         stop_rows=stop_rows,
         cell_rows=cell_rows,
+        heading_rows=headings,
     )
     if isinstance(chunk, FNDMarkdown):
         frozen.source = chunk.source_text
@@ -159,6 +173,19 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         frozen.painted_match = chunk.painted_match
         frozen.style_key = style_key(chunk.app.theme, render_mermaid=chunk.render_mermaid)
     return frozen
+
+
+def _captured_heading_rows(comp: Compositor, chunk: Widget) -> tuple[int, ...]:
+    """Heading rows as the capture laid them out, so they index its strips."""
+    from textual.errors import NoWidget
+    from textual.widgets._markdown import MarkdownHeader
+
+    try:
+        return tuple(
+            comp.find_widget(h).region.y + h.styles.gutter.top for h in chunk.query(MarkdownHeader)
+        )
+    except NoWidget:
+        return heading_rows(chunk) or ()
 
 
 def style_key(theme: str, *, render_mermaid: bool) -> tuple[str, bool]:
@@ -240,6 +267,7 @@ class FrozenChunkView(Widget):
         self.styles.height = frozen.outer_height
         # Read by the scroll strategy in place of descending into a widget tree.
         self.fnd_first_match_row = frozen.first_match_row
+        self.fnd_heading_rows = frozen.heading_rows
         # Last width this view reported as stale, so a drag reports once per
         # column rather than once per resize event.
         self._reported_width: int = 0
@@ -254,6 +282,7 @@ class FrozenChunkView(Widget):
         self.frozen = frozen
         self.styles.height = frozen.outer_height
         self.fnd_first_match_row = frozen.first_match_row
+        self.fnd_heading_rows = frozen.heading_rows
         self._reported_width = frozen.width
         self.refresh(layout=True)
 

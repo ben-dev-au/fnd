@@ -39,7 +39,8 @@ class Action:
     # ``()`` (the default) means "always show". Otherwise, only show when
     # the app's focus context matches one of these values. Recognised
     # contexts: ``"query"`` (query input focused), ``"results"`` (results
-    # tree focused), ``"preview"`` (preview pane focused).
+    # tree focused), ``"preview"`` (preview pane focused), and the sidebar
+    # panels ``"outline"``, ``"collections"`` and ``"filters"``.
     contexts: tuple[str, ...] = ()
     # Priority bindings fire before any focused widget's own handlers —
     # required when the chosen key collides with a Textual widget
@@ -75,20 +76,21 @@ REGISTRY: tuple[Action, ...] = (
         default_key="left",
         command="collapse",
         footer_label="Collapse",
-        # All three sidebar trees: `_focused_tree` serves the filters panel too,
-        # and the help sheet lists an action under every context it names.
-        contexts=("results", "collections", "filters"),
+        # Every sidebar tree: `_focused_tree` serves them all, and the help
+        # sheet lists an action under every context it names.
+        contexts=("results", "outline", "collections", "filters"),
         show_in_footer=False,
     ),
     Action(
         id="tree_smart_expand",
         description="Expand the focused branch; if already expanded, move "
         "the cursor onto its first child. Right-arrow companion to the "
-        "smart-collapse action.",
+        "smart-collapse action. In the Outline, on an open heading or a leaf, "
+        "it moves into the preview at that heading.",
         default_key="right",
         command="expand",
         footer_label="Expand",
-        contexts=("results", "collections", "filters"),
+        contexts=("results", "outline", "collections", "filters"),
         show_in_footer=False,
     ),
     Action(
@@ -99,7 +101,7 @@ REGISTRY: tuple[Action, ...] = (
         default_key="ctrl+right,alt+right",
         command="expand-all",
         footer_label="Expand all",
-        contexts=("filters", "collections", "results"),
+        contexts=("filters", "collections", "results", "outline"),
         show_in_footer=False,
     ),
     Action(
@@ -120,15 +122,17 @@ REGISTRY: tuple[Action, ...] = (
         default_key="ctrl+left,alt+left",
         command="collapse-all",
         footer_label="Collapse children",
-        contexts=("filters", "collections", "results"),
+        contexts=("filters", "collections", "results", "outline"),
         show_in_footer=False,
     ),
     Action(
         id="open_at_locator",
         description="Open the focused result at its page / heading / line in "
         "the resolved app (per-source override → app_defaults → auto-promote "
-        "→ system).",
-        default_key="o",
+        "→ system). A chord, so a letter typed outside the query bar cannot "
+        f"launch an app. Ctrl+O works in every terminal; {os_labels.ALT_WORD}+O "
+        f"needs one whose {os_labels.ALT_WORD} key sends Meta.",
+        default_key="alt+o,ctrl+o",
         command="open",
         footer_label="Open",
         contexts=("results", "preview"),
@@ -144,7 +148,7 @@ REGISTRY: tuple[Action, ...] = (
         command="open-with",
         footer_label="Open with…",
         contexts=("results", "preview"),
-        show_in_footer=False,  # discoverable via `o` footer + help (`?`)
+        show_in_footer=False,  # discoverable via the Open footer hint + help (`?`)
     ),
     Action(
         id="open_default_app",
@@ -252,6 +256,15 @@ REGISTRY: tuple[Action, ...] = (
         command="clear-filters",
         footer_label="Clear filters",
         contexts=("results", "filters"),
+        show_in_footer=False,
+    ),
+    Action(
+        id="focus_outline_panel",
+        description="Focus the Outline panel: the headings of the document in "
+        "the preview. Enter jumps the preview to a heading.",
+        default_key="o",
+        command="outline",
+        footer_label="Outline",
         show_in_footer=False,
     ),
     Action(

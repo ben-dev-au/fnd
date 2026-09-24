@@ -366,7 +366,7 @@ class MatchAwareScroll(VerticalScroll):
     # ``scroll_left`` binding so a single Left exits the pane instead of
     # paging horizontally into empty space.
     BINDINGS = [  # noqa: RUF012 — Textual widget BINDINGS expects a class-level list
-        Binding("left", "bridge_left", "Focus results", show=False),
+        Binding("left", "bridge_left", "Back to the sidebar", show=False),
         # The footer advertises `j/k Scroll` here and the rest of the app speaks
         # vi keys (the settings list binds `up,k` / `down,j`), but Textual's
         # scroll view binds only the arrows.
@@ -620,10 +620,15 @@ class MatchAwareScroll(VerticalScroll):
             bar.set_match_lines(match_lines, total_lines)
 
     def action_bridge_left(self) -> None:
-        """Left-arrow: hand focus to the results tree, or fall back to
+        """Left-arrow: hand focus back to the sidebar pane the user came from
+        (the results tree unless the app says otherwise), or fall back to
         horizontal scroll when the pane actually has somewhere to go."""
         if self.scroll_x > 0:
             self.scroll_left()
+            return
+        leave = getattr(self.app, "action_leave_preview", None)
+        if callable(leave):
+            leave()
             return
         try:
             results = self.app.query_one("#results_pane")

@@ -403,6 +403,10 @@ class _FakeFlatBuffer:
     ) -> None:
         self.calls.append((chunk_id, prefer_first_match, context_fraction))
 
+    def address_of_chunk(self, chunk_id: int) -> int | None:
+        del chunk_id
+        return None
+
     # The strategy serves any StripDocumentView, so it addresses rows through
     # the shared vocabulary rather than the flat buffer's own aliases.
     def top_address(self) -> int | None:
@@ -880,3 +884,14 @@ def test_a_chunk_with_no_captured_row_keeps_the_chunk_top_landing() -> None:
 
     assert landing is not None
     assert landing.y == 40, "a match-free chunk was moved off its own top"
+
+
+def test_a_landing_is_read_only_for_the_navigation_that_made_it() -> None:
+    view = SimpleNamespace(scroll_to_chunk=lambda *_a, **_kw: 7, address_of_chunk=lambda _c: 5)
+    strat = FlatScrollStrategy(cast(FlatHost, SimpleNamespace(active_flat_buffer=lambda: view)))
+    c = PreviewScrollController(select_strategy=lambda: strat)
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=3))
+    c.reconcile()
+    assert c.landing_target() == (3, 2)
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=5))
+    assert c.landing_target() is None, "an earlier navigation's landing stood in"

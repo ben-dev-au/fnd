@@ -172,9 +172,9 @@ def test_that_guard_can_actually_fail() -> None:
     assert "t" not in _key_cells("Global"), "a cell, not a substring of Enter"
 
 
-def test_a_key_that_works_in_three_panes_is_listed_in_three() -> None:
+def test_a_key_that_works_in_every_tree_is_listed_in_each() -> None:
     """It worked in all three trees and was documented under one."""
-    for pane in ("Results pane", "Filters panel", "Collections panel"):
+    for pane in ("Results pane", "Outline panel", "Filters panel", "Collections panel"):
         labels = {label for _k, label, _d in _rows(pane)}
         assert "Expand" in labels, f"{pane} does not name the key that expands its rows"
         assert "Collapse" in labels, f"{pane} does not name the key that collapses them"

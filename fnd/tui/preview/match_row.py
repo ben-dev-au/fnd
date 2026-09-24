@@ -15,7 +15,7 @@ not it has been captured yet.
 from __future__ import annotations
 
 from bisect import bisect_right
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual.geometry import Region
 
@@ -184,6 +184,48 @@ def rows_to_matches(block: Widget, spec: MatchSpec | None = None) -> list[int]:
     cannot be established, the same safe anchor :func:`rows_to_first_match`
     falls back to."""
     return _match_rows(block, spec) or [0]
+
+
+def layout_offset(widget: Widget, ancestor: Widget, *, into_ancestor: bool) -> int | None:
+    """``widget``'s top row below ``ancestor``'s, from layout positions alone.
+
+    Scroll-independent, unlike ``region``, which lags a scroll until the next
+    render. Each ``virtual_region`` is relative to its parent's content area, so
+    the parents' gutters are added; ``into_ancestor`` adds ``ancestor``'s too.
+    ``None`` while any link is not laid out.
+    """
+    from textual.widget import Widget
+
+    y = 0
+    node = widget
+    while node is not ancestor:
+        parent = node.parent
+        box = node.virtual_region
+        if box.height <= 0 or not isinstance(parent, Widget):
+            return None
+        y += box.y
+        if parent is not ancestor or into_ancestor:
+            y += parent.styles.gutter.top
+        node = parent
+    return y
+
+
+def heading_rows(chunk: Widget) -> tuple[int, ...] | None:
+    """Rows of the headings ``chunk`` renders, in document order, measured to
+    each heading's text. ``None`` while any of them is not laid out yet; a frozen
+    chunk answers from its capture."""
+    recorded = getattr(chunk, "fnd_heading_rows", None)
+    if isinstance(recorded, tuple):
+        return cast("tuple[int, ...]", recorded)
+    from textual.widgets._markdown import MarkdownHeader
+
+    rows: list[int] = []
+    for header in chunk.query(MarkdownHeader):
+        top = layout_offset(header, chunk, into_ancestor=True)
+        if top is None:
+            return None
+        rows.append(top + header.styles.gutter.top)
+    return tuple(rows)
 
 
 def row_within(widget: Widget, chunk: Widget) -> int | None:

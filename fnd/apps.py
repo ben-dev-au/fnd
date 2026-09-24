@@ -72,7 +72,7 @@ class App:
     notes: str = ""
     # False for entries that act on the file without opening it (``reveal``).
     # They belong in the Open-with picker but not in the default-app pickers —
-    # choosing one as a kind's default would stop `o` opening that kind at all.
+    # choosing one as a kind's default would stop Open opening that kind at all.
     selectable_default: bool = True
 
 
@@ -434,7 +434,7 @@ end run
 _AX_NOTICE: Final[str] = (
     "Preview page-jump needs macOS Accessibility access. "
     "Grant it in System Settings → Privacy & Security → Accessibility for the app "
-    "you launched fnd from, then press `o` again. "
+    "you launched fnd from, then open the file again. "
     "Falling back to opening the PDF on page 1 for this hit."
 )
 

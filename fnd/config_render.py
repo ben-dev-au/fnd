@@ -360,8 +360,9 @@ def render_config(config: Config, *, preserved: str = "", version: int | None = 
 
     lines += _divider("Apps")
     lines += _comment(
-        "Which app opens a file with the `o` shortcut. Resolved in order: a "
-        "source's app_for[kind]; that source's app; app_defaults below; the "
+        "Which app opens a file with the Open shortcut (Option or Alt+O, or "
+        "Ctrl+O). Resolved in order: a source's app_for[kind]; that source's "
+        "app; app_defaults below; the "
         "built-in default for the type; then the system handler."
     )
     for name, app in config.apps.items():
