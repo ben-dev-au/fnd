@@ -148,6 +148,7 @@ def _following_app() -> tuple[_App, OutlineView, list[int | None]]:
         reading_position=lambda _f: (0 if scroller.scroll_offset.y < 60 else 1, 0),
         chunk_heading_rows=lambda _s: None,
         landing_target=lambda: None,
+        landing_destination=lambda: None,
         view_row=lambda _seq, _row: None,
     )
     view = OutlineView(app)  # type: ignore[arg-type]

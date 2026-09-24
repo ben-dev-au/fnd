@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.geometry import Offset
 from textual.widgets import DataTable
 
 from fnd.matching import MatchSpec
@@ -86,8 +87,9 @@ class _FakePane:
     def max_scroll_y(self) -> int:
         return 10**6
 
-    def scroll_to_region(self, region: object, **_kw: object) -> None:
+    def scroll_to_region(self, region: object, **_kw: object) -> Offset:
         self.captured = region
+        return Offset(0, 0)
 
 
 class _FakeHost:

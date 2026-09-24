@@ -218,8 +218,9 @@ class _FakePane:
         top: bool = False,
         animate: bool = True,
         immediate: bool = False,
-    ) -> None:
+    ) -> Offset:
         self.captured = region
+        return Offset(0, 0)
 
     def scroll_to(self, *, y: int, animate: bool = True, immediate: bool = False) -> None:
         self.scrolled_to_y = y
@@ -688,7 +689,7 @@ def test_structural_do_scroll_fires_on_done_even_if_scroll_raises() -> None:
             top: bool = False,
             animate: bool = True,
             immediate: bool = False,
-        ) -> None:
+        ) -> Offset:
             raise RuntimeError("scroll boom")
 
     target = _FakeWidget(Region(0, 50, 80, 10))

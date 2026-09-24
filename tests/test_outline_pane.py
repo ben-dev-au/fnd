@@ -351,6 +351,36 @@ async def test_a_jump_places_the_cursor_on_its_target_only(corpus: Path) -> None
         assert set(placed) == {"Troubleshooting"}, placed
 
 
+@pytest.mark.asyncio
+async def test_a_jump_whose_scroll_starts_late_still_places_only_its_target(
+    corpus: Path,
+) -> None:
+    """The glide is deferred to a later refresh; a slow one used to read the old spot."""
+    app = FNDApp(index_dir=corpus, initial_query=TERM)
+    async with app.run_test(size=(120, 45)) as pilot:
+        await _results_ready(pilot, app)
+        await _open(pilot, app, "guide.md")
+        pane = app.query_one("#preview_pane")
+        scroll_relative = pane.scroll_relative
+
+        def late(*args: Any, **kwargs: Any) -> None:
+            app.set_timer(0.6, lambda: scroll_relative(*args, **kwargs))
+
+        pane.scroll_relative = late  # type: ignore[method-assign]
+        placed: list[str | None] = []
+        original = app._outline._place
+
+        def spy(tree: Any, index: int | None) -> None:
+            placed.append(None if index is None else tree.outline.entries[index].title)
+            original(tree, index)
+
+        app._outline._place = spy  # type: ignore[method-assign]
+        await _jump(pilot, app, "Troubleshooting", key="right")
+        await wait_until(pilot, lambda: _followed(app), message="the landing was never sampled")
+        await _ticks(pilot, app, 5)
+        assert set(placed) == {"Troubleshooting"}, placed
+
+
 # ── where Enter sends the preview ────────────────────────────────────────
 
 
