@@ -121,3 +121,14 @@ def test_a_lone_strong_match_does_not_hide_the_other_spelling(one_strong: Path) 
     names = [Path(g.path).name for g in groups]
     assert names[0] == "joined.md", "the outright match must still lead"
     assert sum(n.startswith("hyphen") for n in names) == 3
+
+
+@pytest.mark.parametrize(
+    ("query", "literal"), [("dropdown", "dropdown"), ("drop-down", '"drop down"')]
+)
+def test_the_other_spelling_pass_leaves_the_literal_out(query: str, literal: str) -> None:
+    """Literal hits cannot crowd the other spelling out of its bounded pass."""
+    from fnd.fusion import auto_subqueries
+
+    (sub,) = [s for s in auto_subqueries(query, synonyms=None) if s.source == "compound"]
+    assert literal not in sub.query.split(" OR ")

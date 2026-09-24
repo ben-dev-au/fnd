@@ -263,9 +263,21 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # its own pass here too: the cascade's copy runs only when these find almost
     # nothing. Longer queries keep the cascade's: rewriting each word loosens them.
     if len(q.split()) == 1 and not carries_field_syntax and not carries_operator_syntax:
-        joined = expand(q, compound_table(q))
-        if joined != q:
-            subs.append(SubQuery(query=joined, weight=_DEFAULT_WEIGHTS["syn"], source="compound"))
+        # The other spellings only: with the literal in the disjunction, its hits
+        # can fill the pass's bounded result list and leave them no slot.
+        literal = q.replace("-", " ").lower()
+        others = [
+            f'"{m}"' if " " in m else m
+            for group in compound_table(q).groups
+            for m in group
+            if m.lower() != literal
+        ]
+        if others:
+            subs.append(
+                SubQuery(
+                    query=" OR ".join(others), weight=_DEFAULT_WEIGHTS["syn"], source="compound"
+                )
+            )
     return subs
 
 
