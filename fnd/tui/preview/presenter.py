@@ -1489,7 +1489,9 @@ class PreviewPresenter:
 
         This is the same guarantee ``_finalise_via_lock`` gets from its
         ``expected_above_seqs``; the difference is only that the scroll strategy
-        can't know the window, so it asks the presenter, which does.
+        can't know the window, so it asks the presenter, which does. The window
+        is the one the mount builds (:meth:`above_window_start`): chunks above it
+        arrive after the reveal, so waiting on them spends the whole retry budget.
         """
         container = self.active
         if container is None:
@@ -1500,7 +1502,8 @@ class PreviewPresenter:
         focus_idx = next((i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), None)
         if focus_idx is None:
             return False
-        for i in range(max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE), focus_idx):
+        start = self.above_window_start(chunks, focus_idx, self.preview_pane().size.height or 40)
+        for i in range(start, focus_idx):
             widget = container.chunk_widgets.get(chunks[i].chunk_seq)
             if widget is None:
                 return True
