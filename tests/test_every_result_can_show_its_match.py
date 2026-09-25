@@ -32,6 +32,8 @@ def index(tmp_path: Path, tmp_index_dir: Path) -> Path:
         "count": "Show `Customers.Count` in the card.",
         "found": "The page returns not found here.",
         "blocks": "Build the view\n\nModel binding follows.",
+        "hidden": "See [the docs](https://x.io/view.model) for more.",
+        "shown": "Bind [view.model](https://x.io/docs) first.",
         "drop": "A drop-down picks one.",
         "folder": "Put it in a folder.",
     }
@@ -113,3 +115,9 @@ def test_a_pair_that_is_not_a_credible_compound_paints_nothing(query: str, text:
 def test_a_compound_hit_nothing_can_show_is_not_returned(index: Path) -> None:
     """The split spelling "view model" matches across two blocks, which paints nothing."""
     assert not any(p.endswith("blocks") for p in _paths(index, "viewmodel"))
+
+
+def test_a_compound_only_in_a_link_destination_is_not_returned(index: Path) -> None:
+    paths = _paths(index, "viewmodel")
+    assert not any(p.endswith("hidden") for p in paths)
+    assert any(p.endswith("shown") for p in paths)

@@ -289,6 +289,10 @@ def _joined_runs(
 
 _JOINERS = frozenset({"-", "_", "."})
 
+#: Markdown the preview never shows: an inline link's destination and a
+#: reference definition line.
+_HIDDEN_LINK_RE = re.compile(r"\]\([^)\n]*\)|^ {0,3}\[[^\]\n]+\]:.*$", re.M)
+
 
 def keep_shown(hits: list[Hit], query: str) -> list[Hit]:
     """The hits whose visible text holds a match for ``query``: a split spelling
@@ -297,7 +301,11 @@ def keep_shown(hits: list[Hit], query: str) -> list[Hit]:
     from fnd.matching import MatchSpec
 
     spec = MatchSpec.from_query(query, auto_fuzzy=False)
-    return [h for h in hits if text_has_any_match(h.body_md or h.body_text, spec)]
+    return [
+        h
+        for h in hits
+        if text_has_any_match(_HIDDEN_LINK_RE.sub("]", h.body_md or h.body_text), spec)
+    ]
 
 
 def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
