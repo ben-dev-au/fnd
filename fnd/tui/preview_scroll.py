@@ -93,11 +93,13 @@ class ViewportLocation:
 @dataclass(frozen=True, slots=True)
 class Landing:
     """Where a strategy's last committed landing aimed, for ``anchor``:
-    ``row`` is the target's offset into the chunk, in that strategy's rows."""
+    ``row`` is the target's offset into the chunk, in that strategy's rows;
+    ``scroll_y`` the offset it scrolls to, when known (a glide starts later)."""
 
     anchor: ScrollAnchor
     chunk_seq: int
     row: int | None
+    scroll_y: int | None = None
 
 
 class ScrollStrategy(Protocol):
@@ -316,6 +318,14 @@ class PreviewScrollController:
             return probe(chunk_seq, row)
         except Exception:
             return None
+
+    def landing_destination(self) -> int | None:
+        """The scroll offset the current navigation's landing heads for, when
+        known; the view has not landed until it gets there."""
+        landing = getattr(self._select_strategy(), "landing", None)
+        if not isinstance(landing, Landing) or landing.anchor is not self._anchor:
+            return None
+        return landing.scroll_y
 
     def landing_target(self) -> tuple[int, int | None] | None:
         """The chunk the current navigation landed and its target's row in it
@@ -756,6 +766,7 @@ class StructuralScrollStrategy:
                 # for a table match, so the swap lands on the matched row too —
                 # not the table top. When there is no outgoing container this is a
                 # no-op and we scroll the already-visible pane normally.
+                landed_y: int | None = None
                 if self._host.swap_reveal_target(target, margin, anchor):
                     pass
                 else:
@@ -781,7 +792,9 @@ class StructuralScrollStrategy:
                             f"vsize_h={pane.virtual_size.height}"
                         )
                     else:
-                        self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
+                        landed_y = self._scroll_pane_to_match_region(
+                            pane, region, margin, animate=animate
+                        )
             finally:
                 self._host.end_reconcile_scroll()
             if unscrollable:
@@ -810,7 +823,7 @@ class StructuralScrollStrategy:
                 on_done = None  # the retried chain owns the reveal
                 return
             if self._reconciling is not None and landed_row is not None:
-                self.landing = Landing(self._reconciling, focus_chunk_seq, landed_row)
+                self.landing = Landing(self._reconciling, focus_chunk_seq, landed_row, landed_y)
             self._host.diag_log(
                 f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
                 f"path={path} first_match={first_match_seen} fallback={fallback_fired} "
@@ -826,7 +839,7 @@ class StructuralScrollStrategy:
 
     def _scroll_pane_to_match_region(
         self, pane: VerticalScroll, region: Region, margin: int, *, animate: bool = False
-    ) -> None:
+    ) -> int:
         """Scroll ``pane`` so ``region`` (already in the pane's scrollable-
         content space) sits ``margin`` rows down from the top, giving the match
         some context above it. One ``scroll_to_region`` call — no reading the
@@ -837,8 +850,10 @@ class StructuralScrollStrategy:
             region = Region(
                 region.x, max(0, region.y - margin), region.width, region.height + margin
             )
-        pane.scroll_to_region(region, top=True, animate=animate, immediate=not animate)
+        start = int(pane.scroll_offset.y)
+        delta = pane.scroll_to_region(region, top=True, animate=animate, immediate=not animate)
         self._host.diag_log(f"scroll site=match region_y={region.y} animate={animate}")
+        return start + delta.y
 
     def _match_table_for(self, target: Widget) -> DataTable[Any] | None:
         """The match-bearing ``DataTable`` ``target`` is or wraps, else None.

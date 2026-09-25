@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.geometry import Offset
 
 from fnd.matching import MatchSpec
 from fnd.tui.preview.frozen import FrozenChunk, FrozenChunkView, freeze
@@ -49,8 +50,9 @@ class _FakePane:
     def max_scroll_y(self) -> int:
         return 10**6
 
-    def scroll_to_region(self, region: object, **_kw: object) -> None:
+    def scroll_to_region(self, region: object, **_kw: object) -> Offset:
         self.captured = region
+        return Offset(0, 0)
 
 
 class _FakeHost:

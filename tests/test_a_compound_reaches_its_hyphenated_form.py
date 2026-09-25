@@ -74,3 +74,61 @@ def test_the_joined_form_highlights_for_a_hyphenated_query() -> None:
 def test_the_hyphenated_form_counts_as_a_match_the_user_can_see() -> None:
     """Every surface that claims a match (row marker, scrollbar, n/b) asks this."""
     assert text_has_any_match("Use a drop-down filter", MatchSpec.from_query("dropdown"))
+
+
+@pytest.fixture
+def crowded(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """Enough literal hits either way that the search fuses rather than cascades."""
+    notes = tmp_path / "crowded"
+    notes.mkdir()
+    for i in range(4):
+        (notes / f"joined{i}.md").write_text(f"## Joined {i}\n\nA dropdown list {i}.\n")
+        (notes / f"hyphen{i}.md").write_text(f"## Hyphen {i}\n\nA drop-down menu {i}.\n")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+@pytest.mark.parametrize(("query", "other"), [("dropdown", "hyphen"), ("drop-down", "joined")])
+def test_literal_hits_do_not_hide_the_other_spelling(crowded: Path, query: str, other: str) -> None:
+    groups, trace = search_layered(
+        Searcher(index_dir=crowded), query=query, limit=10, collection="notes", with_trace=True
+    )
+    assert trace.regime == "fusion", "the fixture no longer reaches the fusion regime"
+    assert sum(Path(g.path).name.startswith(other) for g in groups) == 4
+
+
+@pytest.fixture
+def one_strong(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """One file that matches the joined word outright, so the search takes its shortcut."""
+    notes = tmp_path / "strong"
+    notes.mkdir()
+    (notes / "joined.md").write_text("## Dropdown\n\nDropdown, dropdown, dropdown.\n")
+    for i in range(3):
+        (notes / f"hyphen{i}.md").write_text(f"## Hyphen {i}\n\nA drop-down menu {i}.\n")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+def test_a_lone_strong_match_does_not_hide_the_other_spelling(one_strong: Path) -> None:
+    groups, trace = search_layered(
+        Searcher(index_dir=one_strong),
+        query="dropdown",
+        limit=10,
+        collection="notes",
+        with_trace=True,
+    )
+    assert trace.regime == "strong-signal", "the fixture no longer takes the shortcut"
+    names = [Path(g.path).name for g in groups]
+    assert names[0] == "joined.md", "the outright match must still lead"
+    assert sum(n.startswith("hyphen") for n in names) == 3
+
+
+@pytest.mark.parametrize(
+    ("query", "literal"), [("dropdown", "dropdown"), ("drop-down", '"drop down"')]
+)
+def test_the_other_spelling_pass_leaves_the_literal_out(query: str, literal: str) -> None:
+    """Literal hits cannot crowd the other spelling out of its bounded pass."""
+    from fnd.fusion import auto_subqueries
+
+    (sub,) = [s for s in auto_subqueries(query, synonyms=None) if s.source == "compound"]
+    assert literal not in sub.query.split(" OR ")

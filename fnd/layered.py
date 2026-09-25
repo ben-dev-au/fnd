@@ -20,13 +20,15 @@ Strong-signal bypass adapted from tobi/qmd (MIT) — see README.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, overload
+import dataclasses
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from fnd.cascade import cascade_search
 from fnd.explain import CascadeTrace, SearchTrace, StrongSignalTrace
 from fnd.fusion import (
     STRONG_SIGNAL_MIN_NORM_GAP,
     STRONG_SIGNAL_MIN_NORM_SCORE,
+    auto_subqueries,
     fusion_search,
     normalise_bm25,
 )
@@ -129,7 +131,19 @@ def search_layered(
     cascade_trace: CascadeTrace | None = None
 
     if ss_trace.fired:
-        hits = probe
+        # The shortcut skips fusion, so the query's other spelling (see
+        # ``compound_table``) is appended here, after the outright match.
+        hits = probe + _compound_hits(
+            searcher,
+            query,
+            probe,
+            target=chunk_pool,
+            collection=collection,
+            metadata_filter=metadata_filter,
+            source_scope=source_scope,
+            intent=intent,
+            tag_filter=tag_filter,
+        )
         regime = "strong-signal"
     else:
         # Step 3: fusion (default).
@@ -231,6 +245,18 @@ def search_layered(
         )
         return groups, trace
     return groups
+
+
+def _compound_hits(searcher: Searcher, query: str, found: list[Hit], **scope: Any) -> list[Hit]:
+    """Hits of the query's hyphenated or joined spelling that ``found`` lacks."""
+    subs = [s for s in auto_subqueries(query, synonyms=None) if s.source == "compound"]
+    if not subs:
+        return []
+    seen = {(h.parent_id, h.chunk_seq) for h in found}
+    raw = searcher._filtered_raw_hits(subs[0].query, **scope)
+    return [
+        dataclasses.replace(h, pass_index=1) for h in raw if (h.parent_id, h.chunk_seq) not in seen
+    ]
 
 
 def _evaluate_strong_signal(probe: list[Hit], *, intent_present: bool) -> StrongSignalTrace:

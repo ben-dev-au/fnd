@@ -63,6 +63,8 @@ class OutlineView:
         self._reader: int | None = None
         self._owed = False
         self._busy_at = 0.0
+        # The current navigation's view has reached its landing's offset.
+        self._arrived = False
 
     def _tree(self) -> OutlineTree | None:
         try:
@@ -177,6 +179,7 @@ class OutlineView:
             # A navigation can start and go idle between two polls; its settle
             # grace runs from when it was first seen, not the last busy poll.
             self._busy_at = time.monotonic()
+            self._arrived = False
             if tree is not None:
                 self._place_target(tree)
             return
@@ -238,9 +241,9 @@ class OutlineView:
         self._owed = False
 
     def _landed(self) -> bool:
-        """The last navigation's scroll has committed and nothing is gliding.
-        ``is_settling`` can outlive a navigation that never reconciles, so it
-        counts only within the reveal watchdog's bound of the pipeline idling."""
+        """The last navigation has committed, reached its offset (a glide starts
+        a refresh after it commits) and stopped moving. Both waits end at the
+        reveal watchdog, since a navigation may never reconcile."""
         preview = self._app._preview
         if preview.outgoing is not None or self._app._reading_mode:
             return False
@@ -248,13 +251,19 @@ class OutlineView:
         if preview.pipeline_busy():
             self._busy_at = now
             return False
-        settling = self._app._preview_scroll.is_settling
-        if settling and (now - self._busy_at) * 1000.0 < tuning.REVEAL_WATCHDOG_MS:
+        within_watchdog = (now - self._busy_at) * 1000.0 < tuning.REVEAL_WATCHDOG_MS
+        scroll = self._app._preview_scroll
+        if scroll.is_settling and within_watchdog:
             return False
         scroller = self._scroller()
-        return scroller is not None and not self._app.animator.is_being_animated(
-            scroller, "scroll_y"
-        )
+        if scroller is None or self._app.animator.is_being_animated(scroller, "scroll_y"):
+            return False
+        if not self._arrived:
+            destination = scroll.landing_destination()
+            if destination is not None and int(scroller.scroll_offset.y) != destination:
+                return not within_watchdog
+            self._arrived = True
+        return True
 
     def _scroller(self) -> Any:
         buffer = self._app._flat.active_buffer

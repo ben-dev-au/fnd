@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Final, Literal, overload
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
 from fnd.query import Hit, Searcher, SourceScope
 from fnd.query_errors import QuerySyntaxError
-from fnd.synonyms import SynonymTable, expand
+from fnd.synonyms import SynonymTable, compound_table, expand
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -102,6 +102,7 @@ _DEFAULT_WEIGHTS: dict[str, float] = {
 _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "lex": 0,
     "fuzzy": 1,
+    "compound": 1,
     "syn": 2,
     "phrase": 3,
 }
@@ -258,6 +259,25 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
         expanded = expand(q, synonyms)
         if expanded != q:
             subs.append(SubQuery(query=expanded, weight=_DEFAULT_WEIGHTS["syn"], source="syn"))
+    # The tokenizer splits "drop-down", so a one-word query's other spelling needs
+    # its own pass here too: the cascade's copy runs only when these find almost
+    # nothing. Longer queries keep the cascade's: rewriting each word loosens them.
+    if len(q.split()) == 1 and not carries_field_syntax and not carries_operator_syntax:
+        # The other spellings only: with the literal in the disjunction, its hits
+        # can fill the pass's bounded result list and leave them no slot.
+        literal = q.replace("-", " ").lower()
+        others = [
+            f'"{m}"' if " " in m else m
+            for group in compound_table(q).groups
+            for m in group
+            if m.lower() != literal
+        ]
+        if others:
+            subs.append(
+                SubQuery(
+                    query=" OR ".join(others), weight=_DEFAULT_WEIGHTS["syn"], source="compound"
+                )
+            )
     return subs
 
 
