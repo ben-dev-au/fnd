@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Final, Literal, overload
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
 from fnd.query import Hit, Searcher, SourceScope
 from fnd.query_errors import QuerySyntaxError
+from fnd.render import keep_shown
 from fnd.synonyms import SynonymTable, compound_table, expand
 
 if TYPE_CHECKING:
@@ -446,7 +447,8 @@ def fusion_search(
         # Auto-derived passes (phrase / syn): a malformed sub-query degrades to
         # an empty ranking rather than aborting the whole fused search.
         try:
-            rankings.append(_issue(sub.query))
+            issued = _issue(sub.query)
+            rankings.append(keep_shown(issued, query) if sub.source == "compound" else issued)
             degraded.append(False)
         except QuerySyntaxError:
             rankings.append([])
