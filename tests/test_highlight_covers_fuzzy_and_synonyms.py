@@ -265,3 +265,13 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
             f"every char of the matched word should be highlighted; "
             f"covered={sorted(covered)}, expected={sorted(word_indices)}"
         )
+
+
+@pytest.mark.parametrize(
+    ("typed", "word", "stem"), [("scaffold", "Scaffolded", 8), ("need", "needed", 4)]
+)
+def test_word_runs_suffix_is_one_trailing_orange_run(typed: str, word: str, stem: int) -> None:
+    from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
+
+    runs = word_highlight_runs(word, MatchSpec.from_query(typed))
+    assert runs == [(0, stem, HIGHLIGHT_STYLE), (stem, len(word), MISMATCH_STYLE)]

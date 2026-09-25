@@ -831,7 +831,12 @@ def align_doc_word(doc_word: str, query_word: str) -> list[bool]:
     matches: list[bool] = [False] * n
     i, j = m, n
     while i > 0 or j > 0:
-        if i > 0 and j > 0 and a[i - 1] == b[j - 1]:
+        # An insertion that ties a match goes first, so a suffix reads as one
+        # trailing run: ``Scaffolded`` pairs the first ``d``, not the last.
+        if j > 0 and dp[i][j] == dp[i][j - 1] + 1 and i > 0 and a[i - 1] == b[j - 1]:
+            matches[j - 1] = False
+            j -= 1
+        elif i > 0 and j > 0 and a[i - 1] == b[j - 1]:
             matches[j - 1] = True
             i -= 1
             j -= 1
