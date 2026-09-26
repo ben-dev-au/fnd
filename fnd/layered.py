@@ -33,6 +33,7 @@ from fnd.fusion import (
     normalise_bm25,
 )
 from fnd.query import FileGroup, Hit, Searcher, SourceScope, group_by_file
+from fnd.render import keep_shown
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -253,7 +254,7 @@ def _compound_hits(searcher: Searcher, query: str, found: list[Hit], **scope: An
     if not subs:
         return []
     seen = {(h.parent_id, h.chunk_seq) for h in found}
-    raw = searcher._filtered_raw_hits(subs[0].query, **scope)
+    raw = keep_shown(searcher._filtered_raw_hits(subs[0].query, **scope), query)
     return [
         dataclasses.replace(h, pass_index=1) for h in raw if (h.parent_id, h.chunk_seq) not in seen
     ]

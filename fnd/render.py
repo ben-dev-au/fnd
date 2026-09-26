@@ -23,6 +23,7 @@ from fnd.stopwords import STOPWORDS as _HL_STOPWORDS
 
 if TYPE_CHECKING:
     from fnd.matching import MatchSpec
+    from fnd.query import Hit
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
@@ -115,7 +116,7 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
     tokens = list(DOC_WORD_RE.finditer(text))
     if any(word_matches(m.group(0), spec) for m in tokens):
         return True
-    return bool(phrase_char_spans(text, spec) or _hyphenated_runs(text, tokens, set(), spec))
+    return bool(phrase_char_spans(text, spec) or _joined_runs([tokens], [set()], spec)[0])
 
 
 def text_has_full_match(text: str, spec: MatchSpec) -> bool:
@@ -228,37 +229,83 @@ def match_word_spans_multi(
     members, full = _proximity_tiers(words, spec)
     out: list[list[tuple[int, int, str]]] = []
     base = 0
-    for segment, tokens in zip(segments, per_segment, strict=True):
+    matched: list[set[int]] = []
+    for tokens in per_segment:
         runs: list[tuple[int, int, str]] = []
-        matched: set[int] = set()
+        hit: set[int] = set()
         for local, m in enumerate(tokens):
             ti = base + local
             dim = ti in members and ti not in full
             for offset_start, offset_end, style in word_highlight_runs(m.group(0), spec, dim=dim):
                 runs.append((m.start() + offset_start, m.start() + offset_end, style))
-                matched.add(local)
-        runs.extend(_hyphenated_runs(segment, tokens, matched, spec))
-        out.append(sorted(runs))
+                hit.add(local)
+        out.append(runs)
+        matched.append(hit)
         base += len(tokens)
+    for runs, joined in zip(out, _joined_runs(per_segment, matched, spec), strict=True):
+        runs.extend(joined)
+        runs.sort()
     return out
 
 
-def _hyphenated_runs(
-    text: str, tokens: list[re.Match[str]], matched: set[int], spec: MatchSpec
-) -> list[tuple[int, int, str]]:
-    """``drop-down`` under a query for ``dropdown``: the two words the tokenizer
-    split, matching as the one they spell. A hyphen only, since a space would
-    light up "may be" under ``maybe``."""
+def _joined_runs(
+    per_segment: list[list[re.Match[str]]], matched: list[set[int]], spec: MatchSpec
+) -> list[list[tuple[int, int, str]]]:
+    """Two consecutive words of one segment that spell a typed word, as the
+    search's split spellings do (each half stemmed). Only a credible compound:
+    joined by ``-``, ``_`` or ``.`` (``drop-down``, ``Track.Name``), or by one
+    space with both halves of three letters or more (``last name``, not
+    ``may be``). Commas, brackets and operators join nothing."""
     from fnd.matching import _stem, match_color
 
-    out: list[tuple[int, int, str]] = []
-    for i, (a, b) in enumerate(itertools.pairwise(tokens)):
-        if i in matched or i + 1 in matched or text[a.end() : b.start()] != "-":
-            continue
-        joined = a.group(0) + b.group(0)
-        if _stem(joined) in spec.exact_stems:
-            out.append((a.start(), b.end(), match_style(match_color(joined, spec))))
+    out: list[list[tuple[int, int, str]]] = [[] for _ in per_segment]
+    splits: dict[tuple[str, str], tuple[str, bool]] = {}
+    for raw in spec.raw_terms:
+        if len(raw) >= 5 and raw.isalnum():
+            for i in range(2, len(raw) - 1):
+                roomy = i >= 3 and len(raw) - i >= 3
+                key = (_stem(raw[:i]), _stem(raw[i:]))
+                if key not in splits or roomy:
+                    splits[key] = (raw, roomy)
+    if not splits:
+        return out
+    heads = {a for a, _ in splits}
+    for si, tokens in enumerate(per_segment):
+        for li, (a, b) in enumerate(itertools.pairwise(tokens)):
+            if li in matched[si] or li + 1 in matched[si]:
+                continue
+            head = _stem(a.group(0))
+            if head not in heads:
+                continue
+            found = splits.get((head, _stem(b.group(0))))
+            if found is None:
+                continue
+            raw, roomy = found
+            sep = a.string[a.end() : b.start()]
+            if sep in _JOINERS or (sep == " " and roomy):
+                out[si].append((a.start(), b.end(), match_style(match_color(raw, spec))))
     return out
+
+
+_JOINERS = frozenset({"-", "_", "."})
+
+#: Markdown the preview never shows: an inline link's destination and a
+#: reference definition line.
+_HIDDEN_LINK_RE = re.compile(r"\]\([^)\n]*\)|^ {0,3}\[[^\]\n]+\]:.*$", re.M)
+
+
+def keep_shown(hits: list[Hit], query: str) -> list[Hit]:
+    """The hits whose visible text holds a match for ``query``: a split spelling
+    reaches across any punctuation in the index, and a result whose text shows
+    no credible compound is one the preview could not explain."""
+    from fnd.matching import MatchSpec
+
+    spec = MatchSpec.from_query(query, auto_fuzzy=False)
+    return [
+        h
+        for h in hits
+        if text_has_any_match(_HIDDEN_LINK_RE.sub("]", h.body_md or h.body_text), spec)
+    ]
 
 
 def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:

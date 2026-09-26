@@ -30,13 +30,14 @@ from typing import TYPE_CHECKING, Literal, overload
 import tantivy
 
 from fnd.explain import CascadePassTrace, CascadeTrace
-from fnd.matching import auto_fuzzy_distance
+from fnd.matching import AUTO_FUZZY_MAX, auto_fuzzy_distance
 from fnd.query import Hit, Searcher, SourceScope, scope_arms, scope_or
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
 from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
+from fnd.render import keep_shown
 from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from fnd.struct import decode as decode_body_struct
 from fnd.synonyms import SynonymTable, compound_table, expand
@@ -139,7 +140,7 @@ def fuzzy_body_clauses(
         if explicit is not None:
             d = explicit
         elif auto_fuzzy_enabled and len(stem) >= min_term_chars:
-            d = auto_fuzzy_distance(stem)
+            d = min(auto_fuzzy_distance(stem), AUTO_FUZZY_MAX)
         else:
             d = 0
         stems_with_dists.append((stem, d))
@@ -509,6 +510,7 @@ def cascade_search(
                 intent=intent,
                 tag_filter=tag_filter,
             )
+            raw = keep_shown(raw, literal_query)
             new_count = _ingest(raw, 1)
             if with_trace:
                 pass_traces.append(

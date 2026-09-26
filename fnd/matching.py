@@ -151,6 +151,12 @@ def _stem(word: str) -> str:
     return stemmer.stemWord(word.lower())
 
 
+#: The most edits automatic fuzzy matching allows, in search and highlighting
+#: alike: at 2 a six-letter term reaches unrelated words (nameof -> name,
+#: defence -> defeat), and a result nothing on screen explains is noise.
+AUTO_FUZZY_MAX = 1
+
+
 def auto_fuzzy_distance(stem: str) -> int:
     """Lucene's ``fuzziness=AUTO`` heuristic: longer terms tolerate
     more typos. ``≤2`` chars → exact only (typos in 1-2 char tokens
@@ -507,11 +513,7 @@ class MatchSpec:
             for s in exact:
                 if len(s) < min_term_chars:
                     continue
-                # Cap AUTO-fuzzy *highlighting* at distance 1. At distance 2 a
-                # 6-char term lights up unrelated false friends (defence→defeat,
-                # diverse→reverse) — pure noise on a clean query. The search-side
-                # cascade and an explicit ``~2`` still use distance 2.
-                d = min(auto_fuzzy_distance(s), 1)
+                d = min(auto_fuzzy_distance(s), AUTO_FUZZY_MAX)
                 if d > 0:
                     auto_pairs[s] = d
         # Explicit wins on collision (user is asserting a distance).
@@ -829,7 +831,12 @@ def align_doc_word(doc_word: str, query_word: str) -> list[bool]:
     matches: list[bool] = [False] * n
     i, j = m, n
     while i > 0 or j > 0:
-        if i > 0 and j > 0 and a[i - 1] == b[j - 1]:
+        # An insertion that ties a match goes first, so a suffix reads as one
+        # trailing run: ``Scaffolded`` pairs the first ``d``, not the last.
+        if j > 0 and dp[i][j] == dp[i][j - 1] + 1 and i > 0 and a[i - 1] == b[j - 1]:
+            matches[j - 1] = False
+            j -= 1
+        elif i > 0 and j > 0 and a[i - 1] == b[j - 1]:
             matches[j - 1] = True
             i -= 1
             j -= 1
