@@ -263,7 +263,12 @@ def _materialize_hits(
     ``searcher_view`` is the generation-pinned snapshot the caller searched
     against — addresses must be dereferenced on the same generation.
     """
-    from fnd.query import _first_int, _first_str, _make_snippet  # local import: avoid cycle
+    from fnd.query import (  # local import: avoid cycle
+        _first_int,
+        _first_str,
+        _make_snippet,
+        _memberships_of,
+    )
 
     out: list[Hit] = []
     for score, address in pairs:
@@ -295,6 +300,7 @@ def _materialize_hits(
                 meta_blob=meta_blob_bytes,
                 body_text=body_text,
                 body_md=body_md_bytes.decode("utf-8") if body_md_bytes else "",
+                memberships=_memberships_of(doc),
             )
         )
     return out

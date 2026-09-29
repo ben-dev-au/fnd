@@ -411,7 +411,7 @@ def _prior_indexed_state(
         F_MEMBERSHIP,
         F_MTIME,
         F_PARENT_ID,
-        MEMBERSHIP_SEP,
+        parse_membership_token,
     )
 
     try:
@@ -432,8 +432,7 @@ def _prior_indexed_state(
             if cv is not None:
                 inode_ctime = int(cv)
             for token in doc.get_all(F_MEMBERSHIP):  # type: ignore[attr-defined]
-                name, _, source = str(token).partition(MEMBERSHIP_SEP)
-                membership.add((name, source))
+                membership.add(parse_membership_token(str(token)))
         if doc.get_first(F_BODY_MD):  # type: ignore[attr-defined]
             has_textured = True
     return mtime, inode_ctime, has_textured, frozenset(membership)

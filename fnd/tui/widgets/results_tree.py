@@ -16,12 +16,15 @@ from textual.widgets.tree import TreeNode
 from fnd.tui.preview.warmth import WarmState
 from fnd.tui.widgets.arrow_expansion import ArrowsExpand, HomeToFirstRow
 from fnd.tui.widgets.clear_bar import focus_clear_bar
+from fnd.tui.widgets.mark_label import CollectionMarkLabel
 from fnd.tui.widgets.state_marker import StateMarkerLabel
 
 __all__ = ["ResultsTree"]
 
 
-class ResultsTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, Any]]):
+class ResultsTree(
+    ArrowsExpand, HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, Tree[dict[str, Any]]
+):
     """Results tree where expanded parents (file rows) are literally
     unselectable.
 
@@ -333,11 +336,9 @@ class ResultsTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str,
             colour = self.get_component_rich_style(component).color
         if colour is not None and isinstance(icon_style, Style):
             icon_style += Style(color=colour)
-        # process_label, not the raw attribute: a label set from a plain str
-        # has not been through the tree's own conversion yet.
-        node_label = self.process_label(node.label).copy()
-        node_label.stylize(style)
-        return Text.assemble((icon, icon_style), node_label)
+        # The stock label after its icon, so what the mixins restored survives.
+        label = stock[len(stock.plain) - len(node._label.plain) :]
+        return Text.assemble((icon, icon_style), label)
 
     def _warm_state_of(self, node: TreeNode[Any]) -> WarmState | None:
         """The node's warmth, or None for anything that is not a file row.
