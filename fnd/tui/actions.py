@@ -64,7 +64,7 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="toggle_focus",
-        description="Cycle focus between query bar, results, and preview.",
+        description="Move focus to the next pane.",
         default_key="tab",
         footer_label="Pane",
     ),

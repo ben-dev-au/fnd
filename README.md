@@ -134,13 +134,13 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 | Key            | What it does                                                                                                                                                                                                                                       |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `↑` / `↓`      | Move the cursor up/down through results (vim's `k` / `j` also work).                                                                                                                                                                               |
-| `⌥↑` / `⌥↓`    | **Skim**: hold Option (Alt) and arrow to move through results _without_ loading each preview. Browse fast with no per-row mount/lag. The preview loads again on a normal `↑`/`↓` (the row you land on) or `Enter` (the exact row you skimmed to). |
-| `Enter`        | Load the highlighted result into the preview (handy right after an Option-skim).                                                                                                                                                                   |
+| `⌥↑` / `⌥↓`    | **Skip**: hold Option (Alt) and arrow to move through results _without_ loading each preview. Browse fast with no per-row mount/lag. The preview loads again on a normal `↑`/`↓` (the row you land on) or `Enter` (the exact row you skipped to). |
+| `Enter`        | Load the highlighted result into the preview (handy right after an Option-skip).                                                                                                                                                                   |
 | `→`            | Expand the focused file to its matching sections; press again to drill into the first.                                                                                                                                                             |
 | `←`            | Collapse the focused node, or back out to its parent (lazygit-style).                                                                                                                                                                              |
 | `Ctrl→` / `⌥→` | **Expand all**: expand the focused node _and its whole subtree_ (results, collections and filters trees).                                                                                                                                          |
 | `Ctrl←` / `⌥←` | **Collapse children**: fold away every descendant, keeping the node itself open.                                                                                                                                                                   |
-| `Tab`          | Cycle focus between the query bar, the results tree, and the preview.                                                                                                                                                                              |
+| `Tab`          | Move focus to the next pane.                                                                                                                                                                                                                       |
 | `/`            | Jump back to the query bar to refine your search.                                                                                                                                                                                                  |
 | `o`            | Focus the **Outline**. `Enter` on a heading (or `→` on one with nothing to expand) moves the preview there.                                                                                                                                        |
 | `↑` / `↓`      | When the preview pane is focused, scroll the preview.                                                                                                                                                                                              |
@@ -155,7 +155,7 @@ you jump to lands where matches land, a quarter of the way down the preview.
 Code, data and plain-text files have no outline. Collapse the pane with `←` at
 its top level, like the others.
 
-> **Option-skim on Apple Terminal:** for `⌥↑` / `⌥↓` to reach fnd, enable
+> **Option-skip on Apple Terminal:** for `⌥↑` / `⌥↓` to reach fnd, enable
 > _Settings → Profiles → Keys → Left Option key → Esc+_. iTerm2 and most modern
 > terminals work without any change.
 >

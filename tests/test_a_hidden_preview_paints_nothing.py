@@ -1,6 +1,6 @@
 """A preview held behind ``-pre-reveal`` (opacity 0) paints nothing, not even its
-matches: Textual's opacity blend skips ANSI palette colours, so a highlight
-drawn in ANSI black showed through a table on every cold launch."""
+matches or diagrams: Textual's opacity blend skips ANSI palette colours, so
+anything drawn in one shows through while the preview waits to land."""
 
 from __future__ import annotations
 
@@ -26,15 +26,19 @@ def test_every_match_style_is_drawn_in_rgb(style: str) -> None:
         assert colour.type == ColorType.TRUECOLOR, style
 
 
-def _corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
+_FILLER = "".join(f"Filler line {i}.\n\n" for i in range(12))
+TABLE = (
+    f"| Task | Command |\n|---|---|\n| Scaffold a controller | #Terminal - {TERM} controller |\n\n"
+)
+DIAGRAM = "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```\n\n"
+
+
+def _corpus(tmp_path: Path, tmp_index_dir: Path, block: str) -> Path:
     docs = tmp_path / "docs"
     docs.mkdir()
-    filler = "".join(f"Filler line {i}.\n\n" for i in range(12))
     body = (
-        "# Cheatsheet\n\n" + filler + "## Terminal\n\n"
-        f"### Scaffold a controller\n\nRun the {TERM} step.\n\n"
-        "| Task | Command |\n|---|---|\n"
-        f"| Scaffold a controller | #Terminal - {TERM} controller |\n\n" + filler
+        "# Cheatsheet\n\n" + _FILLER + "## Terminal\n\n"
+        f"### Scaffold a controller\n\nRun the {TERM} step.\n\n" + block + _FILLER
     )
     (docs / "sheet.md").write_text(body, encoding="utf-8")
     build_index(roots=[docs], index_dir=tmp_index_dir, collection="default")
@@ -42,15 +46,16 @@ def _corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("block", [TABLE, DIAGRAM], ids=["table", "mermaid"])
 async def test_a_preview_still_behind_pre_reveal_shows_no_text(
-    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch, block: str
 ) -> None:
     from fnd.tui.preview.presenter import PreviewPresenter
 
     # Hold the cold launch's preview hidden, as a slow landing does.
     monkeypatch.setattr(PreviewPresenter, "reveal", lambda self, c: None)
     monkeypatch.setattr(PreviewPresenter, "reveal_active", lambda self: None)
-    app = FNDApp(index_dir=_corpus(tmp_path, tmp_index_dir), initial_query=TERM)
+    app = FNDApp(index_dir=_corpus(tmp_path, tmp_index_dir, block), initial_query=TERM)
     async with app.run_test(size=(116, 45)) as pilot:
         for _ in range(200):
             await safe_pause(pilot)

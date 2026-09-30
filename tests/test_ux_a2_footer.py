@@ -17,6 +17,8 @@ from textual.widgets import Static, Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.app import _HintBar
+from tests._pilot_wait import wait_until
 
 
 @pytest.fixture
@@ -79,6 +81,29 @@ async def test_footer_results_context_shows_open(built_index: Path) -> None:
         await pilot.pause()
         text = _footer_text(app)
         assert "Open" in text, f"results-context footer should show Open: {text!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("system", ["Darwin", "Linux", "Windows"])
+async def test_a_120_column_results_footer_keeps_every_hint(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch, system: str
+) -> None:
+    """With matches in the preview, the results footer fits 120 columns whole on every OS."""
+    monkeypatch.setattr("fnd.os_labels.platform.system", lambda: system)
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "sheet.md").write_text("# Sheet\n\nThe quartzfin step.\n", encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="default")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="quartzfin")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#results_pane", Tree).focus()
+        await wait_until(pilot, lambda: "Matches" in _footer_text(app))
+        footer = app.query_one("#footer_hints", Static)
+        bar = footer.content
+        assert isinstance(bar, _HintBar)
+        assert ("⌥↑↓" if system == "Darwin" else "Alt↑↓") in bar.plain
+        assert bar.fitted(footer.content_region.width).plain == bar.plain
 
 
 @pytest.mark.asyncio
