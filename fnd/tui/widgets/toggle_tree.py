@@ -401,6 +401,27 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
         if node is not None:
             self._toggle(node)
 
+    def _row_at_cursor(self) -> TreeNode[dict[str, Any]] | None:
+        """The node on the cursor line; ``cursor_node`` still names a discarded
+        node after :meth:`set_model` clears the tree with the cursor on line 0."""
+        return self.get_node_at_line(self.cursor_line) if self.cursor_line >= 0 else None
+
+    def enter_label(self) -> str | None:
+        """What Enter does on the cursor row, as :meth:`_toggle` decides it."""
+        node = self._row_at_cursor()
+        data = node.data if node is not None and isinstance(node.data, dict) else {}
+        if node is None or data.get("kind") not in ("group", "item"):
+            return None
+        if data["kind"] == "item":
+            mode = self._mode(self._group_by_id(str(data.get("group"))))
+            return "Edit" if mode == "actions" else "Toggle"
+        group = self._group_by_id(str(data.get("id")))
+        if group is None:
+            return None
+        if self._mode(group) in ("actions", "cycle", "radio"):
+            return "Collapse" if node.is_expanded else "Expand"
+        return "Toggle"
+
     @on(Tree.NodeSelected)
     def _on_node_selected(self, ev: Tree.NodeSelected[dict[str, Any]]) -> None:
         # A mouse click routes here (Tree._on_click → select_cursor → NodeSelected).
@@ -539,6 +560,18 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
         node = self.cursor_node
         if node is not None and node.allow_expand and not node.is_expanded:
             node.expand()
+
+    def arrow_labels(self) -> tuple[str, str | None]:
+        """What ← and → do on the cursor row, as the two actions below decide it."""
+        node = self._row_at_cursor()
+        if node is None:
+            return "Leave", None
+        right = "Expand" if node.allow_expand and not node.is_expanded else None
+        if node.allow_expand and node.is_expanded:
+            return "Collapse", right
+        if node.parent is None or node.parent is self.root:
+            return "Leave", right
+        return "Parent", right
 
     def action_collapse_here(self) -> None:
         node = self.cursor_node
