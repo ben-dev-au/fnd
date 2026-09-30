@@ -27,6 +27,7 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.scrollbar import ScrollBar
 from textual.widget import Widget
@@ -53,6 +54,7 @@ from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
 from fnd.tui.preview.presenter import PreviewPresenter, target_from_node_data
 from fnd.tui.preview_dispatcher import uses_markdown_renderer
+from fnd.tui.preview_edge import bottom_edge, marked_name
 from fnd.tui.preview_scroll import (
     FlatScrollStrategy,
     PreviewScrollController,
@@ -700,7 +702,8 @@ class FNDApp(App[None]):
             # custom scrollbar that overlays chunk-match markers on
             # the track. Per-file Containers hold the actual chunk
             # widgets so cache hits are O(1) display flips.
-            with Vertical(id="preview_column"), MatchAwareScroll(id="preview_pane"):
+            with Vertical(id="preview_column"), MatchAwareScroll(id="preview_pane") as pane:
+                pane.fit_edges = self._fit_preview_edges
                 yield Static("Type a query and press Enter.", id="placeholder")
         # App-level progress strip — one row, full width, hidden via
         # ``visibility: hidden`` so the row occupancy is stable across
@@ -944,30 +947,22 @@ class FNDApp(App[None]):
     # ── Ranking profile ───────────────────────────────────────────
 
     def _preview_title(self, edge_width: int = 0) -> str:
-        """Border title for the preview pane — ``Preview — <file>``.
-
-        ``edge_width`` is the pane's outer border-box width; when given, the
-        filename is middle-elided so its extension survives instead of being
-        clipped off the right edge. A round border reserves 6 cells of the
-        edge (2 corners + 2 pads + 2 filler dashes — measured), so the full
-        title string must fit in ``edge_width - 6``.
-        """
-        if self._preview.parent_id is None:
-            return "Preview"
+        """``Preview: <file>``, middle-elided to fit ``edge_width`` so the extension survives."""
         # The same disambiguation the results rows use: two files sharing a
         # basename gave both panes the same title, so the tree could tell them
         # apart and the pane above it could not.
         from fnd.tui.results_labels import disambiguated_names
 
-        names = disambiguated_names([g.path for g in self._search.groups])
-        for g in self._search.groups:
-            if g.parent_id == self._preview.parent_id:
-                name = names.get(g.path) or Path(g.path).name
-                if edge_width > 0:
-                    prefix = "Preview: "
-                    name = _elide_middle_keep_suffix(name, edge_width - 6 - len(prefix))
-                return f"Preview: {name}"
-        return "Preview"
+        g = self._previewed_group()
+        if g is None:
+            return "Preview"
+        name = disambiguated_names([g.path for g in self._search.groups]).get(g.path)
+        name = name or Path(g.path).name
+        if edge_width > 0:
+            prefix = "Preview: "
+            # A round border keeps 6 cells of the edge: 2 corners, 2 pads, 2 dashes (measured).
+            name = _elide_middle_keep_suffix(name, edge_width - 6 - len(prefix))
+        return f"Preview: {name}"
 
     def _refresh_results_title(self) -> None:
         """Just the title. `_refresh_status` also queues a sidebar reflow, and
@@ -987,13 +982,9 @@ class FNDApp(App[None]):
             self._scope.refresh_filters_panel_title()
 
     def _refresh_status(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.query_one("#results_pane", Tree).border_title = self._results.title()
-            pane = self.query_one("#preview_pane")
-            pane.border_title = self._preview_title(pane.region.width)
-        except Exception:
-            pass
-        self._refresh_preview_match_indicator()
+        self._fit_preview_edges()
         self._refresh_footer_hints()
         # Runs on every preview file activation, and from Settings and mount
         # teardown too, where the pane may be gone.
@@ -1002,34 +993,55 @@ class FNDApp(App[None]):
         # A new result set changes how many rows the results pane wants.
         self._reflow_sidebar()
 
-    def _refresh_preview_match_indicator(self) -> None:
-        """Show ``▲a ▼b`` on the preview's BOTTOM border (in the active-pane
-        accent) counting how many screenfuls ("views") of the CURRENT result
-        hold a match above / below the viewport. The results-pane arrows step
-        between results and skip matches lower in the same chunk; this is the
-        signal that such hidden matches exist, so the user knows to press n/b.
-        Blank when the current result's matches all fit on screen, or in Reading
-        View (which drops the border)."""
+    def _fit_preview_edges(self) -> None:
         try:
             pane = self.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
+        pane.border_title = self._preview_title(pane.outer_size.width)
+        self._refresh_preview_match_indicator()
+
+    def _refresh_preview_match_indicator(self) -> None:
+        """The preview's bottom border: the file's collections, then its match status."""
+        try:
+            pane = self.query_one("#preview_pane", MatchAwareScroll)
+        except Exception:
+            return
+        if self._reading_mode:
+            pane.border_subtitle = ""
+            return
         nav = getattr(self, "_match_nav", None)
-        if self._current_match_unlocatable() and not self._reading_mode:
-            # The engine matched this chunk but the preview has nothing to
-            # highlight. Say so rather than leaving the user to wonder why the
-            # result they picked looks unrelated — and so a highlighting
-            # regression is visible on screen. See fnd.tui.match_evidence.
-            pane.border_subtitle = " [$warning]◌ match not shown here[/] "
-        elif nav is not None and not self._reading_mode and (nav.above or nav.below):
+        status = Content("")
+        if self._current_match_unlocatable():
+            # The engine matched a chunk the preview cannot highlight; see fnd.tui.match_evidence.
+            status = Content.from_markup("[$warning]◌ match not shown here[/]")
+        elif nav is not None and (nav.above or nav.below):
+            # Screenfuls of this result holding a match above and below the viewport.
             parts: list[str] = []
             if nav.above:
                 parts.append(f"[$accent]▲{nav.above}[/]")
             if nav.below:
                 parts.append(f"[$accent]▼{nav.below}[/]")
-            pane.border_subtitle = f" {'  '.join(parts)} "
-        else:
-            pane.border_subtitle = ""
+            status = Content.from_markup("  ".join(parts))
+        label, align = bottom_edge(pane.outer_size.width, self._previewed_collections(), status)
+        if pane.styles.border_subtitle_align != align:
+            pane.styles.border_subtitle_align = align
+        pane.border_subtitle = label
+
+    def _previewed_group(self) -> FileGroup | None:
+        pid = self._preview.parent_id
+        if pid is None:
+            return None
+        return next((g for g in self._search.groups if g.parent_id == pid), None)
+
+    def _previewed_collections(self) -> Content:
+        group = self._previewed_group()
+        if group is None:
+            return Content("")
+        marks = self._scope.collection_marks
+        return Content(", ").join(
+            marked_name(name, marks.mark(name)) for name in marks.shown(group.memberships)
+        )
 
     def _current_match_unlocatable(self) -> bool:
         """True when the chunk the preview is showing for the current result

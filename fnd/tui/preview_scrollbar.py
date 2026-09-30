@@ -65,6 +65,8 @@ except ImportError:  # pragma: no cover
     SimpleAnimation = ()  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rich.console import Console, ConsoleOptions, RenderResult
     from textual.layout import DockArrangeResult
     from textual.widget import Widget
@@ -382,6 +384,21 @@ class MatchAwareScroll(VerticalScroll):
     # feels responsive instead of crawling. Non-animated: during a burst,
     # queued scroll animations would fight and add latency.
     _READING_SCROLL_LINES = 3
+
+    #: Refits the border labels. Called inside the reflow that resizes the pane,
+    #: so the first frame at a new width paints with labels fitted to it; a
+    #: refresh queued from a Resize handler can be dropped by a later layout pass.
+    fit_edges: Callable[[], None] | None = None
+    _fitted_width = 0
+
+    def _size_updated(
+        self, size: Size, virtual_size: Size, container_size: Size, layout: bool = True
+    ) -> bool:
+        resized = super()._size_updated(size, virtual_size, container_size, layout)
+        if self.fit_edges is not None and size.width != self._fitted_width:
+            self._fitted_width = size.width
+            self.fit_edges()
+        return resized
 
     def _reading_view(self) -> bool:
         return bool(getattr(self.app, "_reading_mode", False))

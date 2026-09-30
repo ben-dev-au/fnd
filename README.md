@@ -277,6 +277,12 @@ individual ones in the sidebar to narrow that, and the selection is remembered
 for next launch. `-c <name>` scopes a single launch, and `-c all` widens it back
 out again without touching what's remembered.
 
+Searching several collections marks each result with its collection:
+
+- Extension in the collection's colour; a shape too, past five collections.
+- Sidebar is the key; the preview's bottom border names it.
+- A file in more than one: unmarked.
+
 Globs match the path relative to the source root. `*`, `?` and `[abc]` stop at a
 `/`; a whole `**` segment spans zero or more folders, so `**/*.md` catches both
 `a.md` and `notes/deep/a.md`. The `~~` operator uses the same language.

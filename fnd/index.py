@@ -40,11 +40,11 @@ from fnd.schema import (
     F_SLIDE,
     F_SOURCE_PATH,
     F_TITLE,
-    MEMBERSHIP_SEP,
     SCHEMA_VERSION,
     TAG_FIELD_BY_SOURCE,
     build_schema,
     membership_token,
+    parse_membership_token,
 )
 from fnd.struct import encode as encode_body_struct
 from fnd.walk import walk
@@ -685,8 +685,7 @@ def read_membership(searcher: object, schema: Schema, parent_id: str) -> frozens
     doc = searcher.doc(hits[0][1])  # type: ignore[attr-defined]
     pairs: set[tuple[str, str]] = set()
     for token in doc.get_all(F_MEMBERSHIP):
-        collection, _, source = str(token).partition(MEMBERSHIP_SEP)
-        pairs.add((collection, source))
+        pairs.add(parse_membership_token(str(token)))
     return frozenset(pairs)
 
 

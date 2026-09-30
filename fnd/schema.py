@@ -123,6 +123,11 @@ def membership_token(collection: str, source_path: str) -> str:
     return f"{collection}{MEMBERSHIP_SEP}{source_path}"
 
 
+def parse_membership_token(token: str) -> tuple[str, str]:
+    collection, _, source_path = token.partition(MEMBERSHIP_SEP)
+    return collection, source_path
+
+
 def build_schema() -> Schema:
     sb = SchemaBuilder()
 

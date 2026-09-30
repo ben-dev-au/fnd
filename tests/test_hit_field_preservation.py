@@ -54,6 +54,7 @@ def _populated_hit() -> Hit:
         meta_blob=b"\x01\x02",
         body_text="the full decoded chunk body",
         body_md="## the markdown the preview renders",
+        memberships=(("Work", "/w"), ("Personal", "/p")),
     )
 
 
