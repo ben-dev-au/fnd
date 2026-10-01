@@ -1460,10 +1460,10 @@ class TestSettingsScreenTyping:
             await pilot.pause()
             screen = await self._open(app, pilot)
             footer = screen.query_one("#footer_hints", Static)
-            # `Menu`, not `Search`: `/` is not an anchor in Settings,
+            # `Keys`, not `Search`: `/` is not an anchor in Settings,
             # because there it focuses the row filter rather than the query
             # bar and the screen's own cluster names it.
-            assert "Menu" in footer.render_line(0).text, "idle, the anchors do work"
+            assert "Keys" in footer.render_line(0).text, "idle, the anchors do work"
 
             rows = screen.query_one(SettingsList)
             rows.cursor_index = next(
@@ -1473,7 +1473,7 @@ class TestSettingsScreenTyping:
             for _ in range(8):
                 await pilot.pause()
             painted = footer.render_line(0).text
-            for dead in ("Search", "Menu", "Keys", "Quit"):
+            for dead in ("Search", "Close", "Keys", "Quit"):
                 assert dead not in painted, f"{dead} types into the box: {painted}"
 
             await pilot.press("slash")
@@ -1506,7 +1506,7 @@ def test_no_screen_with_a_text_box_advertises_the_anchors_unguarded() -> None:
         except OSError:  # pragma: no cover - only for C-defined classes
             continue
         takes_typing = bool(re.search(r"yield (Input|TextArea)\(|yield EditBar\(\)", source))
-        guarded = "_editor_hint_bar(" in source or "_wizard_hints(" in source
+        guarded = "_editor_hint_bar(" in source or "_form_hint_bar(" in source
         if takes_typing and "_hint_bar(" in source and not guarded:
             unguarded.append(name)
     assert not unguarded, f"screens naming keys that type into their box: {unguarded}"
@@ -1716,7 +1716,9 @@ class TestTabIsOfferedOnlyWhenItGoesSomewhere:
 
     @pytest.mark.asyncio
     async def test_the_wizard_neither_offers_nor_focuses_it(self, built_index: Path) -> None:
-        from fnd.tui.settings_screen import AddCollectionWizard, _focus_targets, _wizard_hints
+        from textual.widgets import Static
+
+        from fnd.tui.settings_screen import AddCollectionWizard, _focus_targets
 
         app = FNDApp(index_dir=built_index)
         async with app.run_test(size=(140, 26)) as pilot:
@@ -1727,7 +1729,8 @@ class TestTabIsOfferedOnlyWhenItGoesSomewhere:
             wizard = app.screen
             assert isinstance(wizard, AddCollectionWizard)
             assert len(_focus_targets(wizard)) == 1
-            assert "Tab" not in _wizard_hints(wizard, app).plain
+            footer = wizard.query_one("#footer_hints", Static)
+            assert "Tab" not in str(footer.content)
             await pilot.press("tab")
             await pilot.pause()
             assert type(app.focused).__name__ != "TextArea", "focus entered a hidden pane"
@@ -1737,7 +1740,7 @@ class TestTabIsOfferedOnlyWhenItGoesSomewhere:
             for _ in range(8):
                 await pilot.pause()
             assert len(_focus_targets(wizard)) == 2
-            assert "Test a sample" in _wizard_hints(wizard, app).plain
+            assert "Test a sample" in str(footer.content)
             await pilot.press("tab")
             await pilot.pause()
             assert type(app.focused).__name__ == "TextArea"

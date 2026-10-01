@@ -534,9 +534,10 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
         ),
         (
             "Esc / ←",
-            "Discard",
+            "Leave",
             "",
-            "Leave without saving. Asks first when there are unsaved edits.",
+            "Leave without saving (← does so from a collapsed top-level row). Asks first when "
+            "there are unsaved edits. With text in the filter box, clears it first.",
         ),
     )
 

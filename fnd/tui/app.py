@@ -2316,9 +2316,7 @@ class FNDApp(App[None]):
 
         # Toggle off when already on Keybindings.
         current = self.screen
-        if isinstance(current, SettingsScreen) and getattr(current, "_breadcrumb", ()) == (
-            "Keybindings",
-        ):
+        if isinstance(current, SettingsScreen) and current.is_keybindings:
             self.pop_screen()
             return
 

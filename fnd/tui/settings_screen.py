@@ -79,15 +79,18 @@ if TYPE_CHECKING:
 _KEY_COL = 12
 
 
-def _wizard_hints(screen: Any, app: Any) -> Any:
-    """The wizard's footer, without the anchors while a box has focus."""
-    hints = (
-        ("⏎", "Edit"),
-        *((("Tab", "Test a sample"),) if len(_focus_targets(screen)) > 1 else ()),
-        (COMMIT_KEY, "Save & Index"),
-        ("Esc", "Cancel"),
-    )
-    return _editor_hint_bar(hints) if _typing_in(screen) else _hint_bar(app, hints)
+def _form_hint_bar(screen: Any, app: Any, fields: tuple[tuple[str, str], ...]) -> Any:
+    """A form's footer for whichever pane has focus; ``fields`` is the field list's."""
+    if "-hidden" not in screen.query_one(EditBar).classes:
+        return _editor_hint_bar((("⏎", "Save"), ("Esc", "Cancel")))
+    if screen.query_one("#frontmatter_sample", TextArea).has_focus:
+        return _editor_hint_bar((("Tab", "Fields"), ("Esc", "Cancel")))
+    return _hint_bar(app, fields, screen=screen)
+
+
+def _sample_tab_hint(screen: Any) -> tuple[tuple[str, str], ...]:
+    """Tab is named only while the sample tester is there to reach."""
+    return (("Tab", "Test a sample"),) if len(_focus_targets(screen)) > 1 else ()
 
 
 def _focus_targets(screen: Any) -> list[Any]:
@@ -164,12 +167,18 @@ def _hint_bar(app: FNDApp, contextual: tuple[tuple[str, str], ...], *, screen: A
     key with two labels. The screens that own the key name it themselves, in
     their contextual cluster.
 
-    ``screen`` is accepted for callers that pass it and is not read.
+    On a :class:`SettingsScreen` ``:`` closes Settings, and on the Keybindings
+    sheet ``?`` closes the sheet, so ``screen`` renames those anchors.
     """
     from fnd.tui.app import render_hint_bar
 
     anchors: tuple[tuple[str, str], ...] = app._FOOTER_ANCHORS  # type: ignore[attr-defined]
-    return render_hint_bar(tuple(a for a in anchors if a[0] != "/"), contextual)
+    renamed: dict[str, str] = {}
+    if isinstance(screen, SettingsScreen):
+        renamed = {"?": "Close"} if screen.is_keybindings else {":": "Close"}
+    return render_hint_bar(
+        tuple((key, renamed.get(key, label)) for key, label in anchors if key != "/"), contextual
+    )
 
 
 _SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
@@ -1550,8 +1559,14 @@ class SettingsScreen(Screen[None]):
         cluster = self._hint_cluster()
         # `/`, `:`, `?` and `q` type into a focused box rather than acting, so
         # naming them there advertises four keys that do not work.
-        bar = _editor_hint_bar(cluster) if self._is_typing() else _hint_bar(app, cluster)
+        bar = (
+            _editor_hint_bar(cluster) if self._is_typing() else _hint_bar(app, cluster, screen=self)
+        )
         self.query_one("#footer_hints", Static).update(bar)
+
+    @property
+    def is_keybindings(self) -> bool:
+        return self._breadcrumb[-1:] == ("Keybindings",)
 
     def _is_typing(self) -> bool:
         """Whether a text box has focus, so the anchors are inert."""
@@ -1586,16 +1601,22 @@ class SettingsScreen(Screen[None]):
         # Search input focused: hand-off / clear cluster.
         focused = self.focused
         if isinstance(focused, Input) and getattr(focused, "id", None) == "settings_search":
-            return (("↓", "Results"), ("⏎", "Go to first"), ("Esc", "Clear"))
+            esc = ("Esc", "Clear") if focused.value else ("Esc", "Back")
+            return (("↓", "Results"), ("⏎", "Go to first"), esc)
 
-        # Keybindings sub-screen: ⏎ Run · [key] Run directly · Esc Back.
-        if self._breadcrumb[-1:] == ("Keybindings",):
-            return (("⏎", "Run"), ("[key]", "Run directly"), ("Esc", "Back"))
+        # Esc and ← clear a row filter before they leave the page.
+        leave = "Clear" if self.query_one("#settings_search", Input).value else "Back"
+        # Keybindings key rows: those that only document a key run nothing. The
+        # filter can surface other sections' rows, which take the default below.
+        row = self._cursor_item()
+        if self.is_keybindings and (row is None or row.key):
+            run = (("⏎", "Run"),) if row is not None and row.action_id else ()
+            return (*run, ("[key]", "Run directly"), ("Esc", leave))
 
-        # Default — per-kind ⏎ label. Reveal append on external-app rows.
-        cursor_item = self._cursor_item()
+        # Default: per-kind ⏎ label. Reveal append on external-app rows.
+        cursor_item = row
         nav = ("↑↓", "Nav")
-        back = ("←", "Back")
+        back = ("←", leave)
         filt = ("/", "Filter")
 
         if cursor_item is None:
@@ -1613,7 +1634,9 @@ class SettingsScreen(Screen[None]):
         if kind == KIND_PICKER:
             return (nav, ("⏎", "Choose"), back, filt)
         if kind == KIND_ACTION:
-            return (nav, ("⏎", "Run"), back, filt)
+            # A Keybindings row that only documents a key runs nothing, wherever the filter shows it.
+            runs = bool(cursor_item.action_id) or not cursor_item.key
+            return (nav, *((("⏎", "Run"),) if runs else ()), back, filt)
         if kind == KIND_EXTERNAL and cursor_item.external_app:
             return (nav, ("⏎", "Open in editor"), ("Shift+⏎", "Reveal"), back)
         # KIND_SUBMENU and drill KIND_EXTERNAL: "Open" (push a screen).
@@ -1642,6 +1665,7 @@ class SettingsScreen(Screen[None]):
     @on(Input.Changed, "#settings_search")
     def _on_search_changed(self, ev: Input.Changed) -> None:
         self._apply_filter(ev.value)
+        self._refresh_hint_bar()
 
     def _apply_filter(self, raw: str, *, cursor_id: str | None = None) -> None:
         """Show the rows matching ``raw``, or the whole list when it is empty.
@@ -1890,7 +1914,7 @@ class SettingsScreen(Screen[None]):
         action the pressed key runs; if found, closes the settings stack and
         dispatches it.
         """
-        if self._breadcrumb[-1:] != ("Keybindings",):
+        if not self.is_keybindings:
             return
         focused = self.focused
         if focused is None or not isinstance(focused, SettingsList):
@@ -1913,11 +1937,13 @@ class SettingsScreen(Screen[None]):
             return None
         bound = keymap.bindings.get(pressed)
         # Never `/`: it would close the sheet onto the query bar, leaving this
-        # screen's own filter box out of reach.
-        if bound is None or bound == "focus_query":
+        # screen's own filter box out of reach. Never `?`: it closes the sheet.
+        if bound is None or bound in ("focus_query", "show_help"):
             return None
-        items = self.query_one(SettingsList)._items
-        return next((i for i in items if i.kind != KIND_HEADER and i.action_id == bound), None)
+        # Every row, not the filtered ones: a key runs its action whatever the filter shows.
+        return next(
+            (i for i in self._items if i.kind != KIND_HEADER and i.action_id == bound), None
+        )
 
 
 def _binding_keys(*owners: type[Widget]) -> frozenset[str]:
@@ -2673,6 +2699,7 @@ class SourceFormScreen(Screen[None]):
         rule, inherited = self._effective_frontmatter()
         for wid in ("#form_sample_sep", "#frontmatter_sample", "#match_status"):
             self.query_one(wid).display = bool(rule)
+        self._render_footer()
         if not rule:
             return
         source = " (inherited)" if inherited else ""
@@ -3024,18 +3051,21 @@ class SourceFormScreen(Screen[None]):
     def _render_footer(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         # Ctrl+D only meaningful when editing an existing source.
-        # Tab is only named while there is a second pane to reach: the sample
-        # tester is hidden without a rule to test.
         hints: tuple[tuple[str, str], ...] = (
-            *((("Tab", "Test a sample"),) if len(_focus_targets(self)) > 1 else ()),
+            *_sample_tab_hint(self),
             ("⏎", "Edit"),
             (COMMIT_KEY, "Save"),
             ("Esc", "Cancel"),
         )
         if self._source_index is not None:
             hints = (*hints, ("Ctrl+D", "Delete source"))
-        bar = _editor_hint_bar(hints) if _typing_in(self) else _hint_bar(app, hints, screen=self)
-        self.query_one("#footer_hints", Static).update(bar)
+        self.query_one("#footer_hints", Static).update(_form_hint_bar(self, app, hints))
+
+    def on_descendant_focus(self, _ev: events.DescendantFocus) -> None:
+        self._render_footer()
+
+    def on_descendant_blur(self, _ev: events.DescendantBlur) -> None:
+        self._render_footer()
 
     # ── Save / cancel ────────────────────────────────────────
 
@@ -3342,8 +3372,23 @@ class AddCollectionWizard(Screen[None]):
         # An untouched form, to tell "nothing typed yet" from "a filled form
         # about to be thrown away".
         self._opened_with = copy.deepcopy(self._fields)
+        self._render_footer()
+
+    def _render_footer(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
-        self.query_one("#footer_hints", Static).update(_wizard_hints(self, app))
+        hints = (
+            ("⏎", "Edit"),
+            *_sample_tab_hint(self),
+            (COMMIT_KEY, "Save & Index"),
+            ("Esc", "Cancel"),
+        )
+        self.query_one("#footer_hints", Static).update(_form_hint_bar(self, app, hints))
+
+    def on_descendant_focus(self, _ev: events.DescendantFocus) -> None:
+        self._render_footer()
+
+    def on_descendant_blur(self, _ev: events.DescendantBlur) -> None:
+        self._render_footer()
 
     def _populate_fields(self) -> None:
         self.query_one(SettingsList).set_items(self._build_field_items())
@@ -3361,6 +3406,7 @@ class AddCollectionWizard(Screen[None]):
             self.query_one("#form_sample_sep", Static).update(
                 f"─── Paste frontmatter to test:  {sanitise_display_text(rule)} ───"
             )
+        self._render_footer()
 
     def _build_field_items(self) -> list[MenuItem]:
         from fnd.config import EXCLUDES_PRESETS
@@ -3617,7 +3663,8 @@ class AddCollectionWizard(Screen[None]):
         self._fields[field_key] = ev.value
         self.query_one(EditBar).close()
         self.query_one(SettingsList).refresh_values()
-        # Re-evaluate the sample tester since the filter may have changed.
+        # The filter may have changed, and with it whether there is a sample to test.
+        self._refresh_sample_tester()
         self._refresh_match_status()
         self.query_one(SettingsList).focus()
 
@@ -4723,9 +4770,11 @@ class UnsavedChangesScreen(Screen[None]):
         # which the editor's footer offers as a way OUT, so landing on "Save
         # changes" put a write one Enter from a key that means the opposite.
         open_confirm_list(self, land_on="stay")
-        app: FNDApp = self.app  # type: ignore[assignment]
+        from fnd.tui.app import render_hint_bar
+
+        # No anchors: `q` means Keep editing here and `:` is ignored.
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Choose"), ("⏎", "Select"), ("Esc", "Keep editing")))
+            render_hint_bar((), (("↑↓", "Choose"), ("⏎", "Select"), ("Esc", "Keep editing")))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -5579,23 +5628,28 @@ class StillFlatDrillIn(Screen[None]):
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
+        self._refresh()
+        self._render_footer()
+
+    def _render_footer(self) -> None:
+        """The row keys only while there is a row for them to act on."""
         import contextlib as _ctx
 
-        self._refresh()
         app: FNDApp = self.app  # type: ignore[assignment]
+        row_keys = (
+            (
+                ("↑↓", "Nav"),
+                ("⏎ / r", "Retry"),
+                ("⇧⏎", "Reveal"),
+                ("d", "Dismiss"),
+                ("c", "Copy path"),
+            )
+            if self._rows
+            else ()
+        )
         with _ctx.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
-                _hint_bar(
-                    app,
-                    (
-                        ("↑↓", "Nav"),
-                        ("⏎ / r", "Retry"),
-                        ("⇧⏎", "Reveal"),
-                        ("d", "Dismiss"),
-                        ("c", "Copy path"),
-                        ("Esc", "Back"),
-                    ),
-                )
+                _hint_bar(app, (*row_keys, ("Esc", "Back")))
             )
 
     def _refresh(self) -> None:
@@ -5642,6 +5696,7 @@ class StillFlatDrillIn(Screen[None]):
         import contextlib as _ctx
 
         self._rows = rows
+        self._render_footer()
         # Clamp cursor after a row is removed by Retry/Dismiss so the
         # cursor doesn't index past the end.
         if self._cursor >= len(self._rows):
@@ -6462,6 +6517,12 @@ class FilterBrowserScreen(Screen[None]):
     @on(ToggleTree.NodeHighlighted, "#filter_tree")
     def _on_row_highlighted(self, _ev: ToggleTree.NodeHighlighted[dict[str, Any]]) -> None:
         self._refresh_legend()
+        self._render_footer()
+
+    @on(ToggleTree.NodeExpanded, "#filter_tree")
+    @on(ToggleTree.NodeCollapsed, "#filter_tree")
+    def _on_row_folded(self, _ev: Any) -> None:
+        self._render_footer()
 
     def _refresh_legend(self) -> None:
         """The glyph meanings for the branch the cursor is in.
@@ -6499,7 +6560,6 @@ class FilterBrowserScreen(Screen[None]):
 
     def on_mount(self) -> None:
         self._rebuild()
-        self._render_footer()
         if self._sample_provider is not None:
             self.run_worker(self._load_sample, thread=True)
 
@@ -6508,12 +6568,25 @@ class FilterBrowserScreen(Screen[None]):
         them; naming them there advertises keys that do not work."""
         app: FNDApp = self.app  # type: ignore[assignment]
         typing = _typing_in(self)
+        search = self.query_one("#filter_search", Input)
+        tree = self.query_one("#filter_tree", ToggleTree)
+        on_bar = isinstance(self.focused, ClearFiltersBar)
+        enter = "Return to defaults" if on_bar else tree.enter_label()
+        # Esc, and ← where it leaves, clear a row filter before they leave.
+        esc = "Clear" if search.value else "Leave"
+        left, right = ("Leave", None) if on_bar else tree.arrow_labels()
+        arrows: tuple[tuple[str, str], ...] = (
+            (*((("→", right),) if right else ()),)
+            if left == "Leave"
+            else ((("←/→", f"{left}/{right}") if right else ("←", left)),)
+        )
+        leave = ("Esc/←", esc) if left == "Leave" else ("Esc", esc)
         cluster: tuple[tuple[str, str], ...] = (
-            (("⏎", "Rows"), ("Esc", "Clear"))
+            (("⏎", "Rows"), ("Esc", esc))
             if typing
             else (
-                ("⏎", "Toggle"),
-                ("→", "Open"),
+                *((("⏎", enter),) if enter else ()),
+                *arrows,
                 ("/", "Filter"),
                 ("t", "As text"),
                 *(
@@ -6526,7 +6599,7 @@ class FilterBrowserScreen(Screen[None]):
                 # Esc asks; it does not discard. Naming one of the answers on
                 # the key that opens the question invites Esc then Enter, which
                 # loses a filter set.
-                ("Esc/←", "Leave"),
+                leave,
             )
         )
         bar = _editor_hint_bar(cluster) if typing else _hint_bar(app, cluster)
@@ -6641,6 +6714,7 @@ class FilterBrowserScreen(Screen[None]):
         self._refresh_legend()
         self._refresh_summary()
         self._say_when_nothing_matches(bool(groups))
+        self._render_footer()
 
     @on(ToggleTree.SelectionChanged, "#filter_tree")
     def _on_selection(self, ev: ToggleTree.SelectionChanged) -> None:
@@ -6662,6 +6736,7 @@ class FilterBrowserScreen(Screen[None]):
         # their rules moved. `_rebuild` is the other caller, not the only one.
         self._resample_if_stale()
         self._refresh_summary()
+        self._render_footer()
 
     def _say_when_nothing_matches(self, any_rows: bool) -> None:
         """Put an empty row filter in the pane's title.
