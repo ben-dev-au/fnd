@@ -19,6 +19,7 @@ from fnd.config import is_all_collections
 from fnd.fsmeta import path_is_absent
 from fnd.kinds import CATEGORIES, CATEGORY_BY_ID, KIND_BY_ID, KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope, SearchSnapshot
+from fnd.tui.collection_marks import INACTIVE, CollectionMarks, Mark, mark_style
 from fnd.tui.results_labels import (
     _styled_action_label,
     _styled_parent_label,
@@ -116,6 +117,19 @@ def _branch_row(
     # the row clips; a name is user data and must never read as a DIFFERENT
     # name, so it keeps an ellipsis instead.
     return f"{label} ({compact})" if column > 0 else f"{label[:1]}\u2026 ({compact})"
+
+
+def _legend_label(label: str, name_start: int, mark: Mark | None) -> Any:
+    """A collection row whose name wears the mark its results carry, shape after the name."""
+    name_end = label.rfind(" (")
+    if mark is None or name_end <= name_start:
+        return _styled_parent_label(label)
+    if mark.shape:
+        label = f"{label[:name_end]} {mark.shape}{label[name_end:]}"
+        name_end += 1 + len(mark.shape)
+    styled = _styled_parent_label(label)
+    styled.stylize(mark_style(mark.colour), name_start, name_end)
+    return styled
 
 
 def _absent(searching: bool) -> str:
@@ -252,6 +266,7 @@ class ScopeController:
             "filters_pane" if p == "filters_panel_tree" else p for p in saved.collapsed_panels
         }
         self.expanded_collections: set[str] = set(saved.expanded_collections)
+        self._legend_marks: dict[str, Mark] = {}
         # What the Filters title says without its collapse marker, so the
         # collapse gesture can restyle it without recomputing the counts.
         self._filters_title: str = "Filters"
@@ -474,6 +489,23 @@ class ScopeController:
                 out[name] = ticked
         return out
 
+    @property
+    def collection_marks(self) -> CollectionMarks:
+        cfg = self._app._config
+        if not (cfg and cfg.collections):
+            return INACTIVE
+        return CollectionMarks.build(
+            cfg.collections,
+            self.collections,
+            self.source_scope,
+            (g.memberships for g in self._app._search.groups),
+        )
+
+    def sync_legend(self, marks: CollectionMarks) -> None:
+        """Repaint the panel when a new result set moved the marks it shows."""
+        if marks.marks != self._legend_marks:
+            self._relabel_collection_rows()
+
     def snapshot(self, query: str) -> SearchSnapshot:
         """Project the live scope into the read-only value object the command
         serializer consumes — the one seam between scope state and
@@ -574,33 +606,12 @@ class ScopeController:
         tree.show_root = False
         tree.clear()
         budget = self._branch_budget(tree)
+        marks = self.collection_marks
+        self._legend_marks = marks.marks
         for name in names:
             col = cfg.collections[name] if cfg else None
-            marker = self.collection_marker(name)
-            n_sources = len(col.sources) if col else 0
-            plural = "s" if n_sources != 1 else ""
-            # A source that is not there indexes nothing, and every other column
-            # on this row reads perfectly healthy while it does. One stat each,
-            # because this rebuilds on every scope toggle.
-            gone = _missing_sources(col)
-            # The row elides from the name inwards with an ellipsis, marker kept
-            # at the front: a bare cut (`research-note`) names a collection that
-            # could exist.
-            prefix = f"{marker}  "
-            value = f"{n_sources} source{plural}"
-            compact = f"{n_sources} src"
-            if gone:
-                value = f"⚠ {gone} of {n_sources} missing"
-                compact = f"⚠ {gone} missing"
-            label = prefix + _branch_row(
-                name,
-                value,
-                compact,
-                max(0, budget - len(prefix)),
-                column=0,
-            )
             node = tree.root.add(
-                _styled_parent_label(label),
+                self._collection_row(name, col, marks, budget),
                 data={"kind": "collection", "name": name},
                 expand=name in self.expanded_collections,
             )
@@ -619,8 +630,52 @@ class ScopeController:
                         },
                     )
         tree.border_title = self._panel_title(names)
+        self._app._results.relabel_rows(marks_only=True)
         # The collections list changed length — reflow the sidebar heights.
         self._app._reflow_sidebar()
+
+    def _collection_row(
+        self, name: str, col: CollectionConfig | None, marks: CollectionMarks, budget: int
+    ) -> Any:
+        marker = self.collection_marker(name)
+        n_sources = len(col.sources) if col else 0
+        plural = "s" if n_sources != 1 else ""
+        # A source that is not there indexes nothing, and every other column
+        # on this row reads perfectly healthy while it does. One stat each,
+        # because this rebuilds on every scope toggle.
+        gone = _missing_sources(col)
+        # The row elides from the name inwards with an ellipsis, marker kept
+        # at the front: a bare cut (`research-note`) names a collection that
+        # could exist.
+        prefix = f"{marker}  "
+        value = f"{n_sources} source{plural}"
+        compact = f"{n_sources} src"
+        if gone:
+            value = f"⚠ {gone} of {n_sources} missing"
+            compact = f"⚠ {gone} missing"
+        mark = marks.mark(name)
+        shape_cells = 1 + len(mark.shape) if mark and mark.shape else 0
+        label = prefix + _branch_row(
+            name, value, compact, max(0, budget - len(prefix) - shape_cells), column=0
+        )
+        return _legend_label(label, len(prefix), mark)
+
+    def _relabel_collection_rows(self) -> None:
+        """Every row, since a toggle moves the marks of the collections after it."""
+        try:
+            tree = self._app.query_one("#collections_panel_tree", Tree)
+        except Exception:
+            return
+        cfg = self._app._config
+        marks = self.collection_marks
+        self._legend_marks = marks.marks
+        budget = self._branch_budget(tree)
+        for node in tree.root.children:
+            data = node.data if isinstance(node.data, dict) else {}
+            name = str(data.get("name") or "")
+            if data.get("kind") == "collection" and name:
+                col = cfg.collections.get(name) if cfg else None
+                node.set_label(self._collection_row(name, col, marks, budget))
 
     # ── Filters panel (UX-F) ──────────────────────────────────────
 
@@ -1481,6 +1536,9 @@ class ScopeController:
         # and resets the cursor to the root every time the user
         # toggles.
         self._update_collections_panel_node(ev.node)
+        self._relabel_collection_rows()
+        # A toggle moves the marks of later collections; rows must not wait for the re-search.
+        self._app._results.relabel_rows(marks_only=True)
         self._refresh_collections_panel_title()
         # The tag and file-type rows are index-derived and scoped to the active
         # collections, so a scope change changes which of them exist.
@@ -1516,41 +1574,14 @@ class ScopeController:
             self.selection[collection] = current
 
     def _update_collections_panel_node(self, node: Any) -> None:
-        """Swap the marker on a toggled node + cascade to dependent rows.
-
-        Preserves cursor (no ``tree.clear()`` involved). When a
-        collection row is toggled, every source child marker is
-        repainted too. When a source row is toggled, the parent
-        collection's marker is recomputed so its tri-state (●/◐/○)
-        reads the new source state.
-        """
+        """Swap the source markers under a toggled row; collection rows relabel separately."""
         data = node.data if isinstance(node.data, dict) else {}
         kind = data.get("kind")
         if kind == "collection":
-            name = str(data.get("name") or "")
-            if not name:
-                return
-            self._repaint_collection_node(node, name)
             for child in node.children:
                 self._repaint_source_node(child)
-            return
-        if kind == "source":
+        elif kind == "source":
             self._repaint_source_node(node)
-            parent = node.parent
-            if parent is None:
-                return
-            parent_data = parent.data if isinstance(parent.data, dict) else {}
-            parent_name = str(parent_data.get("name") or "")
-            if parent_name:
-                self._repaint_collection_node(parent, parent_name)
-
-    def _repaint_collection_node(self, node: Any, name: str) -> None:
-        cfg = self._app._config
-        col = cfg.collections.get(name) if cfg else None
-        n_sources = len(col.sources) if col else 0
-        marker = self.collection_marker(name)
-        label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
-        node.set_label(_styled_parent_label(label))
 
     def _repaint_source_node(self, node: Any) -> None:
         data = node.data if isinstance(node.data, dict) else {}

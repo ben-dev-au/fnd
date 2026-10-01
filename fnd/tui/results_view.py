@@ -145,6 +145,8 @@ class ResultsView:
         # Two files can share a basename; the row is the only thing the user
         # has to tell them apart.
         names = disambiguated_names([g.path for g in self._app._search.groups])
+        marks = self._app._scope.collection_marks
+        self._app._scope.sync_legend(marks)
         # Statted once per rebuild, not per repaint: a resize must not re-walk
         # the disk. The preview renders the INDEX's copy, so a row whose file
         # has gone or moved on needs to say so before the user trusts it.
@@ -163,6 +165,7 @@ class ResultsView:
                         name_budget=budget,
                         display_name=names.get(g.path, ""),
                         stale=g.path in self._stale,
+                        mark=marks.file_mark(g.memberships),
                     )
                 ),
                 data={"kind": "file", "group": g},
@@ -224,11 +227,8 @@ class ResultsView:
         (toggle/guide, measured) and the 7-cell score column. 0 before layout."""
         return max(0, tree.scrollable_content_region.width - 2 - 7)
 
-    def relabel_rows(self) -> None:
-        """Re-elide every row in place (no tree rebuild, so the cursor and
-        preview are untouched), used on resize when the budget changes.
-        Match rows too: they are most of the tree, and they were the rows
-        that lost their identity when the pane narrowed."""
+    def relabel_rows(self, *, marks_only: bool = False) -> None:
+        """Relabel rows in place, keeping cursor and preview: all on resize, file rows only for marks."""
         try:
             tree = self._app.query_one("#results_pane", Tree)
         except Exception:
@@ -236,6 +236,7 @@ class ResultsView:
         budget = self.label_budget(tree)
         max_score = max((g.top_score for g in self._app._search.groups), default=0.0)
         names = disambiguated_names([g.path for g in self._app._search.groups])
+        marks = self._app._scope.collection_marks
         for node in tree.root.children:
             data = node.data
             if isinstance(data, dict) and data.get("kind") == "file":
@@ -248,9 +249,13 @@ class ResultsView:
                             name_budget=budget,
                             display_name=names.get(group.path, ""),
                             stale=group.path in self._stale,
+                            mark=marks.file_mark(group.memberships),
                         )
                     )
                 )
+                if marks_only:
+                    # Marks sit on file rows only; rechecking match rows measured 43 to 171 ms on 50 files.
+                    continue
                 strict = self._app._effective_evidence_spec
                 painting = self._app._effective_match_spec
                 for leaf in node.children:
@@ -299,7 +304,9 @@ class ResultsView:
     def refit_after_resize(self) -> None:
         # Result rows are re-elided from ``ResultsTree.GeometryChanged``, not
         # here: this runs a layout early and would elide against the old width.
-        self._app._refresh_status()  # preview title
+        # The preview refits its own labels inside the reflow (`MatchAwareScroll.fit_edges`).
+        self._app._refresh_results_title()
+        self._app._refresh_footer_hints()
 
     @staticmethod
     def target_for_node(node: TreeNode[Any]) -> tuple[FileGroup, Hit] | None:
