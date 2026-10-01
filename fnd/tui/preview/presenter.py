@@ -751,7 +751,7 @@ class PreviewPresenter:
             try:
                 fetched = searcher.get_file_chunks(target_parent_id, max_workers=decode_workers)
             except Exception as e:
-                app.call_from_thread(app._preview.on_load_failed, e)
+                app.call_from_thread(app._preview.on_load_failed, e, decode_token)
                 return
             # For the flat-buffer path (PDF / TXT) the FileView build —
             # which computes per-chunk match spans and stitches the
@@ -785,6 +785,7 @@ class PreviewPresenter:
                 target_focus,
                 fetched,
                 prebuilt,
+                decode_token,
             )
 
         _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
@@ -980,6 +981,7 @@ class PreviewPresenter:
         flat path; structural ignores it."""
         import asyncio
 
+        self._supersede_decode()
         # Route by format: PDF / TXT take the flat-buffer path (one
         # widget per file, line API, line-precise scrollbar markers).
         # MD / DOCX / PPTX stay on the structural Markdown widget below.
@@ -2355,8 +2357,16 @@ class PreviewPresenter:
                 task.cancel()  # type: ignore[attr-defined]
         self.mount_task = None
 
-    def on_load_failed(self, exc: BaseException) -> None:
+    def _supersede_decode(self) -> None:
+        """A newer mount owns the pane. A decode still running is a thread and
+        cannot be stopped, so its token goes stale and its callbacks stand down."""
+        self.decode_token += 1
+        self.decode_worker = None
+
+    def on_load_failed(self, exc: BaseException, token: int | None = None) -> None:
         """Worker error callback. Hide the bar, surface a notify."""
+        if token is not None and token != self.decode_token:
+            return
         self.decode_worker = None
         self.hide_progress_bar()
         self._app.notify(f"Preview load failed: {exc}", severity="error")
@@ -2367,18 +2377,21 @@ class PreviewPresenter:
         focus_chunk_seq: int,
         chunks: list[FileChunk],
         prebuilt: RenderedDocument | None = None,
+        token: int | None = None,
     ) -> None:
         """Worker callback. Caches chunks + (optional) flat-path bundle;
-        re-enters the mount path."""
-        # This decode is done. (A cancelled worker never reaches either callback,
-        # but ``is_finished`` covers CANCELLED too, so pipeline_busy self-clears.)
-        self.decode_worker = None
+        re-enters the mount path unless a newer mount has superseded it."""
+        superseded = token is not None and token != self.decode_token
+        if not superseded:
+            self.decode_worker = None
         self.chunk_cache[parent_id] = chunks
         if prebuilt is not None:
             # Cache the bundle so a later visit to the same file in the
             # same query can install it without re-decoding or re-
             # rendering. Same key as ``_flat_buffer_cache``.
             self.prebuilt_cache[(parent_id, self._app._search.query_signature())] = prebuilt
+        if superseded:
+            return
         if not chunks:
             # Empty file — hide bar, leave pane blank.
             self.hide_progress_bar()
