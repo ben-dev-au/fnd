@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -27,7 +29,7 @@ from fnd.query import FileChunk, FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.preview_dispatcher import choose_preview_mode
 from fnd.tui.widgets.preview_container import PreviewContainer
-from tests._pilot_wait import safe_pause
+from tests._pilot_wait import safe_pause, wait_until
 
 
 @pytest.fixture
@@ -66,6 +68,13 @@ async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index:
         await safe_pause(pilot)
         assert app._search.groups, "setup — query produced no results"
         preview = app._preview
+        # The app's own first preview must land first: the parked mount below
+        # takes its `mount_task` slot, so a load still running there is never cancelled.
+        await wait_until(
+            pilot,
+            lambda: preview.showing_parent() is not None and not preview.pipeline_busy(),
+            message="the first result's preview never landed",
+        )
         struct_g, struct_chunks = _pick(app, flat=False)
         flat_g, flat_chunks = _pick(app, flat=True)
 
@@ -116,3 +125,100 @@ async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index:
         assert preview.active is None, (
             "the superseded structural container must not have taken the pane back"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_decode_that_finishes_after_a_newer_navigation_does_not_show_its_file(
+    mixed_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = FNDApp(index_dir=mixed_index, initial_query="apples")
+    async with app.run_test() as pilot:
+        preview = app._preview
+        cold, release = await _hold_a_cold_decode(pilot, app, monkeypatch, flat=False)
+        flat_g, flat_chunks = _pick(app, flat=True)
+        preview.chunk_cache[flat_g.parent_id] = flat_chunks
+        preview.render_full_doc(flat_g.parent_id, focus_chunk_seq=flat_chunks[0].chunk_seq)
+        assert app._flat.active_buffer is not None, "setup: the cached flat file shows at once"
+
+        release.set()
+        await wait_until(
+            pilot,
+            lambda: cold.parent_id in preview.chunk_cache,
+            message="the held decode never reported back",
+        )
+        await wait_until(pilot, lambda: not preview.pipeline_busy(), message="never settled")
+        assert app._flat.active_buffer is not None, "the late decode replaced the newer preview"
+        assert preview.active is None
+
+
+async def _hold_a_cold_decode(
+    pilot: Any, app: FNDApp, monkeypatch: pytest.MonkeyPatch, *, flat: bool
+) -> tuple[FileGroup, threading.Event]:
+    """Start decoding a file the preview is not showing, held until the event is set."""
+    preview = app._preview
+    await wait_until(
+        pilot,
+        lambda: preview.showing_parent() is not None and not preview.pipeline_busy(),
+        message="the first result's preview never landed",
+    )
+    searcher = app._search.searcher
+    assert searcher is not None
+    cold = next(
+        g
+        for g in app._search.groups
+        if g.parent_id != preview.showing_parent()
+        and (choose_preview_mode(searcher.get_file_chunks(g.parent_id)) == "flat") is flat
+    )
+    preview.chunk_cache.pop(cold.parent_id, None)
+    release = threading.Event()
+    decode = searcher.get_file_chunks
+
+    def held(parent_id: str, **kwargs: object) -> list[FileChunk]:
+        # Only the decode's worker thread waits: the test reads chunks on the loop too.
+        if (
+            parent_id == cold.parent_id
+            and threading.current_thread() is not threading.main_thread()
+        ):
+            release.wait(10)
+        return decode(parent_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(searcher, "get_file_chunks", held)
+    preview.render_full_doc(cold.parent_id, focus_chunk_seq=0)
+    assert preview.decode_worker is not None, "setup: the cold file should be decoding"
+    return cold, release
+
+
+@pytest.mark.asyncio
+async def test_a_decode_that_finishes_after_the_results_clear_shows_nothing(
+    mixed_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = FNDApp(index_dir=mixed_index, initial_query="apples")
+    async with app.run_test() as pilot:
+        cold, release = await _hold_a_cold_decode(pilot, app, monkeypatch, flat=False)
+        app._search.clear_results()
+        release.set()
+        await wait_until(
+            pilot,
+            lambda: cold.parent_id in app._preview.chunk_cache,
+            message="the held decode never reported back",
+        )
+        await wait_until(pilot, lambda: not app._preview.pipeline_busy(), message="never settled")
+        assert app._preview.showing_parent() is None, "the late decode filled a cleared pane"
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_flat_decode_does_not_file_its_bundle(
+    mixed_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = FNDApp(index_dir=mixed_index, initial_query="apples")
+    async with app.run_test() as pilot:
+        preview = app._preview
+        cold, release = await _hold_a_cold_decode(pilot, app, monkeypatch, flat=True)
+        preview.bump_reset_generation()
+        release.set()
+        await wait_until(
+            pilot,
+            lambda: cold.parent_id in preview.chunk_cache,
+            message="the held decode never reported back",
+        )
+        assert not any(key[0] == cold.parent_id for key in preview.prebuilt_cache)

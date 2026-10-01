@@ -240,8 +240,8 @@ class PreviewPresenter:
         # cancellation; the finally runs a tick later and would otherwise race
         # the reset and re-pollute it ("stuck mid-mount after a new query").
         self.reset_generation: int = 0
-        # Generation for the flat decode's line-count reporting, so a
-        # superseded decode cannot report onto its successor's count.
+        # Generation of the in-flight decode: a superseded one can neither report
+        # onto its successor's line count nor mount its file.
         self.decode_token = 0
         # Bounded-time reveal backstop timer (see _arm_reveal_watchdog). Re-armed
         # on every pre-reveal activation; disarmed when the container is revealed.
@@ -742,8 +742,8 @@ class PreviewPresenter:
         except Exception:
             estimated_wrap_width = 0
         app = self._app
-        # Identifies this decode, so a superseded one still running cannot
-        # report onto its successor's count.
+        # Identifies this decode, so a superseded one still running can neither
+        # report onto its successor's count nor mount its file.
         self.decode_token += 1
         decode_token = self.decode_token
 
@@ -751,7 +751,7 @@ class PreviewPresenter:
             try:
                 fetched = searcher.get_file_chunks(target_parent_id, max_workers=decode_workers)
             except Exception as e:
-                app.call_from_thread(app._preview.on_load_failed, e)
+                app.call_from_thread(app._preview.on_load_failed, e, decode_token)
                 return
             # For the flat-buffer path (PDF / TXT) the FileView build —
             # which computes per-chunk match spans and stitches the
@@ -785,6 +785,7 @@ class PreviewPresenter:
                 target_focus,
                 fetched,
                 prebuilt,
+                decode_token,
             )
 
         _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
@@ -980,6 +981,7 @@ class PreviewPresenter:
         flat path; structural ignores it."""
         import asyncio
 
+        self._supersede_decode()
         # Route by format: PDF / TXT take the flat-buffer path (one
         # widget per file, line API, line-precise scrollbar markers).
         # MD / DOCX / PPTX stay on the structural Markdown widget below.
@@ -2304,6 +2306,7 @@ class PreviewPresenter:
         resume paths that cancel a mount but keep the cache must NOT call this —
         their partial container is still wanted for a later resume."""
         self.reset_generation += 1
+        self._supersede_decode()
         # A new query / scope change is a fresh start: the next navigation gets
         # its own repair budget rather than inheriting a spent one.
         self._paint_repair_target = None
@@ -2355,8 +2358,16 @@ class PreviewPresenter:
                 task.cancel()  # type: ignore[attr-defined]
         self.mount_task = None
 
-    def on_load_failed(self, exc: BaseException) -> None:
+    def _supersede_decode(self) -> None:
+        """A newer mount owns the pane. A decode still running is a thread and
+        cannot be stopped, so its token goes stale and its callbacks stand down."""
+        self.decode_token += 1
+        self.decode_worker = None
+
+    def on_load_failed(self, exc: BaseException, token: int | None = None) -> None:
         """Worker error callback. Hide the bar, surface a notify."""
+        if token is not None and token != self.decode_token:
+            return
         self.decode_worker = None
         self.hide_progress_bar()
         self._app.notify(f"Preview load failed: {exc}", severity="error")
@@ -2367,13 +2378,18 @@ class PreviewPresenter:
         focus_chunk_seq: int,
         chunks: list[FileChunk],
         prebuilt: RenderedDocument | None = None,
+        token: int | None = None,
     ) -> None:
         """Worker callback. Caches chunks + (optional) flat-path bundle;
-        re-enters the mount path."""
-        # This decode is done. (A cancelled worker never reaches either callback,
-        # but ``is_finished`` covers CANCELLED too, so pipeline_busy self-clears.)
-        self.decode_worker = None
+        re-enters the mount path unless a newer mount has superseded it."""
+        superseded = token is not None and token != self.decode_token
+        if not superseded:
+            self.decode_worker = None
         self.chunk_cache[parent_id] = chunks
+        if superseded:
+            # Its bundle carries the build-time query's highlights, so it cannot be
+            # filed under whatever query is current now.
+            return
         if prebuilt is not None:
             # Cache the bundle so a later visit to the same file in the
             # same query can install it without re-decoding or re-

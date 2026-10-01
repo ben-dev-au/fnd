@@ -16,6 +16,7 @@ from fnd.tui.outline_model import NO_OUTLINE
 from fnd.tui.preview.match_row import heading_rows
 from fnd.tui.preview.tuning import MATCH_CONTEXT_FRACTION
 from fnd.tui.widgets.outline_tree import OutlineTree
+from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._pilot_wait import safe_pause, safe_press, wait_until
 
 TERM = "quartzfin"
@@ -110,13 +111,19 @@ def _entry(app: FNDApp, title: str) -> tuple[int, Any]:
     return index, entries[index]
 
 
+def _layout_current(app: FNDApp) -> bool:
+    """No hidden preview still holds layout space: a swap scrolls for the layout
+    without the outgoing container, which only drops out on the next layout pass."""
+    return not any(c.virtual_region.height for c in app.query(PreviewContainer) if not c.display)
+
+
 def _landed(app: FNDApp) -> bool:
     pane = app.query_one("#preview_pane")
     return not (
         app._preview_scroll.is_settling
         or app._preview.pipeline_busy()
         or app.animator.is_being_animated(pane, "scroll_y")
-    )
+    ) and _layout_current(app)
 
 
 def _followed(app: FNDApp) -> bool:
@@ -806,6 +813,31 @@ async def test_a_jump_to_a_far_unmounted_section_lands(tmp_path: Path, tmp_index
         position = app._preview_scroll.reading_position(MATCH_CONTEXT_FRACTION)
         assert position is not None
         assert position[0] == entry.chunk_seq
+
+
+@pytest.mark.asyncio
+async def test_a_swap_leaves_the_outgoing_preview_in_the_layout_until_the_next_pass(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fnd.tui.preview.presenter import PreviewPresenter
+    from tests._preview_corpus import wide_doc
+
+    seen: list[bool] = []
+    swap = PreviewPresenter.swap_reveal_target
+
+    def spy(self: PreviewPresenter, *args: Any, **kwargs: Any) -> bool:
+        swapped = swap(self, *args, **kwargs)
+        if swapped:
+            seen.append(_layout_current(self._app))
+        return swapped
+
+    monkeypatch.setattr(PreviewPresenter, "swap_reveal_target", spy)
+    app = FNDApp(index_dir=wide_doc(tmp_path, tmp_index_dir), initial_query="quartzfin")
+    async with app.run_test(size=(120, 45)) as pilot:
+        await _results_ready(pilot, app)
+        await _open(pilot, app, "wide.md")
+        await _jump(pilot, app, "Section 290")
+        assert seen == [False], "the swap left the outgoing preview in the layout unnoticed"
 
 
 @pytest.mark.asyncio
