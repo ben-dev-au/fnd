@@ -55,6 +55,7 @@ from fnd.schema import (
     SCHEMA_VERSION,
     build_schema,
     membership_token,
+    parse_membership_token,
 )
 
 _SNIPPET_CTX = 240
@@ -186,6 +187,8 @@ class Hit:
     # (see ``fnd.tui.match_evidence``); the two substrates diverge, and that
     # divergence is what makes a match unpaintable.
     body_md: str = ""
+    # (collection, source root) pairs the file is indexed under.
+    memberships: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -238,6 +241,7 @@ class FileGroup:
     title: str
     top_score: float
     hits: list[Hit]
+    memberships: tuple[tuple[str, str], ...] = ()
 
 
 def _open_index(index_dir: Path) -> Index:
@@ -256,6 +260,10 @@ def _first_str(doc: object, field: str) -> str:
     if val is None:
         return ""
     return str(val)
+
+
+def _memberships_of(doc: object) -> tuple[tuple[str, str], ...]:
+    return tuple(parse_membership_token(str(v)) for v in doc.get_all(F_MEMBERSHIP))  # type: ignore[attr-defined]
 
 
 def _first_int(doc: object, field: str) -> int:
@@ -653,6 +661,7 @@ class Searcher:
                     meta_blob=meta_blob_bytes,
                     body_text=body_text,
                     body_md=body_md_bytes.decode("utf-8") if body_md_bytes else "",
+                    memberships=_memberships_of(doc),
                 )
             )
         return out
@@ -931,6 +940,7 @@ def group_by_file(
                 title=top.title,
                 top_score=top.score,
                 hits=section_hits,
+                memberships=top.memberships,
             )
         )
     return out

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 
 from fnd.display_text import sanitise_display_text
+from fnd.tui.collection_marks import mark_style
 
 if TYPE_CHECKING:
     from fnd.query import FileGroup, Hit
+    from fnd.tui.collection_marks import Mark
 
 __all__ = [
     "_build_label",
@@ -28,6 +30,7 @@ __all__ = [
     "_trim_redundant_heading",
     "disambiguated_names",
     "reapply_state_marker",
+    "reapply_styles",
     "state_colour",
 ]
 
@@ -147,6 +150,11 @@ def reapply_state_marker(rendered: Any, label: Any) -> Any:
     span added last wins, so the marker would lose its colour on exactly the
     row the user is looking at. Only styles this module minted are restored.
     """
+    return reapply_styles(rendered, label, set(_MARKER_STYLES.values()))
+
+
+def reapply_styles(rendered: Any, label: Any, styles: Collection[Any]) -> Any:
+    """Restore ``label``'s spans in ``styles`` over whatever ``rendered`` laid on top."""
     from rich.text import Text
 
     if not isinstance(label, Text) or not isinstance(rendered, Text):
@@ -154,9 +162,8 @@ def reapply_state_marker(rendered: Any, label: Any) -> Any:
     offset = len(rendered.plain) - len(label.plain)
     if offset < 0:
         return rendered
-    known = set(_MARKER_STYLES.values())
     for span in label.spans:
-        if span.style in known:
+        if span.style in styles:
             rendered.stylize(span.style, span.start + offset, span.end + offset)
     return rendered
 
@@ -173,7 +180,7 @@ def _styled_parent_label(label: Any) -> Any:
 
     if isinstance(label, Text):
         styled = label.copy()
-        styled.stylize("dim")
+        styled.stylize_before("dim")
         return styled
     return Text(str(label), style="dim")
 
@@ -407,11 +414,22 @@ def _format_file_label(
     name_budget: int = 0,
     display_name: str = "",
     stale: bool = False,
+    mark: Mark | None = None,
 ) -> Any:
     name = display_name or Path(g.path).name
     # Charged BEFORE eliding: added afterwards it pushed the row 2 cells past
     # its budget, and the cells it took were the suffix the elision keeps.
     marker = f"{_STALE_GLYPH} " if stale else ""
     if name_budget > 0:
-        name = _elide_middle_keep_suffix(name, max(1, name_budget - cell_len(marker)))
-    return _build_label(f"{marker}{name}", g.top_score, max_score)
+        shape_cells = 1 + cell_len(mark.shape) if mark and mark.shape else 0
+        name = _elide_middle_keep_suffix(name, max(1, name_budget - cell_len(marker) - shape_cells))
+    label = _build_label(f"{marker}{name}", g.top_score, max_score)
+    if mark is None:
+        return label
+    style = mark_style(mark.colour)
+    suffix = Path(name).suffix
+    if suffix:
+        label.stylize(style, len(label) - len(suffix))
+    if mark.shape:
+        label.append(f" {mark.shape}", style=style)
+    return label
