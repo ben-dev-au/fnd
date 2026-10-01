@@ -1604,17 +1604,19 @@ class SettingsScreen(Screen[None]):
             esc = ("Esc", "Clear") if focused.value else ("Esc", "Back")
             return (("↓", "Results"), ("⏎", "Go to first"), esc)
 
+        # Esc and ← clear a row filter before they leave the page.
+        leave = "Clear" if self.query_one("#settings_search", Input).value else "Back"
         # Keybindings key rows: those that only document a key run nothing. The
         # filter can surface other sections' rows, which take the default below.
         row = self._cursor_item()
         if self.is_keybindings and (row is None or row.key):
             run = (("⏎", "Run"),) if row is not None and row.action_id else ()
-            return (*run, ("[key]", "Run directly"), ("Esc", "Back"))
+            return (*run, ("[key]", "Run directly"), ("Esc", leave))
 
-        # Default — per-kind ⏎ label. Reveal append on external-app rows.
-        cursor_item = self._cursor_item()
+        # Default: per-kind ⏎ label. Reveal append on external-app rows.
+        cursor_item = row
         nav = ("↑↓", "Nav")
-        back = ("←", "Back")
+        back = ("←", leave)
         filt = ("/", "Filter")
 
         if cursor_item is None:

@@ -204,7 +204,7 @@ def _cursor_on_row(browser: Any, starts: str) -> None:
         line
         for line in range(tree.last_line + 1)
         if (node := tree.get_node_at_line(line)) is not None
-        and str(node.label).lstrip("●◐○ ").startswith(starts)
+        and str(node.label).lstrip("●◐○⊘ ").startswith(starts)
     )
 
 
@@ -355,3 +355,40 @@ async def test_a_documenting_key_row_offers_no_enter_through_the_menu_filter(
         )
         await wait_until(pilot, lambda: _shows(screen, "↑↓", "Nav"))
         assert "⏎" not in _footer(screen)
+
+
+@pytest.mark.asyncio
+async def test_esc_and_left_say_they_clear_a_filtered_list(built_index: Path) -> None:
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test(size=(140, 45)) as pilot:
+        menu = await _open_menu(pilot, app, on_list=False)
+        await pilot.press(*"index", "down")
+        await wait_until(pilot, lambda: _shows(menu, "←", "Clear"))
+        await pilot.press("left")
+        await wait_until(pilot, lambda: _shows(menu, "←", "Back"))
+        await pilot.press("question_mark")
+        await wait_until(pilot, lambda: app.screen is not menu)
+        sheet = await settings_ready(pilot, app)
+        await pilot.press("slash", *"quit", "down")
+        await wait_until(pilot, lambda: _shows(sheet, "Esc", "Clear"))
+        await pilot.press("escape")
+        await wait_until(pilot, lambda: _shows(sheet, "Esc", "Back"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("branches", "label"),
+    [(("Maximum file size",), "Select"), (("Tags", "Note tags"), "Cycle")],
+)
+async def test_the_filter_browser_names_enter_on_an_option_by_what_it_does(
+    built_index: Path, one_source: None, branches: tuple[str, ...], label: str
+) -> None:
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test(size=(160, 50)) as pilot:
+        browser = await _open_filters(pilot, app)
+        for branch in branches:
+            _cursor_on_row(browser, branch)
+            await pilot.press("enter")
+            await wait_until(pilot, lambda: _shows(browser, "⏎", "Collapse"))
+        await pilot.press("down")
+        await wait_until(pilot, lambda: _shows(browser, "⏎", label))

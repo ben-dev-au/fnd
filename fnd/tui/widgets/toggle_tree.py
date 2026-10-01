@@ -414,7 +414,7 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
             return None
         if data["kind"] == "item":
             mode = self._mode(self._group_by_id(str(data.get("group"))))
-            return "Edit" if mode == "actions" else "Toggle"
+            return {"actions": "Edit", "radio": "Select", "cycle": "Cycle"}.get(mode, "Toggle")
         group = self._group_by_id(str(data.get("id")))
         if group is None:
             return None
