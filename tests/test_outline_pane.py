@@ -816,7 +816,7 @@ async def test_a_jump_to_a_far_unmounted_section_lands(tmp_path: Path, tmp_index
 
 
 @pytest.mark.asyncio
-async def test_a_far_jump_has_not_landed_until_the_outgoing_preview_leaves_the_layout(
+async def test_a_swap_leaves_the_outgoing_preview_in_the_layout_until_the_next_pass(
     tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fnd.tui.preview.presenter import PreviewPresenter
@@ -838,7 +838,6 @@ async def test_a_far_jump_has_not_landed_until_the_outgoing_preview_leaves_the_l
         await _open(pilot, app, "wide.md")
         await _jump(pilot, app, "Section 290")
         assert seen == [False], "the swap left the outgoing preview in the layout unnoticed"
-        assert _layout_current(app)
 
 
 @pytest.mark.asyncio

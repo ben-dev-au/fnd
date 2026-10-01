@@ -240,8 +240,8 @@ class PreviewPresenter:
         # cancellation; the finally runs a tick later and would otherwise race
         # the reset and re-pollute it ("stuck mid-mount after a new query").
         self.reset_generation: int = 0
-        # Generation for the flat decode's line-count reporting, so a
-        # superseded decode cannot report onto its successor's count.
+        # Generation of the in-flight decode: a superseded one can neither report
+        # onto its successor's line count nor mount its file.
         self.decode_token = 0
         # Bounded-time reveal backstop timer (see _arm_reveal_watchdog). Re-armed
         # on every pre-reveal activation; disarmed when the container is revealed.
@@ -742,8 +742,8 @@ class PreviewPresenter:
         except Exception:
             estimated_wrap_width = 0
         app = self._app
-        # Identifies this decode, so a superseded one still running cannot
-        # report onto its successor's count.
+        # Identifies this decode, so a superseded one still running can neither
+        # report onto its successor's count nor mount its file.
         self.decode_token += 1
         decode_token = self.decode_token
 
@@ -2306,6 +2306,7 @@ class PreviewPresenter:
         resume paths that cancel a mount but keep the cache must NOT call this —
         their partial container is still wanted for a later resume."""
         self.reset_generation += 1
+        self._supersede_decode()
         # A new query / scope change is a fresh start: the next navigation gets
         # its own repair budget rather than inheriting a spent one.
         self._paint_repair_target = None
@@ -2385,13 +2386,15 @@ class PreviewPresenter:
         if not superseded:
             self.decode_worker = None
         self.chunk_cache[parent_id] = chunks
+        if superseded:
+            # Its bundle carries the build-time query's highlights, so it cannot be
+            # filed under whatever query is current now.
+            return
         if prebuilt is not None:
             # Cache the bundle so a later visit to the same file in the
             # same query can install it without re-decoding or re-
             # rendering. Same key as ``_flat_buffer_cache``.
             self.prebuilt_cache[(parent_id, self._app._search.query_signature())] = prebuilt
-        if superseded:
-            return
         if not chunks:
             # Empty file — hide bar, leave pane blank.
             self.hide_progress_bar()

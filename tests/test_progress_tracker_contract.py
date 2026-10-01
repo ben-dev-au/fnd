@@ -44,7 +44,7 @@ PRESENTER_SIGNALS = {
     "mount_task": "the mount phase",
     "active": "the container carrying mounted_indices / _finalise_task",
     "chunk_cache": "warm vs cold: is there a decode to do?",
-    "decode_token": "generation guard for the flat renderer's line counts",
+    "decode_token": "generation guard for the decode: its line counts and callbacks",
 }
 
 # Read off ``presenter.active``. The mount fraction is measured against the
