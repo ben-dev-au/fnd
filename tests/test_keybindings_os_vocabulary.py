@@ -115,22 +115,22 @@ def test_alt_bindings_render_as_alt_off_macos(monkeypatch: pytest.MonkeyPatch) -
     assert _pretty_key("ctrl+right,alt+right") == "Ctrl+→ / Alt+→"
 
 
-def test_skim_row_uses_the_platform_modifier(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_skip_row_uses_the_platform_modifier(monkeypatch: pytest.MonkeyPatch) -> None:
     _as(monkeypatch, "Linux")
     items = _provider_keybindings(_fake_app())
-    skim = [r for r in _rows(items) if r.label.startswith("Skim")]
-    assert skim, [r.label for r in _rows(items)]
-    assert "⌥" not in skim[0].key, skim[0].key
-    assert "Alt" in skim[0].key, skim[0].key
-    assert "Option" not in skim[0].description
+    skip = [r for r in _rows(items) if r.label.startswith("Skip")]
+    assert skip, [r.label for r in _rows(items)]
+    assert "⌥" not in skip[0].key, skip[0].key
+    assert "Alt" in skip[0].key, skip[0].key
+    assert "Option" not in skip[0].description
 
 
-def test_skim_row_keeps_the_option_glyph_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_skip_row_keeps_the_option_glyph_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
     _as(monkeypatch, "Darwin")
     items = _provider_keybindings(_fake_app())
-    skim = next(r for r in _rows(items) if r.label.startswith("Skim"))
-    assert "⌥" in skim.key
-    assert "Option" in skim.description
+    skip = next(r for r in _rows(items) if r.label.startswith("Skip"))
+    assert "⌥" in skip.key
+    assert "Option" in skip.description
 
 
 def test_apple_terminal_tip_is_macos_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,9 +188,9 @@ def test_footer_hints_use_the_platform_modifier(monkeypatch: pytest.MonkeyPatch)
     """The footer and the cheat sheet must agree — one renderer, one
     vocabulary, so a Windows user isn't told to press ⌥."""
     _as(monkeypatch, "Darwin")
-    assert "⌥↑↓" in render_hint_bar((), (("{alt_key}↑↓", "Skim"),)).plain
+    assert "⌥↑↓" in render_hint_bar((), (("{alt_key}↑↓", "Skip"),)).plain
     _as(monkeypatch, "Windows")
-    rendered = render_hint_bar((), (("{alt_key}↑↓", "Skim"),)).plain
+    rendered = render_hint_bar((), (("{alt_key}↑↓", "Skip"),)).plain
     assert "Alt↑↓" in rendered
     assert "⌥" not in rendered
 

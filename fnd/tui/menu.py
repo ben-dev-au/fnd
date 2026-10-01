@@ -546,30 +546,30 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
 # A function, not a constant: the Apple-Terminal workaround is conditional
 # content (a Terminal.app setting), not a word substitution.
 def _keys_results_widget() -> tuple[tuple[str, str, str, str], ...]:
-    skim_hint = (
+    skip_hint = (
         f"Hold {os_labels.ALT_WORD} and arrow through results to move the cursor "
         "WITHOUT loading each preview: browse fast with no mount or lag per row. "
         "The preview loads again on a normal ↑/↓ (the row you land on) or Enter "
-        "(the exact row you skimmed to)."
+        "(the exact row you skipped to)."
     )
     if os_labels.is_macos():
-        skim_hint += (
+        skip_hint += (
             " On Apple Terminal, enable Settings → Profiles → Keys → Left Option "
             "key → Esc+ for Option+arrow to reach fnd."
         )
     return (
         (
             f"{os_labels.ALT_KEY} ↑ / {os_labels.ALT_KEY} ↓",
-            "Skim (no preview load)",
+            "Skip (no preview load)",
             "",
-            skim_hint,
+            skip_hint,
         ),
         (
             "Enter",
-            "Load skimmed row",
+            "Load current row",
             "",
             f"Load the highlighted result into the preview, handy right after an "
-            f"{os_labels.ALT_WORD}-skim to mount exactly the row you stopped on, "
+            f"{os_labels.ALT_WORD}-skip to mount exactly the row you stopped on, "
             f"without stepping.",
         ),
     )
@@ -640,7 +640,7 @@ def _key_row(
         item_id = f"{item_id}.{_slug(id_suffix)}"
     # Single localise seam for the whole cheat sheet: registry-derived rows and
     # the static widget tables both land here, so neither can drift into
-    # hardcoded macOS vocabulary. ``key`` is localised too — the skim row's
+    # hardcoded macOS vocabulary. ``key`` is localised too: the skip row's
     # modifier lives in the key column.
     key = os_labels.localise(key)
     return MenuItem(
@@ -714,8 +714,8 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
                 )
             )
 
-    # Results-pane widget bindings (Option-skim, Enter-load) live on ResultsTree,
-    # not the registry — append them to the registry-derived Results section.
+    # Results-pane widget bindings (Option-skip, Enter-load) live on ResultsTree,
+    # not the registry; append them to the registry-derived Results section.
     sections["Results pane"].extend(
         _key_row(*row, section="results_widget") for row in _keys_results_widget()
     )

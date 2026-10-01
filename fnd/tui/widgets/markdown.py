@@ -34,7 +34,7 @@ from fnd.render import (
     match_word_spans_multi,
     phrase_gap_spans,
 )
-from fnd.tui.mermaid_render import MermaidRenderer
+from fnd.tui.mermaid_render import MermaidRenderer, in_rgb
 from fnd.tui.syntax_theme import highlight_fenced, inline_code_spans
 from fnd.tui.widgets.callouts import rewrite_callouts
 from fnd.tui.widgets.md_inline import apply_obsidian_inline
@@ -441,7 +441,7 @@ class FNDMarkdownFence(MarkdownFence):
     def _set_diagram_content(self, art: Text) -> None:
         # termaid hands back a Rich ``Text``; the fence renders a Textual
         # ``Content`` (``set_content``/``add_spans``), so convert across.
-        content = Content.from_rich_text(art)
+        content = Content.from_rich_text(in_rgb(art, self.app.ansi_theme))
         self._highlighted_code = content
         self.set_content(content)
 

@@ -162,7 +162,7 @@ def _hint_clusters(
         joined = head
     if contextual:
         if anchors:
-            joined.append_text(Text("      ", style=""))
+            joined.append_text(Text("    ", style=""))
         joined.append_text(_cluster(contextual))
     return joined
 
@@ -1183,10 +1183,9 @@ class FNDApp(App[None]):
             ("Esc", "Results"),
         ),
         "results": (
-            ("{alt_key}+O/Ctrl+O", "Open"),
+            ("^O", "Open"),
             ("z", "Reading View"),
-            ("{alt_key}↑↓", "Skim"),
-            ("Tab", "Search"),
+            ("{alt_key}↑↓", "Skip"),
         ),
         "preview": (
             ("j/k", "Scroll"),
@@ -1194,17 +1193,17 @@ class FNDApp(App[None]):
         ),
         "filters": (
             ("Enter", "Toggle"),
-            ("←/→", "Collapse"),
+            ("←/→", "Collapse/Expand"),
             ("Esc", "Results"),
         ),
         "outline": (
             ("Enter", "Go to"),
-            ("←/→", "Collapse"),
+            ("←/→", "Collapse/Expand"),
             ("Esc", "Results"),
         ),
         "collections": (
             ("Enter", "Toggle"),
-            ("←/→", "Collapse"),
+            ("←/→", "Collapse/Expand"),
             ("Esc", "Results"),
         ),
     }
@@ -1535,11 +1534,7 @@ class FNDApp(App[None]):
         self.query_one("#query_bar", Input).focus()
 
     def action_toggle_focus(self) -> None:
-        tree = self.query_one("#results_pane", Tree)
-        if self.focused is tree:
-            self.query_one("#query_bar", Input).focus()
-        else:
-            tree.focus()
+        self.action_focus_next()
 
     def _refuse_if_missing(self, path: Path) -> bool:
         """Say so when the file behind a row is not there any more.
