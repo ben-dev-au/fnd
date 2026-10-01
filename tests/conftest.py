@@ -15,6 +15,28 @@ from typing import Any
 import pytest
 from textual.pilot import Pilot, WaitForScreenTimeout
 
+# A hook run from a worktree exports GIT_DIR=.git/worktrees/<name>; a test's
+# `git init <tmp>` then re-initialises the main repo and marks it bare. This is
+# git's own list of repo-local variables (`git rev-parse --local-env-vars`).
+for _var in (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+):
+    os.environ.pop(_var, None)
+
 # ── Pilot patches: tolerate internal _wait_for_screen timeouts ─────
 #
 # Under full-suite CPU load, ``Pilot.pause()`` and ``Pilot.press()``
