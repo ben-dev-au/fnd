@@ -16,6 +16,7 @@ from fnd.layered import search_layered
 from fnd.matching import MatchSpec
 from fnd.query import Searcher
 from fnd.render import match_word_spans, match_word_spans_multi, text_has_any_match
+from fnd.synonyms import load_default_synonyms
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 
 QUERIES = ("nameof", "trackname", "customercount", "notfound", "viewmodel", "dropdown", "footer")
@@ -121,3 +122,36 @@ def test_a_compound_only_in_a_link_destination_is_not_returned(index: Path) -> N
     paths = _paths(index, "viewmodel")
     assert not any(p.endswith("hidden") for p in paths)
     assert any(p.endswith("shown") for p in paths)
+
+
+def test_a_synonym_hit_paints_the_synonym_and_nothing_near_it(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """`second` finds `2nd` and a typo by fuzzy, paints both, and nothing one edit from `2nd`."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    sections = {
+        "ordinal": "Take the 2nd exit.",
+        "unit": "Wait a second.",
+        "typo": "One secund later.",
+        "other": "Salt and pepper.",
+    }
+    body = "\n\n".join(f"## {name}\n\n{text}" for name, text in sections.items())
+    (notes / "sheet.md").write_text(body, encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+    searcher = Searcher(index_dir=tmp_index_dir)
+    syns = load_default_synonyms()
+    groups, _ = search_layered(
+        searcher, query="second", limit=50, collection="notes", synonyms=syns, with_trace=True
+    )
+    strict = MatchSpec.from_query("second", auto_fuzzy=False, synonyms=syns)
+    painting = MatchSpec.from_query("second", synonyms=syns)
+    found: set[str] = set()
+    for group in groups:
+        chunks = {c.chunk_seq: c for c in searcher.get_file_chunks(group.parent_id)}
+        for hit in group.hits:
+            found.add(hit.heading_path.rsplit(" > ", 1)[-1])
+            spec = evidence_spec_for_pass(hit.pass_index, strict=strict, painting=painting)
+            assert has_paintable_match(chunks[hit.chunk_seq], spec), hit.heading_path
+    assert found == {"ordinal", "unit", "typo"}
+    assert match_word_spans("Salt and pepper to end.", painting) == []

@@ -480,6 +480,7 @@ class MatchSpec:
         if not terms and not phrases and not wildcards and not regexes and not proximity_groups:
             return cls()
         raw = {t.lower() for t in terms if t}
+        typed = frozenset(_stem(t) for t in raw)
         # A hyphenated word matches its joined form too (fnd.synonyms.compound_table).
         raw.update(m.group(0).replace("-", "").lower() for m in _HYPHENATED.finditer(bare_query))
         exact = {_stem(t) for t in raw}
@@ -510,7 +511,9 @@ class MatchSpec:
             )
         auto_pairs: dict[str, int] = {}
         if auto_fuzzy:
-            for s in exact:
+            # Typed stems only: synonyms and joined compounds are searched exactly,
+            # so fuzzing them paints words no search matched (`2nd` -> "and").
+            for s in typed:
                 if len(s) < min_term_chars:
                     continue
                 d = min(auto_fuzzy_distance(s), AUTO_FUZZY_MAX)

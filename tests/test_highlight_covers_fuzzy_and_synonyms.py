@@ -67,6 +67,23 @@ def test_match_spec_synonym_expansion() -> None:
     assert not word_matches("docker", spec)
 
 
+def test_match_spec_synonym_variant_paints_exactly() -> None:
+    """Automatic fuzzy reaches the typed word, never a synonym: search never fuzzes one."""
+    syns = SynonymTable.from_groups([["second", "2nd"]])
+    spec = MatchSpec.from_query("second", synonyms=syns)
+    assert word_matches("2nd", spec)
+    assert word_matches("secend", spec)
+    assert not word_matches("and", spec)
+    assert not word_matches("end", spec)
+
+
+def test_match_spec_joined_compound_paints_exactly() -> None:
+    """A hyphenated word's joined form is searched exactly, so it paints exactly."""
+    spec = MatchSpec.from_query("co-operate")
+    assert word_matches("cooperate", spec)
+    assert not word_matches("copper", spec)
+
+
 def test_match_spec_short_term_skips_fuzzy() -> None:
     """Stems of 1-2 chars get AUTO distance 0 — typos at that length
     almost always change meaning, and any-1-edit explodes false
