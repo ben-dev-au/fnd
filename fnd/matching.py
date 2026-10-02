@@ -251,6 +251,13 @@ def osa_within(a: str, b: str, *, max_dist: int) -> int:
     return prev[lb]
 
 
+def fuzzy_reaches(stem: str, query_stem: str, max_dist: int) -> bool:
+    """Whether search admits ``stem`` as fuzzy: same first letter, as in ``fuzzy_variants``."""
+    return (
+        stem[:1] == query_stem[:1] and osa_within(stem, query_stem, max_dist=max_dist) <= max_dist
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MatchSpec:
     """Frozen description of which words count as "matches" for a query.
@@ -331,7 +338,7 @@ class MatchSpec:
         a render-side dependency on the parser (render already
         depends on this module via the highlight helpers).
         """
-        from fnd.cascade import _terms_with_fuzzy  # local import: avoid cycle
+        from fnd.cascade import _carries_precision_intent, _terms_with_fuzzy  # avoid cycle
         from fnd.query_dsl import _expand_proximity_aliases  # local import: avoid cycle
         from fnd.render import _terms_from_query  # local import: avoid cycle
 
@@ -479,6 +486,8 @@ class MatchSpec:
         terms = _terms_from_query(bare_query)
         if not terms and not phrases and not wildcards and not regexes and not proximity_groups:
             return cls()
+        # Search runs no auto-fuzzy or synonym pass on such a query (fnd.cascade, fnd.fusion).
+        widens = not _carries_precision_intent(query)
         raw = {t.lower() for t in terms if t}
         typed = frozenset(_stem(t) for t in raw)
         # A hyphenated word matches its joined form too (fnd.synonyms.compound_table).
@@ -487,7 +496,7 @@ class MatchSpec:
         # Pull synonym variants in: the cascade's synonym pass would
         # have surfaced docs containing them, so the highlighter
         # marks them too.
-        if synonyms is not None and synonyms.groups:
+        if widens and synonyms is not None and synonyms.groups:
             expanded = expand(bare_query, synonyms)
             if expanded != bare_query:
                 expanded_terms = _terms_from_query(expanded)
@@ -495,12 +504,6 @@ class MatchSpec:
                     if t:
                         raw.add(t.lower())
                         exact.add(_stem(t))
-            # A free arm's synonyms are asserted just as unconditionally as the
-            # arm itself, so they exempt too — expanded apart from the group's
-            # own words, which must keep obeying the window.
-            if free_words:
-                free_expanded = expand(" ".join(free_words), synonyms)
-                free_keys.update(_stem(t) for t in _terms_from_query(free_expanded) if t)
         # Explicit per-term ~N — always honoured (user opt-in).
         explicit_pairs: dict[str, int] = {}
         for term, dist in _terms_with_fuzzy(loose_query):
@@ -510,7 +513,7 @@ class MatchSpec:
                 explicit_pairs.get(_stem(term.lower()), 0), dist
             )
         auto_pairs: dict[str, int] = {}
-        if auto_fuzzy:
+        if auto_fuzzy and widens:
             # Typed stems only: synonyms and joined compounds are searched exactly,
             # so fuzzing them paints words no search matched (`2nd` -> "and").
             for s in typed:
@@ -591,10 +594,7 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
                 return True
         except re.error:
             continue
-    for q_stem, max_d in spec.fuzzy_per_stem:
-        if osa_within(s, q_stem, max_dist=max_d) <= max_d:
-            return True
-    return False
+    return any(fuzzy_reaches(s, q_stem, max_d) for q_stem, max_d in spec.fuzzy_per_stem)
 
 
 def match_color(word: str, spec: MatchSpec) -> int:
@@ -605,7 +605,7 @@ def match_color(word: str, spec: MatchSpec) -> int:
     s = _stem(word)
     for i, (kind, key, dist) in enumerate(spec.order):
         if kind == "term":
-            if s == key or (dist and osa_within(s, key, max_dist=dist) <= dist):
+            if s == key or (dist and fuzzy_reaches(s, key, dist)):
                 return i
         elif kind == "wildcard":
             if re.fullmatch(glob_to_regex(key), s) is not None:

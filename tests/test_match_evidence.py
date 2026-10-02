@@ -91,23 +91,23 @@ def test_auto_fuzzy_near_misses_are_not_evidence() -> None:
     """The subtle one, and the reason the reported bug hid for so long.
 
     Searching "test" auto-fuzzes to distance 1, so the highlighter paints
-    "best" and "rest" — real spans, on words the user never typed. Judging
+    "text": a real span, on a word the user never typed. Judging
     visibility with the painting spec therefore answered "your match is here"
     over a paragraph containing nothing of theirs. Evidence is built with
     auto-fuzzy off (``FNDApp._effective_evidence_spec``), so it says otherwise.
     """
-    chunk = _chunk(body_md="D. Encryption at rest, using security best practices")
+    chunk = _chunk(body_md="D. Encryption of the text, using security best practices")
     painting = MatchSpec.from_query("test", auto_fuzzy=True)
     evidence = MatchSpec.from_query("test", auto_fuzzy=False)
 
-    assert has_paintable_match(chunk, painting) is True  # "best"/"rest" light up
+    assert has_paintable_match(chunk, painting) is True  # "text" lights up
     assert has_paintable_match(chunk, evidence) is False
 
 
 def test_an_explicit_fuzzy_request_is_evidence() -> None:
     """``~N`` is the user asking for fuzzy, so a fuzzy hit IS their match —
     the evidence spec drops only the AUTO safety net, never an explicit one."""
-    chunk = _chunk(body_md="D. Encryption at rest")
+    chunk = _chunk(body_md="D. Encryption of the text")
     evidence = MatchSpec.from_query("test~1", auto_fuzzy=False)
 
     assert has_paintable_match(chunk, evidence) is True

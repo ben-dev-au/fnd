@@ -675,18 +675,19 @@ def test_glob_free_arm_exempts_a_plain_member():
     }
 
 
-def test_free_arm_synonym_exempts_both_surface_forms():
-    """A free arm's synonyms are asserted as unconditionally as the arm, so
-    ``{2}kubernetes mobile OR k8s`` must not dim a lone ``kubernetes``."""
+def test_only_the_typed_free_arm_escapes_the_window():
+    """A proximity query expands no synonym, so the free arm's stays windowed."""
     from fnd.synonyms import SynonymTable
 
     table = SynonymTable.from_groups([["k8s", "kubernetes"]])
     gap = " " + ("filler " * 30)
     text = "kubernetes" + gap + "mobile"
-    for query in ("{2}kubernetes mobile OR k8s", "{2}k8s mobile OR kubernetes"):
-        spec = MatchSpec.from_query(query, synonyms=table, auto_fuzzy=False)
-        assert spec.unconstrained_terms == frozenset({"k8s", "kubernet"}), query
-        assert _painted(text, spec)["kubernetes"] is True, query
+    typed = MatchSpec.from_query("{2}k8s mobile OR kubernetes", synonyms=table, auto_fuzzy=False)
+    assert typed.unconstrained_terms == frozenset({"kubernet"})
+    assert _painted(text, typed)["kubernetes"] is True
+    synonym = MatchSpec.from_query("{2}kubernetes mobile OR k8s", synonyms=table, auto_fuzzy=False)
+    assert synonym.unconstrained_terms == frozenset({"k8s"})
+    assert _painted(text, synonym)["kubernetes"] is False
 
 
 def test_a_groups_own_synonyms_do_not_exempt_it():
