@@ -386,9 +386,9 @@ def word_highlight_runs(
         _stem,
         align_doc_word,
         closest_raw_term,
+        fuzzy_reaches,
         glob_match_mask,
         match_color,
-        osa_within,
         word_matches,
     )
 
@@ -406,7 +406,7 @@ def word_highlight_runs(
     # otherwise an unrelated raw term would paint the whole word orange.
     s = _stem(word)
     matched_exact_or_fuzzy = s in spec.exact_stems or any(
-        osa_within(s, q_stem, max_dist=d) <= d for q_stem, d in spec.fuzzy_per_stem
+        fuzzy_reaches(s, q_stem, d) for q_stem, d in spec.fuzzy_per_stem
     )
     if matched_exact_or_fuzzy:
         raw = closest_raw_term(word, spec)
