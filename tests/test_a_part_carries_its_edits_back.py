@@ -279,3 +279,63 @@ async def test_coming_back_from_a_part_keeps_the_row_it_was_opened_from(
         assert app.screen is form
         row = lst._items[lst.cursor_index].id
     assert row == "form.filters", row
+
+
+@pytest.mark.asyncio
+async def test_visiting_a_sources_filters_and_changing_nothing_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, index_dir: Path
+) -> None:
+    """An override equal to its default stays as written, and quitting asks nothing."""
+    cfg_path = tmp_path / "config.toml"
+    write_collection(
+        config_path=cfg_path,
+        name="notes",
+        collection=CollectionConfig(
+            sources=[
+                SourceConfig(
+                    path=tmp_path / "notes",
+                    filters=cast("Any", {"respect_gitignore": True}),
+                )
+            ]
+        ),
+    )
+    app = FNDApp(index_dir=index_dir, config=load(cfg_path))
+    async with app.run_test(size=(110, 30)) as pilot:
+        await _settle(pilot, 5)
+        form, _browser = await _source_filters(app, pilot)
+        before = dict(form._fields["filters"])
+        await pilot.press("escape")
+        await _settle(pilot, 8)
+        after = dict(form._fields["filters"])
+        dirty = form.is_dirty()
+    assert after == before
+    assert not dirty
+
+
+@pytest.mark.asyncio
+async def test_a_refused_save_from_the_prompt_is_said_out_loud(
+    config_file: Path, index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Saving a form hidden under a part refuses where the user can see it."""
+    from textual.widgets import OptionList
+
+    app = FNDApp(index_dir=index_dir, config=load(config_file))
+    seen: list[str] = []
+    async with app.run_test(size=(110, 30)) as pilot:
+        await _settle(pilot, 5)
+        form, browser = await _source_filters(app, pilot)
+        _exclude_draft(browser)
+        monkeypatch.setattr(form, "write", lambda: "the config on disk changed")
+        real = app.notify
+        monkeypatch.setattr(
+            app, "notify", lambda m, *a, **k: (seen.append(str(m)), real(m, *a, **k))
+        )
+        app.action_quit()
+        await _settle(pilot, 8)
+        options = app.screen.query_one("#confirm_list", OptionList)
+        options.highlighted = 0
+        options.action_select()
+        await _settle(pilot, 8)
+        running = app.is_running
+    assert running
+    assert any("the config on disk changed" in m for m in seen), seen

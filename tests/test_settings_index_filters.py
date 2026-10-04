@@ -1055,8 +1055,7 @@ class TestEscMeansOneThing:
 
 
 def test_the_rename_row_describes_what_rename_does() -> None:
-    """It claimed scope follows the new name. Nothing migrates the saved
-    selection, and the index drops the old name's documents."""
+    """The row says the scope does not follow the new name and the documents are dropped."""
     import inspect
 
     from fnd.tui.menu import _provider_collection

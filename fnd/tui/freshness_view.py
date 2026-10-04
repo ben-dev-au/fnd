@@ -65,6 +65,10 @@ def announce_saved(app: FNDApp, names: Sequence[str]) -> None:
 
 def run_pending(app: FNDApp, name: str) -> None:
     """Run what the collection needs: an Update, or a confirmed re-read of every file."""
+    if any(w.group.startswith("rename-") and not w.is_finished for w in app.workers):
+        # The index takes one writer, and a rename is still dropping the old name with it.
+        app.notify("The old name's documents are still being dropped; try again in a moment.")
+        return
     verdict = verdict_for(app, name)
     if verdict.state is not State.NEEDS_REBUILD:
         app._indexer.reindex_with_warning(name)  # type: ignore[attr-defined]

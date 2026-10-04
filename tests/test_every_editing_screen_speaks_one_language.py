@@ -94,3 +94,25 @@ def test_only_editing_py_raises_the_unsaved_prompt() -> None:
             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "UnsavedChangesScreen"
         ]
         assert not calls, p.name
+
+
+def _esc_action(cls: type[Screen[object]]) -> object:
+    for klass in cls.__mro__:
+        for b in klass.__dict__.get("BINDINGS", ()):
+            if "escape" in str(getattr(b, "key", "")).split(","):
+                return getattr(cls, "action_" + str(b.action).split("(")[0])
+    raise AssertionError(f"{cls.__name__} binds no Esc")
+
+
+def test_every_screen_can_actually_be_left() -> None:
+    """A screen whose Esc neither pops nor reaches an implemented leave is a trap."""
+    trapped: list[str] = []
+    for cls in _screens():
+        back = inspect.getsource(_esc_action(cls))  # type: ignore[arg-type]
+        if "pop_screen" in back or "dismiss" in back:
+            continue
+        leave = getattr(cls, "request_leave", None)
+        body = inspect.getsource(leave) if leave is not None else ""
+        if "request_leave" not in back or "NotImplementedError" in body:
+            trapped.append(cls.__name__)
+    assert not trapped, f"screens with no way out of Esc: {trapped}"

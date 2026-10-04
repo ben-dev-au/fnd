@@ -240,3 +240,30 @@ async def test_a_current_update_row_reads_as_before(tmp_path: Path, tmp_index_di
         row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.reindex")
     assert row.label == "Update index"
     assert row.description.startswith("Add new")
+
+
+@pytest.mark.asyncio
+async def test_u_waits_for_a_renames_drop(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The index takes one writer: a run started mid-drop would fail on the lock."""
+    import threading
+
+    from fnd.tui.freshness_view import run_pending
+
+    _record_clean(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=tmp_index_dir, config=_cfg(tmp_path, excludes=["build/**"]))
+    started: list[str] = []
+    seen: list[str] = []
+    release = threading.Event()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle(pilot)
+        monkeypatch.setattr(app._indexer, "reindex_with_warning", lambda n, **_k: started.append(n))
+        monkeypatch.setattr(app, "notify", lambda m, *a, **k: seen.append(str(m)))
+        app.run_worker(lambda: release.wait(5), thread=True, group="rename-old")
+        await _settle(pilot)
+        run_pending(app, "notes")
+        release.set()
+        await app.workers.wait_for_complete()
+    assert started == []
+    assert any("still being dropped" in m for m in seen), seen

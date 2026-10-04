@@ -80,3 +80,59 @@ def test_an_update_drops_a_file_a_new_tag_filter_excludes(cfg: Config, tmp_index
     done = _drive(filtered, tmp_index_dir)
     assert done.kind == "done"
     assert done.removed_total == 1
+
+
+def test_an_update_does_not_clear_a_needed_rebuild(cfg: Config, tmp_index_dir: Path) -> None:
+    """An Update skips unchanged files, so it has read no tag under a new key."""
+    from fnd.index_freshness import indexed_with
+
+    assert _drive(cfg.collections["notes"], tmp_index_dir).kind == "done"
+    keyed = cfg.defaults.model_copy(update={"tag_frontmatter_keys": ["Topic"]})
+    ledger = Ledger(tmp_index_dir)
+    before = ledger.recorded("notes")
+    assert before is not None
+    # The run reads defaults from the config file; stand in for a key added there.
+    import fnd.config
+
+    real_load = fnd.config.load
+    try:
+        fnd.config.load = lambda *a, **k: Config(  # type: ignore[assignment]
+            defaults=keyed, collections=cfg.collections
+        )
+        assert _drive(cfg.collections["notes"], tmp_index_dir).kind == "done"
+    finally:
+        fnd.config.load = real_load  # type: ignore[assignment]
+    verdict = ledger.verdict("notes", cfg.collections["notes"], keyed)
+    assert verdict.state is State.NEEDS_REBUILD, verdict
+    assert ledger.recorded("notes")["extraction"] == before["extraction"]  # type: ignore[index]
+    assert indexed_with(cfg.collections["notes"], keyed)["extraction"] != before["extraction"]
+
+
+def test_a_rebuild_does_clear_it(cfg: Config, tmp_index_dir: Path) -> None:
+    """The control: a run that re-reads every file records what it read with."""
+    _drive(cfg.collections["notes"], tmp_index_dir)
+    keyed = cfg.defaults.model_copy(update={"tag_frontmatter_keys": ["Topic"]})
+    import fnd.config
+
+    real_load = fnd.config.load
+    try:
+        fnd.config.load = lambda *a, **k: Config(  # type: ignore[assignment]
+            defaults=keyed, collections=cfg.collections
+        )
+
+        async def _go() -> str:
+            last = ""
+            async for ev in run_indexer(
+                config=cfg.collections["notes"],
+                collection="notes",
+                index_dir=tmp_index_dir,
+                rebuild=True,
+            ):
+                last = ev.kind
+            return last
+
+        assert asyncio.run(_go()) == "done"
+    finally:
+        fnd.config.load = real_load  # type: ignore[assignment]
+    verdict = Ledger(tmp_index_dir).verdict("notes", cfg.collections["notes"], keyed)
+    assert verdict.state is State.CURRENT, verdict

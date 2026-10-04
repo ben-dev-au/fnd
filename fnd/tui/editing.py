@@ -92,7 +92,11 @@ class DocumentScreen(Screen[None]):
     def save(self) -> str:
         reason = self.blocked_reason() or self.write()
         if reason:
-            self.show_refusal(reason)
+            # Saved from a prompt over a part, the form's own error line is out of sight.
+            if self.app.screen is self:
+                self.show_refusal(reason)
+            else:
+                self.app.notify(reason, severity="error", timeout=6)
             return reason
         self.after_save()
         return ""

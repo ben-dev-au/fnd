@@ -1227,7 +1227,13 @@ async def run_indexer(
     if not blocked_roots:
         # Unreadable roots skip the prune, so the selection did not converge.
         with contextlib.suppress(OSError):
-            Ledger(index_dir).record(collection, indexed_with(config, run_defaults))
+            ledger = Ledger(index_dir)
+            inputs = indexed_with(config, run_defaults)
+            prior = ledger.recorded(collection)
+            if prior is not None and skip_unchanged and not rebuild:
+                # Unchanged files were skipped, so nothing was re-read under new extraction inputs.
+                inputs["extraction"] = prior.get("extraction", inputs["extraction"])
+            ledger.record(collection, inputs)
     yield _emit(
         "done",
         chunks_written=written,

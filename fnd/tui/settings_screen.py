@@ -6752,5 +6752,7 @@ class SourceFiltersScreen(FilterBrowserScreen, PartScreen):
         PartScreen.request_leave(self)
 
     def hand_back(self) -> str:
-        self._on_commit(self._spec, self._gitignore, self._fndignore)
+        # Committing rebuilds the overrides, dropping any written equal to its default.
+        if self._dirty():
+            self._on_commit(self._spec, self._gitignore, self._fndignore)
         return ""

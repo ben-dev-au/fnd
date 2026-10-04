@@ -110,7 +110,7 @@ def _selection_reasons(now: dict[str, Any], then: dict[str, Any]) -> tuple[str, 
     reasons: dict[str, None] = {}
     old = then.get("sources") or []
     if len(now["sources"]) != len(old):
-        reasons["sources added or removed"] = None
+        reasons["the source list"] = None
     for new_source, old_source in zip(now["sources"], old, strict=False):
         for key, word in _SOURCE_FIELDS.items():
             if new_source.get(key) != old_source.get(key):
@@ -126,7 +126,7 @@ class Ledger:
     def __init__(self, index_dir: Path) -> None:
         self._dir = index_dir
         self._path = index_dir / SIDECAR_NAME
-        self._cache: tuple[int, dict[str, Any]] | None = None
+        self._cache: tuple[tuple[int, int, int], dict[str, Any]] | None = None
 
     def recorded(self, name: str) -> dict[str, Any] | None:
         return self._read().get(name)
@@ -145,7 +145,11 @@ class Ledger:
             self._write(data)
 
     def adopt(self, config: Config, is_empty: Callable[[str], bool]) -> list[str]:
-        """Record the config now for collections indexed before the sidecar existed."""
+        """Record the config now for collections indexed before the sidecar existed.
+
+        Once it exists, a name missing from it is an unfinished run, so nothing is adopted."""
+        if self._path.exists():
+            return []
         data = dict(self._read())
         adopted = [n for n in sorted(config.collections) if n not in data and not is_empty(n)]
         for name in adopted:
@@ -156,9 +160,11 @@ class Ledger:
 
     def _read(self) -> dict[str, Any]:
         try:
-            stamp = self._path.stat().st_mtime_ns
+            st = self._path.stat()
         except OSError:
             return {}
+        # The inode too: a coarse clock gives two writes one mtime, and each write replaces the file.
+        stamp = (st.st_mtime_ns, st.st_ino, st.st_size)
         if self._cache is not None and self._cache[0] == stamp:
             return self._cache[1]
         try:

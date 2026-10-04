@@ -180,3 +180,43 @@ def test_adopt_leaves_an_existing_record_alone(tmp_path: Path) -> None:
     ledger.record("notes", stale)
     assert ledger.adopt(_config(tmp_path), is_empty=lambda _n: False) == []
     assert ledger.recorded("notes") == stale
+
+
+def test_adopt_runs_only_before_any_record_exists(tmp_path: Path) -> None:
+    """Once the sidecar exists, a name missing from it was never finished, not pre-existing."""
+    from fnd.index_freshness import Ledger
+
+    cfg = _config(tmp_path)
+    cfg.collections["half"] = CollectionConfig(sources=[])
+    ledger = Ledger(_ledger_dir(tmp_path))
+    ledger.record("notes", _now(cfg))
+    assert ledger.adopt(cfg, is_empty=lambda _n: False) == []
+    assert ledger.recorded("half") is None
+
+
+def test_a_new_source_reads_as_a_source_list_change(tmp_path: Path) -> None:
+    """The reason reads as one phrase: "(the source list changed)"."""
+    before = _now(_config(tmp_path))
+    cfg = _config(tmp_path)
+    (tmp_path / "more").mkdir()
+    cfg.collections["notes"].sources.append(SourceConfig(path=tmp_path / "more"))
+    verdict = compare(_now(cfg), before)
+    assert verdict.summary == "needs update (the source list changed)"
+
+
+def test_a_replace_within_one_clock_tick_is_still_read(tmp_path: Path) -> None:
+    """Coarse filesystems give two writes one mtime; the atomic replace changes the inode."""
+    import os
+
+    from fnd.index_freshness import SIDECAR_NAME, Ledger
+
+    ledger = Ledger(_ledger_dir(tmp_path))
+    first = _now(_config(tmp_path))
+    ledger.record("notes", first)
+    path = tmp_path / "idx" / SIDECAR_NAME
+    stamp = path.stat().st_mtime_ns
+    assert ledger.recorded("notes") == first
+    other = Ledger(tmp_path / "idx")
+    other.record("notes", _now(_config(tmp_path, excludes=["x/**"])))
+    os.utime(path, ns=(stamp, stamp))
+    assert ledger.recorded("notes") != first
