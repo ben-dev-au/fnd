@@ -136,3 +136,25 @@ def test_a_rebuild_does_clear_it(cfg: Config, tmp_index_dir: Path) -> None:
         fnd.config.load = real_load  # type: ignore[assignment]
     verdict = Ledger(tmp_index_dir).verdict("notes", cfg.collections["notes"], keyed)
     assert verdict.state is State.CURRENT, verdict
+
+
+def test_a_source_switched_off_across_an_update_still_needs_a_rebuild(
+    cfg: Config, tmp_index_dir: Path
+) -> None:
+    """An Update with a tag source off reads changed files without it; turning it back on is unread."""
+    import fnd.config
+
+    both = cfg.defaults.model_copy(update={"tag_sources": ["frontmatter", "os"]})
+    one = cfg.defaults.model_copy(update={"tag_sources": ["frontmatter"]})
+    real_load = fnd.config.load
+    try:
+        fnd.config.load = lambda *a, **k: Config(defaults=both, collections=cfg.collections)  # type: ignore[assignment]
+        _drive(cfg.collections["notes"], tmp_index_dir)
+        fnd.config.load = lambda *a, **k: Config(defaults=one, collections=cfg.collections)  # type: ignore[assignment]
+        notes = cfg.collections["notes"].sources[0].path
+        (notes / "a.md").write_text("# A\n\nchanged\n", encoding="utf-8")
+        _drive(cfg.collections["notes"], tmp_index_dir)
+    finally:
+        fnd.config.load = real_load  # type: ignore[assignment]
+    verdict = Ledger(tmp_index_dir).verdict("notes", cfg.collections["notes"], both)
+    assert verdict.state is State.NEEDS_REBUILD, verdict

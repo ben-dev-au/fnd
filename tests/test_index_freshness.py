@@ -182,16 +182,30 @@ def test_adopt_leaves_an_existing_record_alone(tmp_path: Path) -> None:
     assert ledger.recorded("notes") == stale
 
 
-def test_adopt_runs_only_before_any_record_exists(tmp_path: Path) -> None:
-    """Once the sidecar exists, a name missing from it was never finished, not pre-existing."""
+def test_adoption_happens_once(tmp_path: Path) -> None:
+    """After the one adoption, a name missing from the record is an unfinished run."""
     from fnd.index_freshness import Ledger
 
     cfg = _config(tmp_path)
-    cfg.collections["half"] = CollectionConfig(sources=[])
     ledger = Ledger(_ledger_dir(tmp_path))
-    ledger.record("notes", _now(cfg))
+    assert ledger.adopt(cfg, is_empty=lambda _n: False) == ["notes"]
+    cfg.collections["half"] = CollectionConfig(sources=[])
     assert ledger.adopt(cfg, is_empty=lambda _n: False) == []
     assert ledger.recorded("half") is None
+
+
+def test_a_cli_run_before_the_first_launch_does_not_block_adoption(tmp_path: Path) -> None:
+    """A run recorded before any adoption leaves the other old collections to adopt."""
+    from fnd.index_freshness import Ledger
+
+    cfg = _config(tmp_path)
+    (tmp_path / "research").mkdir()
+    cfg.collections["research"] = CollectionConfig(
+        sources=[SourceConfig(path=tmp_path / "research")]
+    )
+    ledger = Ledger(_ledger_dir(tmp_path))
+    ledger.record("notes", _now(cfg))
+    assert ledger.adopt(cfg, is_empty=lambda _n: False) == ["research"]
 
 
 def test_a_new_source_reads_as_a_source_list_change(tmp_path: Path) -> None:

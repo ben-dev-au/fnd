@@ -246,7 +246,7 @@ async def test_a_current_update_row_reads_as_before(tmp_path: Path, tmp_index_di
 async def test_u_waits_for_a_renames_drop(
     tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The index takes one writer: a run started mid-drop would fail on the lock."""
+    """The index takes one writer: no run starts, from any row, while a rename drops."""
     import threading
 
     from fnd.tui.freshness_view import run_pending
@@ -258,10 +258,13 @@ async def test_u_waits_for_a_renames_drop(
     release = threading.Event()
     async with app.run_test(size=(120, 30)) as pilot:
         await _settle(pilot)
-        monkeypatch.setattr(app._indexer, "reindex_with_warning", lambda n, **_k: started.append(n))
+        monkeypatch.setattr(
+            app._indexer, "start", lambda collection, **_k: started.append(collection)
+        )
         monkeypatch.setattr(app, "notify", lambda m, *a, **k: seen.append(str(m)))
         app.run_worker(lambda: release.wait(5), thread=True, group="rename-old")
         await _settle(pilot)
+        app._indexer.reindex_with_warning("notes")
         run_pending(app, "notes")
         release.set()
         await app.workers.wait_for_complete()

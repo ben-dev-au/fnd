@@ -683,6 +683,11 @@ def _process_one_file(
     return _FileOutcome(n_chunks, reused, reported_already, has_textured, "")
 
 
+def _common_extraction(prior: dict[str, Any], now: dict[str, Any]) -> dict[str, Any]:
+    """The extraction inputs every indexed file was read under, after a run that skipped some."""
+    return {key: sorted(set(prior.get(key) or ()) & set(now[key])) for key in now}
+
+
 async def run_indexer(
     *,
     config: CollectionConfig,
@@ -1231,8 +1236,10 @@ async def run_indexer(
             inputs = indexed_with(config, run_defaults)
             prior = ledger.recorded(collection)
             if prior is not None and skip_unchanged and not rebuild:
-                # Unchanged files were skipped, so nothing was re-read under new extraction inputs.
-                inputs["extraction"] = prior.get("extraction", inputs["extraction"])
+                # Skipped files hold the prior inputs and re-read ones the current: only both are true.
+                inputs["extraction"] = _common_extraction(
+                    prior.get("extraction") or {}, inputs["extraction"]
+                )
             ledger.record(collection, inputs)
     yield _emit(
         "done",

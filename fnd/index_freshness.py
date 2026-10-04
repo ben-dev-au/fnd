@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 #: Beside `.fnd-schema-version`, so a schema wipe takes it with the documents.
 SIDECAR_NAME = ".fnd-indexed-with.json"
+#: Not a collection name: marks that the one-time adoption has run.
+_ADOPTED = "__adopted__"
 
 #: A source's selection inputs, and the words a reason uses for each.
 _SOURCE_FIELDS: dict[str, str] = {
@@ -129,7 +131,8 @@ class Ledger:
         self._cache: tuple[tuple[int, int, int], dict[str, Any]] | None = None
 
     def recorded(self, name: str) -> dict[str, Any] | None:
-        return self._read().get(name)
+        entry = self._read().get(name)
+        return entry if isinstance(entry, dict) else None
 
     def verdict(self, name: str, collection: CollectionConfig, defaults: Defaults) -> Verdict:
         return compare(indexed_with(collection, defaults), self.recorded(name))
@@ -147,15 +150,15 @@ class Ledger:
     def adopt(self, config: Config, is_empty: Callable[[str], bool]) -> list[str]:
         """Record the config now for collections indexed before the sidecar existed.
 
-        Once it exists, a name missing from it is an unfinished run, so nothing is adopted."""
-        if self._path.exists():
-            return []
+        Once it has run, a name missing from it is an unfinished run, so nothing is adopted."""
         data = dict(self._read())
+        if data.get(_ADOPTED):
+            return []
         adopted = [n for n in sorted(config.collections) if n not in data and not is_empty(n)]
         for name in adopted:
             data[name] = indexed_with(config.collections[name], config.defaults)
-        if adopted:
-            self._write(data)
+        data[_ADOPTED] = True
+        self._write(data)
         return adopted
 
     def _read(self) -> dict[str, Any]:
