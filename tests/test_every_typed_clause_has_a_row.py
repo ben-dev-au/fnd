@@ -76,19 +76,19 @@ async def test_enter_on_a_typed_rule_opens_the_text_form() -> None:
     alone passes while Enter on a Typed rule is a dead key.
     """
     from fnd.tui import FNDApp
-    from fnd.tui.settings_screen import FilterBrowserScreen, FilterTextScreen
+    from fnd.tui.settings_screen import DefaultFiltersScreen, FilterTextScreen
     from fnd.tui.widgets.toggle_tree import ToggleTree
 
     app = FNDApp(index_dir=Path("/nonexistent-index"))
     async with app.run_test(size=(110, 34)) as pilot:
         await pilot.pause()
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=FilterSpec(expression="file.size < 500000", raw=("file.size > 10",)),
             gitignore=True,
             fndignore=True,
             sample_provider=lambda _spec: _SAMPLE,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         app.push_screen(screen)
         for _ in range(25):

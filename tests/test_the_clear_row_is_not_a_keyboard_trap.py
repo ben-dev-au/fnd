@@ -16,7 +16,7 @@ import pytest
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, FilterBrowserScreen
 from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.toggle_tree import ToggleTree
 
@@ -25,14 +25,14 @@ _DEFAULTS = (FilterSpec(exclude_tags={"frontmatter": ("no_index",)}), True, True
 
 
 async def _browser_with_a_bar(app: FNDApp, pilot: object) -> FilterBrowserScreen:
-    screen = FilterBrowserScreen(
+    screen = DefaultFiltersScreen(
         title="Index filters",
         spec=FilterSpec(kinds=("md",)),
         gitignore=True,
         fndignore=True,
         inherited=_DEFAULTS,
         sample_provider=lambda _spec: _SAMPLE,
-        on_save=lambda *_a: None,
+        on_commit=lambda *_a: None,
     )
     app.push_screen(screen)
     for _ in range(25):

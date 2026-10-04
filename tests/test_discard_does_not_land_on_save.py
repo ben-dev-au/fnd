@@ -1,4 +1,4 @@
-"""`Esc/← Discard` opens a dialog whose cursor does not sit on "Save changes".
+"""Esc opens a dialog whose cursor does not sit on "Save and go back".
 
 Enter, the reflex after a key that already says discard, would write
 `kinds = ["md"]` and prune files out of the corpus at the next update.
@@ -15,7 +15,7 @@ from textual.widgets import OptionList
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen, UnsavedChangesScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, UnsavedChangesScreen
 
 _SAMPLE = SourceSample(kinds={"md": 3}, tags={"frontmatter": {"keep": 2}})
 
@@ -23,9 +23,10 @@ _SAMPLE = SourceSample(kinds={"md": 3}, tags={"frontmatter": {"keep": 2}})
 async def _unsaved(app: FNDApp, pilot: Any, *, with_save: bool) -> str | None:
     app.push_screen(
         UnsavedChangesScreen(
-            what="these filters",
+            subject="the index filters",
+            verb="go back",
             on_save=(lambda: None) if with_save else None,
-            on_leave=lambda: None,
+            on_discard=lambda: None,
         )
     )
     for _ in range(15):
@@ -74,13 +75,13 @@ async def test_the_footer_does_not_promise_a_discard_it_only_offers(
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 32)) as pilot:
         await pilot.pause()
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=FilterSpec(),
             gitignore=True,
             fndignore=True,
             sample_provider=lambda _spec: _SAMPLE,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         app.push_screen(screen)
         for _ in range(25):

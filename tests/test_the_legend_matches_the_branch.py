@@ -22,7 +22,7 @@ from fnd.filters.tree_model import (
     spec_branches,
 )
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen
 from fnd.tui.widgets.toggle_tree import ToggleTree
 
 _SAMPLE = SourceSample(kinds={"md": 3}, tags={"frontmatter": {"no_index": 1}})
@@ -57,13 +57,13 @@ async def test_the_painted_legend_follows_the_cursor(tmp_index_dir: Path) -> Non
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: _SAMPLE,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(25):
@@ -94,13 +94,13 @@ async def test_enter_on_a_rules_branch_does_something(tmp_index_dir: Path) -> No
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: _SAMPLE,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(25):

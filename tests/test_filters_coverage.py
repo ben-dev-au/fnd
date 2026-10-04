@@ -406,14 +406,14 @@ class TestClearDropsOverridesNotProtections:
     def test_the_global_defaults_still_clear_to_nothing(self) -> None:
         """They inherit from nothing, so there an empty set is the right one."""
         from fnd.filters import FilterSpec
-        from fnd.tui.settings_screen import FilterBrowserScreen
+        from fnd.tui.settings_screen import DefaultFiltersScreen
 
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=FilterSpec(exclude_tags={"os": ("no_index",)}),
             gitignore=True,
             fndignore=True,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         assert screen._inherited is None
 

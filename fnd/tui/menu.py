@@ -1662,9 +1662,10 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             id=f"col.{name}.rename",
             label="Rename",
             description=(
-                "Change this collection's name. The index is rebuilt under the "
-                "new name, and your saved scope selection does not follow it; "
-                "re-tick the collection afterwards."
+                "Change this collection's name. Its documents are dropped from "
+                "the index and it reads not indexed until Update index runs, and "
+                "your saved scope selection does not follow it; re-tick the "
+                "collection afterwards."
             ),
             kind=KIND_EXTERNAL,
             external=_make_open_rename(name),
@@ -2419,7 +2420,7 @@ def _open_filter_browser(app: FNDApp) -> None:
         write_settings,
     )
     from fnd.tui.settings_screen import (
-        FilterBrowserScreen,
+        DefaultFiltersScreen,
         _spec_from_filters,
         _spec_to_mapping,
     )
@@ -2451,28 +2452,18 @@ def _open_filter_browser(app: FNDApp) -> None:
         )
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
-        # Nothing reindexes here, unlike the per-source route, so every
-        # collection keeps its current contents until the user says otherwise.
-        app.notify(
-            "Filters saved. Collections keep their current contents until the next Update index.",
-            severity="warning",
-        )
-        # These govern EVERY collection, so a save leaves all of them behind
-        # the config at once and a toast was the only thing that said so.
-        # Offered after the browser pops, so the dialog lands on the menu.
-        app.call_later(_push_update_all_confirm, app, texturise_override=None)
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
 
     app.push_screen(
-        FilterBrowserScreen(
+        DefaultFiltersScreen(
             title="Index filters",
-            save_note="applies at the next Update index",
             spec=_spec_from_filters(current),
             gitignore=current.respect_gitignore,
             fndignore=current.respect_fndignore,
             sample_provider=lambda _spec: _indexed_tags(app),
             no_tags_note="no tags in what is indexed",
             unindexed_note="tags are offered once a collection is indexed",
-            on_save=_save,
+            on_commit=_save,
         )
     )
 
@@ -3169,9 +3160,8 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
                 "Which sources feed the Tags filter. Tags are read per file: "
                 "a tag on a folder does not apply to what is inside it. Tick "
                 "none to turn tag filtering off. Turning one off hides its tags "
-                "straight away; turning one on needs a Rebuild index, since "
-                "tags are read when a file is indexed and an Update skips "
-                "unchanged files."
+                "straight away; turning one on leaves collections needing a "
+                "rebuild, shown with ↻ on their rows."
             ),
             kind=KIND_PICKER,
             multi=True,

@@ -207,13 +207,13 @@ class TestTheDialogDescribesWhatItDoes:
             said = str(screen.query_one(".warning", Static).render())
 
         assert "orphaned" not in said, said
-        assert "rebuilt" in said
+        assert "needs an update" in said
         assert "files on disk are untouched" in said
         assert "another source still reaches" in said
 
-    def test_the_confirm_still_rebuilds(self) -> None:
+    def test_the_confirm_indexes_nothing(self) -> None:
         """Guard: the text is pinned against the code it describes."""
         import inspect
 
         source = inspect.getsource(DeleteSourceScreen._on_select)
-        assert "rebuild=True" in source
+        assert "reindex_with_warning" not in source

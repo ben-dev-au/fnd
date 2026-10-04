@@ -46,6 +46,7 @@ async def test_yes_runs_every_collection(
         baseline = len(invocations)
         app.push_screen(UpdateAllConfirm(collection_names=["alpha", "beta", "gamma"]))
         await pilot.pause()
+        await pilot.press("up")  # it opens on Cancel
         await pilot.press("enter")
 
         ok = await wait_until(
@@ -69,9 +70,7 @@ async def test_cancel_does_not_start_chain(
         await pilot.pause()
         app.push_screen(UpdateAllConfirm(collection_names=["alpha", "beta"]))
         await pilot.pause()
-        # The Yes option is initially focused; arrow down + Enter to
-        # land on Cancel.
-        await pilot.press("down")
+        # It opens on Cancel, so Enter declines.
         await pilot.press("enter")
         await pilot.pause()
 

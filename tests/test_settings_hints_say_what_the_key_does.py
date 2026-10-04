@@ -132,7 +132,7 @@ async def test_a_source_form_names_the_edit_bar_keys_while_it_is_open(
         assert _shows(form, "Ctrl+D", "Delete source")
         _put_cursor_on(form, "form.path")
         await pilot.press("enter")
-        await wait_until(pilot, lambda: _shows(form, "⏎", "Save"))
+        await wait_until(pilot, lambda: _shows(form, "⏎", "Set"))
         assert _shows(form, "Esc", "Cancel")
         assert "Delete source" not in _footer(form)
         assert "Quit" not in _footer(form)
@@ -154,7 +154,7 @@ async def test_the_wizard_names_tab_once_a_rule_gives_it_a_sample_to_test(
         assert "Test a sample" not in _footer(wizard)
         _put_cursor_on(wizard, "wiz.filter")
         await pilot.press("enter")
-        await wait_until(pilot, lambda: _shows(wizard, "⏎", "Save"))
+        await wait_until(pilot, lambda: _shows(wizard, "⏎", "Set"))
         wizard.query_one(EditBar).query_one(Input).value = "draft == true"
         await pilot.press("enter")
         await wait_until(pilot, lambda: _shows(wizard, "Tab", "Test a sample"))
@@ -218,7 +218,7 @@ async def test_the_filter_browser_names_what_enter_does_on_each_row(
         _cursor_on_row(browser, "Rules you type")
         await wait_until(pilot, lambda: _shows(browser, "⏎", "Expand"))
         assert _shows(browser, "→", "Expand")
-        assert _shows(browser, "Esc/←", "Leave")
+        assert _shows(browser, "Esc/←", "Back")
         await pilot.press("enter")
         await wait_until(pilot, lambda: _shows(browser, "⏎", "Collapse"))
         assert _shows(browser, "←", "Collapse")
@@ -252,12 +252,12 @@ async def test_the_filter_browser_search_says_esc_leaves_while_empty(
     async with app.run_test(size=(160, 50)) as pilot:
         browser = await _open_filters(pilot, app)
         await pilot.press("slash")
-        await wait_until(pilot, lambda: _shows(browser, "Esc", "Leave"))
+        await wait_until(pilot, lambda: _shows(browser, "Esc", "Back"))
         await pilot.press("t")
         await wait_until(pilot, lambda: _shows(browser, "Esc", "Clear"))
         await pilot.press("enter")
         await wait_until(pilot, lambda: "Clear" in _footer(browser))
-        assert "Leave" not in _footer(browser)
+        assert "Back" not in _footer(browser)
 
 
 @pytest.mark.asyncio
@@ -329,7 +329,7 @@ async def test_the_filter_browser_footer_follows_the_rebuilt_tree(
         browser = await _open_filters(pilot, app)
         _cursor_on_row(browser, "File types")
         await pilot.press("enter")
-        await wait_until(pilot, lambda: _shows(browser, "Esc/←", "Leave"))
+        await wait_until(pilot, lambda: _shows(browser, "Esc/←", "Back"))
         assert "Parent" not in _footer(browser)
         _cursor_on_row(browser, "Obey ignore files")
         await pilot.press("enter")

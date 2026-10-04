@@ -150,12 +150,11 @@ def test_the_guard_reads_the_service_not_a_flag() -> None:
 
 
 @pytest.mark.asyncio
-async def test_removing_a_source_is_refused_while_indexing(
+async def test_removing_a_source_proceeds_while_indexing(
     configured: Path, tmp_index_dir: Path
 ) -> None:
-    """The dialog promises the collection is rebuilt straight afterwards. Mid
-    run that rebuild is refused and dropped, so the removed source's files
-    stay searchable and the promise is false."""
+    """It only writes the config now; the running run's record then reads out of date."""
+    from textual.screen import Screen
     from textual.widgets import OptionList
 
     from fnd.tui.settings_screen import DeleteSourceScreen
@@ -166,6 +165,7 @@ async def test_removing_a_source_is_refused_while_indexing(
         await pilot.pause()
         app._config = load()
         app._indexer = _Busy()  # type: ignore[assignment]
+        app.push_screen(Screen())  # the form it closes with it
         screen = DeleteSourceScreen(collection_name="notes", source_index=0)
         app.push_screen(screen)
         await pilot.pause()
@@ -175,9 +175,8 @@ async def test_removing_a_source_is_refused_while_indexing(
         lst.action_select()
         await pilot.pause()
 
-    assert load(configured).collections["notes"].sources, "the source must still be there"
-    assert said, "a refusal must say why"
-    assert "still running" in said[0], said
+    assert not load(configured).collections["notes"].sources, "the source must be gone"
+    assert not any("still running" in m for m in said), said
 
 
 @pytest.mark.asyncio

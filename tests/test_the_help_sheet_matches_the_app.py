@@ -19,7 +19,12 @@ from textual.widgets import Input, TextArea
 from fnd.config import CollectionConfig, Config, SourceConfig, load, write_collection
 from fnd.tui import FNDApp
 from fnd.tui.menu import MenuItem, _provider_keybindings
-from fnd.tui.settings_screen import SettingsList, SettingsScreen, SourceFormScreen
+from fnd.tui.settings_screen import (
+    DefaultFiltersScreen,
+    SettingsList,
+    SettingsScreen,
+    SourceFormScreen,
+)
 
 
 def _sheet() -> tuple[MenuItem, ...]:
@@ -191,18 +196,17 @@ async def test_help_from_the_filter_browser_lifts_its_section(
     config: Config, tmp_index_dir: Path
 ) -> None:
     from fnd.filters import FilterSpec
-    from fnd.tui.settings_screen import FilterBrowserScreen
 
     app = FNDApp(index_dir=tmp_index_dir, config=config)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(20):

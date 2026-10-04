@@ -7,25 +7,29 @@ still-dirty editor, and "Discard and close" closed nothing.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.widgets import OptionList, Static
 
 from fnd.tui import FNDApp
+from fnd.tui.editing import DocumentScreen
 from fnd.tui.settings_screen import SettingsScreen, UnsavedChangesScreen, open_settings
 
 
-class _Editor(Screen[None]):
+class _Editor(DocumentScreen):
+    SUBJECT = "this form"
+
     def compose(self) -> ComposeResult:
         yield Static("editor")
 
-    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
-        return "This form", lambda: None
+    def is_dirty(self) -> bool:
+        return True
+
+    def write(self) -> str:
+        return ""
 
 
 async def _pause(pilot: Any, n: int = 10) -> None:

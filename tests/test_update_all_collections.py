@@ -68,6 +68,7 @@ async def test_update_all_visits_every_collection(tmp_path: Path) -> None:
         await safe_pause(pilot)
         app.push_screen(UpdateAllConfirm(collection_names=names))
         await safe_pause(pilot)
+        await pilot.press("up")  # it opens on Cancel
         await pilot.press("enter")
         await wait_until(
             pilot,
@@ -108,6 +109,7 @@ async def test_update_all_sets_chain_total_for_modal_title(tmp_path: Path) -> No
         await safe_pause(pilot)
         app.push_screen(UpdateAllConfirm(collection_names=names))
         await safe_pause(pilot)
+        await pilot.press("up")  # it opens on Cancel
         await pilot.press("enter")
         await wait_until(
             pilot,

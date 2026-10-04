@@ -96,6 +96,6 @@ async def test_the_editor_refuses_rather_than_reverting(
         after_theirs = cfg_path.read_text(encoding="utf-8")
 
         with pytest.raises(ConfigChangedError):
-            screen._on_save(screen._spec, screen._gitignore, screen._fndignore)
+            screen._on_commit(screen._spec, screen._gitignore, screen._fndignore)
 
     assert cfg_path.read_text(encoding="utf-8") == after_theirs, "it wrote anyway"

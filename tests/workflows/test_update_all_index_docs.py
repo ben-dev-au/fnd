@@ -80,6 +80,7 @@ async def test_chain_commits_final_collection_docs(tmp_path: Path) -> None:
         await pilot.pause()
         app.push_screen(UpdateAllConfirm(collection_names=names))
         await pilot.pause()
+        await pilot.press("up")  # it opens on Cancel
         await pilot.press("enter")
         # First, wait until every collection has been launched.
         ok = await wait_until(

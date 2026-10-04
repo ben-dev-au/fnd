@@ -17,7 +17,7 @@ from fnd.filters.scan import SourceSample
 from fnd.filters.tree_model import spec_branches
 from fnd.tui import FNDApp
 from fnd.tui.app import _HintBar
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen
 
 _SAMPLE = SourceSample(kinds={"md": 3}, tags={"frontmatter": {"no_index": 1}})
 
@@ -62,13 +62,13 @@ async def test_the_summary_stops_repeating_the_row_above(tmp_index_dir: Path) ->
     async with app.run_test(size=(100, 24)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(exclude_tags={"frontmatter": ("no_index",)}),
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: _SAMPLE,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(25):
@@ -99,13 +99,13 @@ class TestTheHeadNamesWhatTheExpressionCannot:
         async with app.run_test(size=(100, 24)) as pilot:
             await pilot.pause()
             app.push_screen(
-                FilterBrowserScreen(
+                DefaultFiltersScreen(
                     title="Index filters",
                     spec=FilterSpec(),
                     gitignore=True,
                     fndignore=True,
                     sample_provider=lambda _spec: _SAMPLE,
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(25):
@@ -129,13 +129,13 @@ class TestTheHeadNamesWhatTheExpressionCannot:
         async with app.run_test(size=(100, 24)) as pilot:
             await pilot.pause()
             app.push_screen(
-                FilterBrowserScreen(
+                DefaultFiltersScreen(
                     title="Index filters",
                     spec=FilterSpec(),
                     gitignore=False,
                     fndignore=False,
                     sample_provider=lambda _spec: _SAMPLE,
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(25):

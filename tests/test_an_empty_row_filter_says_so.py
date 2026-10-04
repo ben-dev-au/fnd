@@ -15,19 +15,19 @@ from textual.containers import Vertical
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, FilterBrowserScreen
 
 _SAMPLE = SourceSample(kinds={"md": 3}, tags={"frontmatter": {"keep": 2}})
 
 
 async def _browser(app: FNDApp, pilot: object) -> FilterBrowserScreen:
-    screen = FilterBrowserScreen(
+    screen = DefaultFiltersScreen(
         title="Index filters",
         spec=FilterSpec(),
         gitignore=True,
         fndignore=True,
         sample_provider=lambda _spec: _SAMPLE,
-        on_save=lambda *_a: None,
+        on_commit=lambda *_a: None,
     )
     app.push_screen(screen)
     for _ in range(25):

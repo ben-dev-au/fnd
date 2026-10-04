@@ -95,7 +95,7 @@ def _description(row_id: str) -> str:
     [
         ("filters.browse", "Update index", "Needs a reindex"),
         ("filters.tag_frontmatter_keys", "Rebuild index", "Needs a reindex to take effect"),
-        ("filters.tag_sources", "Rebuild index", "needs a reindex"),
+        ("filters.tag_sources", "needing a rebuild", "needs a reindex"),
     ],
 )
 def test_each_row_names_the_command_it_needs(row_id: str, must_say: str, must_not_say: str) -> None:

@@ -1,7 +1,7 @@
 """Pressing `:` twice on a dirty editor stacked a second guard that had
 dropped its own Save option.
 
-The second one replaced `Save changes` with a note that the screen holding
+The second one replaced its Save option with a note that the screen holding
 it is behind this one, which describes the screen stack rather than
 anything the user did. Esc pops one layer per press and the layers render
 identically, so the way back to a dialog that can save is a guess.
@@ -21,7 +21,7 @@ from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen, UnsavedChangesScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, UnsavedChangesScreen
 from tests._pilot_wait import wait_until
 
 _SAMPLE = SourceSample(kinds={"md": 3}, tags={"frontmatter": {"no_index": 1, "private": 2}})
@@ -50,14 +50,14 @@ def _offers_save(screen: UnsavedChangesScreen) -> bool:
 async def test_pressing_the_menu_key_twice_leaves_one_guard(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index)
     async with app.run_test(size=(110, 34)) as pilot:
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=_MINE,
             gitignore=True,
             fndignore=True,
             inherited=_INHERITED,
             sample_provider=lambda _spec: _SAMPLE,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         app.push_screen(screen)
         # The rows, not the screen: `action_clear_all` rebuilds the tree, and
@@ -105,14 +105,14 @@ async def test_quitting_twice_leaves_one_guard(built_index: Path) -> None:
     stacking after the other two stopped."""
     app = FNDApp(index_dir=built_index)
     async with app.run_test(size=(110, 34)) as pilot:
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=_MINE,
             gitignore=True,
             fndignore=True,
             inherited=_INHERITED,
             sample_provider=lambda _spec: _SAMPLE,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         app.push_screen(screen)
         await wait_until(

@@ -15,7 +15,7 @@ from textual.widgets import Input
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, FilterBrowserScreen
 from fnd.tui.widgets.toggle_tree import ToggleTree
 
 
@@ -28,13 +28,13 @@ def _sample(_spec: object = None) -> SourceSample:
 
 async def _open(app: FNDApp, pilot: object) -> FilterBrowserScreen:
     app.push_screen(
-        FilterBrowserScreen(
+        DefaultFiltersScreen(
             title="Index filters",
             spec=FilterSpec(),
             gitignore=True,
             fndignore=True,
             sample_provider=_sample,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
     )
     for _ in range(20):
@@ -185,13 +185,13 @@ async def test_typing_c_does_not_clear_the_filter_set(tmp_index_dir: Path) -> No
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=spec,
                 gitignore=True,
                 fndignore=True,
                 sample_provider=_sample,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(20):

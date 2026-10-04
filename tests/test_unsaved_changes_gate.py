@@ -10,17 +10,16 @@ for not losing data.
 from __future__ import annotations
 
 import ast
-import re
-from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.widgets import Static
 
 from fnd.config import CollectionConfig, Config, SourceConfig
 from fnd.tui import FNDApp
+from fnd.tui.editing import DocumentScreen
 from fnd.tui.settings_screen import SourceFormScreen, UnsavedChangesScreen
 
 _MODULE = Path(__file__).resolve().parent.parent / "fnd" / "tui" / "settings_screen.py"
@@ -119,52 +118,6 @@ async def test_discard_leaves_and_drops_the_edit(tmp_path: Path) -> None:
     assert gone, "Discard must leave the form"
 
 
-def test_no_editing_screen_leaves_unsaved_work_silently() -> None:
-    """Class-wide: a screen that computes dirtiness must route Esc through the
-    prompt, so the next editing screen cannot opt out by forgetting."""
-    source = _MODULE.read_text(encoding="utf-8")
-    offenders: list[str] = []
-    for node in ast.parse(source).body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        back = next(
-            (
-                ast.get_source_segment(source, f) or ""
-                for f in node.body
-                if isinstance(f, ast.FunctionDef) and f.name == "action_back"
-            ),
-            "",
-        )
-        computes_dirty = bool(re.search(r"_dirty\(\)|_snapshot != |_opened_with", back))
-        if computes_dirty and "_leave_or_confirm" not in back:
-            offenders.append(node.name)
-    assert not offenders, f"screens that decide about unsaved work without asking: {offenders}"
-
-
-def test_every_screen_can_actually_be_left() -> None:
-    """A screen whose Esc neither pops nor asks is a trap with no way out.
-
-    A method inserted into the middle of `action_back` can strand its exit as
-    dead code, so the filter browser cannot be left once its search box is
-    empty. An end-to-end test catches one instance; this catches the shape.
-    """
-    source = _MODULE.read_text(encoding="utf-8")
-    trapped: list[str] = []
-    for node in ast.parse(source).body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        back = next(
-            (f for f in node.body if isinstance(f, ast.FunctionDef) and f.name == "action_back"),
-            None,
-        )
-        if back is None:
-            continue
-        body = ast.get_source_segment(source, back) or ""
-        if "pop_screen" not in body and "_leave_or_confirm" not in body:
-            trapped.append(node.name)
-    assert not trapped, f"screens with no way out of action_back: {trapped}"
-
-
 def test_no_method_hides_code_after_its_return() -> None:
     """The mechanism of that bug, class-wide: an edit that lands inside
     another method leaves its tail unreachable and silent."""
@@ -193,7 +146,7 @@ class TestTheGateCoversTheWholeStack:
         self, tmp_index_dir: Path
     ) -> None:
         from fnd.filters import FilterSpec
-        from fnd.tui.settings_screen import FilterBrowserScreen, UnsavedChangesScreen
+        from fnd.tui.settings_screen import DefaultFiltersScreen, UnsavedChangesScreen
 
         app = FNDApp(index_dir=tmp_index_dir)
         async with app.run_test(size=(110, 30)) as pilot:
@@ -202,12 +155,12 @@ class TestTheGateCoversTheWholeStack:
             for _ in range(6):
                 await pilot.pause()
             app.push_screen(
-                FilterBrowserScreen(
+                DefaultFiltersScreen(
                     title="Index filters",
                     spec=FilterSpec(),
                     gitignore=True,
                     fndignore=True,
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(10):
@@ -222,15 +175,12 @@ class TestTheGateCoversTheWholeStack:
         assert running
 
     @pytest.mark.asyncio
-    async def test_the_gate_does_not_offer_to_save_what_it_cannot_reach(
-        self, tmp_index_dir: Path
-    ) -> None:
-        """A form buried under another editor cannot be saved from a modal:
-        its own save pops whatever is on top, which is not it."""
+    async def test_the_gate_offers_to_save_a_buried_document(self, tmp_index_dir: Path) -> None:
+        """Saving writes config without navigating, so a buried form saves from the prompt."""
         from textual.widgets import OptionList
 
         from fnd.filters import FilterSpec
-        from fnd.tui.settings_screen import FilterBrowserScreen
+        from fnd.tui.settings_screen import DefaultFiltersScreen
 
         app = FNDApp(index_dir=tmp_index_dir)
         async with app.run_test(size=(110, 30)) as pilot:
@@ -239,12 +189,12 @@ class TestTheGateCoversTheWholeStack:
             for _ in range(6):
                 await pilot.pause()
             app.push_screen(
-                FilterBrowserScreen(
+                DefaultFiltersScreen(
                     title="Index filters",
                     spec=FilterSpec(),
                     gitignore=True,
                     fndignore=True,
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(10):
@@ -254,9 +204,7 @@ class TestTheGateCoversTheWholeStack:
                 await pilot.pause()
             ids = [o.id for o in app.screen.query_one("#confirm_list", OptionList)._options]
 
-        assert "save" not in ids, ids
-        assert "discard" in ids, ids
-        assert "stay" in ids, ids
+        assert ids == ["save", "discard", "stay"], ids
 
     @pytest.mark.asyncio
     async def test_q_on_the_gate_keeps_editing_rather_than_quitting(
@@ -284,14 +232,19 @@ class TestTheGateCoversTheWholeStack:
         assert gone, "and it should still dismiss the gate"
 
 
-class _DirtyScreen(Screen[None]):
-    """A screen that always has something to lose."""
+class _DirtyScreen(DocumentScreen):
+    """A document that always has something to lose."""
+
+    SUBJECT = "this form"
 
     def compose(self) -> ComposeResult:
         yield Static("dirty")
 
-    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
-        return "This form", lambda: None
+    def is_dirty(self) -> bool:
+        return True
+
+    def write(self) -> str:
+        return ""
 
 
 class TestEveryAdvertisedExitAsks:
@@ -414,3 +367,89 @@ class TestOpeningAStackIsAlsoAnExit:
 
         assert SettingsScreen.__name__ in names, app.screen
         assert UnsavedChangesScreen.__name__ not in names
+
+
+def _app_with_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FNDApp:
+    from fnd.config import load, write_collection
+
+    cfg_path = tmp_path / "config.toml"
+    corpus = tmp_path / "notes"
+    corpus.mkdir(exist_ok=True)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    write_collection(
+        config_path=cfg_path,
+        name="notes",
+        collection=CollectionConfig(sources=[SourceConfig(path=corpus)]),
+    )
+    return FNDApp(index_dir=tmp_path / "idx", config=load(cfg_path))
+
+
+async def _settle(pilot: object, n: int = 20) -> None:
+    for _ in range(n):
+        await pilot.pause()  # type: ignore[attr-defined]
+
+
+class TestQuittingOverAPart:
+    """A part's edits belong to its document, so the quit prompt covers them."""
+
+    @pytest.mark.asyncio
+    async def test_q_over_a_part_on_a_dirty_form_offers_save_and_saves_the_part(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The per-source filter browser's edit reaches the config through the quit prompt."""
+        import dataclasses
+
+        from textual.widgets import OptionList
+
+        from fnd.config import load
+
+        app = _app_with_config_file(tmp_path, monkeypatch)
+        async with app.run_test(size=(110, 30)) as pilot:
+            await _settle(pilot, 5)
+            app.push_screen(SourceFormScreen(collection_name="notes", source_index=0))
+            await _settle(pilot)
+            form = app.screen
+            assert isinstance(form, SourceFormScreen)
+            form._open_filters()
+            await _settle(pilot)
+            browser = app.screen
+            browser._spec = dataclasses.replace(  # type: ignore[attr-defined]
+                browser._spec,  # type: ignore[attr-defined]
+                exclude_tags={"frontmatter": ("no_index", "draft")},
+            )
+            app.action_quit()
+            await _settle(pilot, 8)
+            prompt = app.screen
+            assert isinstance(prompt, UnsavedChangesScreen)
+            assert prompt.option_labels()[0] == "Save and quit"
+            options = prompt.query_one("#confirm_list", OptionList)
+            options.highlighted = 0
+            options.action_select()
+            await _settle(pilot, 8)
+        saved = load(tmp_path / "config.toml").collections["notes"].sources[0].effective_filters
+        assert "draft" in cast("Any", saved.exclude_tags)["frontmatter"]
+
+    @pytest.mark.asyncio
+    async def test_q_over_invalid_text_names_the_error_and_offers_no_save(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A save that would drop the typing silently is never offered."""
+        from textual.widgets import TextArea
+
+        app = _app_with_config_file(tmp_path, monkeypatch)
+        async with app.run_test(size=(110, 30)) as pilot:
+            await _settle(pilot, 5)
+            app.push_screen(SourceFormScreen(collection_name="notes", source_index=0))
+            await _settle(pilot)
+            app.screen._open_filters()  # type: ignore[attr-defined]
+            await _settle(pilot)
+            app.screen.action_edit_text()  # type: ignore[attr-defined]
+            await _settle(pilot)
+            app.screen.query_one("#filter_text", TextArea).text = "tag:("
+            await _settle(pilot, 4)
+            app.action_quit()
+            await _settle(pilot, 8)
+            prompt = app.screen
+            assert isinstance(prompt, UnsavedChangesScreen)
+            labels = prompt.option_labels()
+        assert labels == ["Discard and quit", "Keep editing"]

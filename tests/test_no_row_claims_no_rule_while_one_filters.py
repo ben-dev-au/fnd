@@ -16,7 +16,7 @@ from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.filters.tree_model import spec_branches
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen
 
 _SAMPLE = SourceSample(kinds={"md": 3}, tags={})
 
@@ -45,13 +45,13 @@ async def test_the_row_stops_reading_no_rule(tmp_index_dir: Path) -> None:
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(min_size=5_000_000),
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: _SAMPLE,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(25):

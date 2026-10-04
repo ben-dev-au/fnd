@@ -55,6 +55,14 @@ async def _collapse(
         timeout=30.0,
         message=f"#{tree_id} never populated",
     )
+    # The initial query's results take focus when they land, so focusing first races them.
+    results = app.query_one("#results_pane", Tree)
+    await wait_until(
+        pilot,
+        lambda: bool(results.root.children),
+        timeout=30.0,
+        message="the initial query's results never landed",
+    )
     tree.focus()
     # The action reads `_focus_context()`, so a focus that has not landed
     # sends every press to whichever tree still holds it.

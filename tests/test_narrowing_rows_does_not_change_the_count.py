@@ -14,7 +14,7 @@ import pytest
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen
 from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem
 
 _SAMPLE = SourceSample(kinds={"md": 3, "python": 1}, tags={"frontmatter": {"keep": 2}})
@@ -68,13 +68,13 @@ async def test_the_screen_does_not_contradict_itself(tmp_index_dir: Path) -> Non
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.pause()
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=FilterSpec(kinds=("python",)),
             gitignore=True,
             fndignore=True,
             sample_provider=lambda _spec: _SAMPLE,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         app.push_screen(screen)
         for _ in range(25):

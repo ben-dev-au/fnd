@@ -1,9 +1,9 @@
 """The same non-total `exists()`, at three more sites on this branch.
 
-`save_blocked` is called unguarded from `action_save_close` on both forms, so
+`blocked_reason` is called unguarded from the save on both forms, so
 a path under a directory that denies search took the app down on `^s` instead
 of showing its error label. The leave path swallows the same exception
-(`save_blocked_on` catches everything), so Esc was fine and only saving
+(the prompt caught everything), so Esc was fine and only saving
 crashed, and the prompt went on offering a save that would kill the app.
 
 `EditBar._validate_path` runs the same call from a debounce timer on those two
@@ -46,7 +46,7 @@ def _form(cls: type, path: str) -> Any:
 def test_a_path_we_cannot_reach_does_not_block_the_save(cls: type, tmp_path: Path) -> None:
     inner = _locked(tmp_path)
     try:
-        answer = _form(cls, str(inner)).save_blocked()
+        answer = _form(cls, str(inner)).blocked_reason()
     finally:
         os.chmod(tmp_path / "Volume", stat_mod.S_IRWXU)
 
@@ -56,7 +56,7 @@ def test_a_path_we_cannot_reach_does_not_block_the_save(cls: type, tmp_path: Pat
 @pytest.mark.parametrize("cls", [SourceFormScreen, AddCollectionWizard])
 def test_a_path_that_is_really_gone_still_blocks(cls: type, tmp_path: Path) -> None:
     """The control: the check still has to be able to refuse."""
-    answer = _form(cls, str(tmp_path / "never")).save_blocked()
+    answer = _form(cls, str(tmp_path / "never")).blocked_reason()
 
     assert "does not exist" in answer, answer
 

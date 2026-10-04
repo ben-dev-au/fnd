@@ -1,9 +1,9 @@
-"""`^s Apply` on an invalid expression refuses observably.
+"""Esc on an invalid expression refuses observably, and never traps the user.
 
 The status line already shows the parse error, so refreshing it changes no
 pixel (14 identical pane captures over 3.5 seconds read as a dead key). The
-leaving prompt must not offer "Save changes" for the same text and bounce back
-with no explanation. The source form holds the same contract.
+text is a part of the browser: it is never passed on broken, and a second Esc
+abandons it.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import OptionList, TextArea
+from textual.widgets import TextArea
 
 from fnd.filters import FilterSpec
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterTextScreen, UnsavedChangesScreen
+from fnd.tui.settings_screen import FilterTextScreen
 
 
 async def _editor(app: FNDApp, pilot: Any, text: str) -> FilterTextScreen:
@@ -33,12 +33,15 @@ async def _editor(app: FNDApp, pilot: Any, text: str) -> FilterTextScreen:
     return screen
 
 
-def test_invalid_text_blocks_the_save() -> None:
-    """The seam the leaving prompt reads."""
-    screen = FilterTextScreen(title="t", spec=FilterSpec(), on_save=lambda _s: None)
+def test_invalid_text_is_not_handed_back() -> None:
+    """The seam the leaving gate reads: an error, and nothing passed on."""
+    got: list[Any] = []
+    screen = FilterTextScreen(title="t", spec=FilterSpec(), on_save=got.append)
     screen._parsed = lambda: (None, _Err(7, "unexpected token 'kb'"))  # type: ignore[method-assign]
+    screen.query_one = lambda *_a, **_k: type("T", (), {"text": "file.size < 200kb"})()  # type: ignore[method-assign]
 
-    assert "col 7" in screen.save_blocked()
+    assert "col 7" in screen.hand_back()
+    assert not got
 
 
 class _Err:
@@ -48,49 +51,52 @@ class _Err:
 
 
 @pytest.mark.asyncio
-async def test_a_refused_apply_says_something(tmp_index_dir: Path) -> None:
+async def test_a_refused_esc_says_something(tmp_index_dir: Path) -> None:
     app = FNDApp(index_dir=tmp_index_dir)
     said: list[str] = []
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
         app.notify = lambda msg, **kw: said.append(str(msg))  # type: ignore[method-assign]
-        screen = await _editor(app, pilot, "file.size < 200kb")
-        screen.action_save_close()
+        await _editor(app, pilot, "file.size < 200kb")
+        await pilot.press("escape")
         for _ in range(6):
             await pilot.pause()
         still_open = isinstance(app.screen, FilterTextScreen)
 
-    assert still_open, "it must not apply text it cannot parse"
+    assert still_open, "it must not pass on text it cannot parse"
     assert said, "and it must not refuse in silence"
-    assert any("Not applied" in m for m in said), said
+    assert any("col" in m and "Esc again" in m for m in said), said
 
 
 @pytest.mark.asyncio
-async def test_the_leaving_prompt_stops_offering_it(tmp_index_dir: Path) -> None:
+async def test_a_second_esc_abandons_the_typing(tmp_index_dir: Path) -> None:
+    """Holding is not trapping: the vocabulary's Cancel drops what is being typed."""
+    got: list[Any] = []
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
-        await _editor(app, pilot, "file.size < 200kb")
-        await pilot.press("escape")
-        for _ in range(10):
+        app.push_screen(FilterTextScreen(title="t", spec=FilterSpec(), on_save=got.append))
+        for _ in range(15):
             await pilot.pause()
-        prompt = app.screen
-        assert isinstance(prompt, UnsavedChangesScreen)
-        ids = [o.id for o in prompt.query_one("#confirm_list", OptionList)._options]
-        painted = " ".join(
-            " ".join(
-                "".join(s.text for s in strip).strip().strip("│").strip()
-                for strip in app.screen._compositor.render_strips()
-            ).split()
-        )
+        screen = app.screen
+        screen.query_one("#filter_text", TextArea).text = "file.size < 200kb"
+        for _ in range(6):
+            await pilot.pause()
+        await pilot.press("escape")
+        for _ in range(4):
+            await pilot.pause()
+        await pilot.press("escape")
+        for _ in range(6):
+            await pilot.pause()
+        gone = app.screen is not screen
 
-    assert "save" not in ids, ids
-    assert "Cannot save yet" in painted, painted
+    assert gone
+    assert not got
 
 
 @pytest.mark.asyncio
-async def test_valid_text_still_saves(tmp_index_dir: Path) -> None:
-    """The control: the guard must not block text the screen can parse."""
+async def test_valid_text_still_goes_back(tmp_index_dir: Path) -> None:
+    """The control: the hold must not block text the screen can parse."""
     saved: list[Any] = []
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 30)) as pilot:
@@ -102,13 +108,12 @@ async def test_valid_text_still_saves(tmp_index_dir: Path) -> None:
             await pilot.pause()
         screen = app.screen
         assert isinstance(screen, FilterTextScreen)
-        assert not screen.save_blocked()
         screen.query_one("#filter_text", TextArea).text = "file.size <= 200000"
         for _ in range(8):
             await pilot.pause()
-        screen.action_save_close()
+        await pilot.press("escape")
         for _ in range(6):
             await pilot.pause()
 
-    assert saved, "valid text must still apply"
+    assert saved, "valid text must still be carried back"
     assert saved[0].max_size == 200000

@@ -1099,27 +1099,18 @@ class FNDApp(App[None]):
         Esc is back and `q` is quit on every screen; both ask first, so a quit
         never throws an unsaved edit away.
         """
-        from fnd.tui.settings_screen import UnsavedChangesScreen, unsaved_on_stack
+        from fnd.tui.editing import Leave, ask_before_leaving, pending_document
+        from fnd.tui.settings_screen import UnsavedChangesScreen
 
         if isinstance(self.screen, UnsavedChangesScreen):
-            # The third route that asks it. The question is already on screen
-            # waiting for an answer, and asking again stacks a guard that has
-            # dropped its own Save option.
+            # The question is already on screen; asking again stacks a second one.
             return
-        pending = unsaved_on_stack(self.screen_stack)
+        pending = pending_document(self.screen_stack)
         if pending is None:
             self.exit()
             return
-        what, save, blocked = pending
-        self.push_screen(
-            UnsavedChangesScreen(
-                what=what,
-                on_save=save,
-                on_leave=self.exit,
-                leave_label="Discard and quit",
-                blocked=blocked,
-            )
-        )
+        document, blocked = pending
+        ask_before_leaving(document, Leave("quit", self.exit), blocked=blocked)
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.
@@ -2433,11 +2424,11 @@ class FNDApp(App[None]):
         full-screen list of every action and setting, with a search Input
         at the top for free-text filtering across all sections.
         """
+        from fnd.tui.editing import Leave, ask_before_leaving, pending_document
         from fnd.tui.settings_screen import (
             SettingsScreen,
             UnsavedChangesScreen,
             open_settings,
-            unsaved_on_stack,
         )
 
         if isinstance(self.screen, UnsavedChangesScreen):
@@ -2451,17 +2442,11 @@ class FNDApp(App[None]):
         # The filter browser is not a SettingsScreen: a second settings stack
         # over it could open and save a second Index filters, leaving the
         # first holding stale values that its own `^s` then writes back.
-        pending = unsaved_on_stack(self.screen_stack)
+        pending = pending_document(self.screen_stack)
         if pending is not None:
-            what, save, blocked = pending
-            self.push_screen(
-                UnsavedChangesScreen(
-                    what=what,
-                    on_save=save,
-                    on_leave=self._discard_and_open_settings,
-                    leave_label="Discard and open the menu",
-                    blocked=blocked,
-                )
+            document, blocked = pending
+            ask_before_leaving(
+                document, Leave("open the menu", self._discard_and_open_settings), blocked=blocked
             )
             return
         open_settings(self)
@@ -2475,24 +2460,18 @@ class FNDApp(App[None]):
         exit like any other: Esc, ←, `q`, the menu and `:` (which the screen's
         own footer advertises) all ask before discarding.
         """
-        from fnd.tui.settings_screen import (
-            UnsavedChangesScreen,
-            unsaved_on_stack,
-        )
+        from fnd.tui.editing import Leave, ask_before_leaving, pending_document
+        from fnd.tui.settings_screen import UnsavedChangesScreen
 
         if isinstance(self.screen, UnsavedChangesScreen):
             return
-        pending = unsaved_on_stack(self.screen_stack) if ask else None
+        pending = pending_document(self.screen_stack) if ask else None
         if pending is not None:
-            what, save, blocked = pending
-            self.push_screen(
-                UnsavedChangesScreen(
-                    what=what,
-                    on_save=save,
-                    on_leave=lambda: self._close_settings_stack(ask=False),
-                    leave_label="Discard and close",
-                    blocked=blocked,
-                )
+            document, blocked = pending
+            ask_before_leaving(
+                document,
+                Leave("close Settings", lambda: self._close_settings_stack(ask=False)),
+                blocked=blocked,
             )
             return
         self._discard_settings_stack()
@@ -2503,11 +2482,11 @@ class FNDApp(App[None]):
         The editors that can hold unsaved work are not SettingsScreens, so
         popping only those stopped at the editor and discarded nothing.
         """
-        from fnd.tui.settings_screen import SettingsScreen, unsaved_on_stack
+        from fnd.tui.settings_screen import SettingsScreen
 
         while len(self.screen_stack) > 1 and (
             isinstance(self.screen, SettingsScreen)
-            or unsaved_on_stack(self.screen_stack) is not None
+            or getattr(self.screen, "ROLE", None) is not None
         ):
             self.pop_screen()
 

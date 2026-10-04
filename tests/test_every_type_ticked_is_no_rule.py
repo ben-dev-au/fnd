@@ -20,7 +20,7 @@ from fnd.filters.scan import SourceSample
 from fnd.filters.tree_model import apply_selection, selection_for
 from fnd.kinds import ALL_KIND_IDS
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, FilterBrowserScreen
 from fnd.tui.widgets.toggle_tree import ToggleTree
 
 _SAMPLE = SourceSample(kinds={"md": 2}, tags={"frontmatter": {"keep": 1}})
@@ -51,13 +51,13 @@ async def test_ticking_them_all_leaves_the_tree_showing_no_rule(tmp_index_dir: P
     async with app.run_test(size=(110, 34)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: _SAMPLE,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(25):
