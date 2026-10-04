@@ -195,7 +195,7 @@ async def test_adding_a_collection_starts_no_run_and_opens_its_page(
     assert "research" in load(config_file).collections
     assert started == []
     assert on_page
-    assert needed.startswith("needed: not indexed yet"), needed
+    assert needed.startswith("not indexed yet"), needed
 
 
 async def _rename(app: FNDApp, pilot: Any, new_name: str) -> Any:

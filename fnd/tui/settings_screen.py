@@ -192,15 +192,6 @@ def _hint_bar(app: FNDApp, contextual: tuple[tuple[str, str], ...], *, screen: A
     )
 
 
-_SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
-    ("↑↓", "Nav"),
-    ("⏎", "Open"),
-    ("←", "Back"),
-    ("/", "Filter"),
-    ("Esc", "Back"),
-)
-
-
 # ── Confirm-screen helpers (Phase E) ────────────────────────────────
 
 
@@ -1642,7 +1633,7 @@ class SettingsScreen(Screen[None]):
         # Search input focused: hand-off / clear cluster.
         focused = self.focused
         if isinstance(focused, Input) and getattr(focused, "id", None) == "settings_search":
-            esc = ("Esc", "Clear") if focused.value else ("Esc", "Back")
+            esc = leave_hint(clearing=bool(focused.value), with_left=False)
             return (("↓", "Results"), ("⏎", "Go to first"), esc)
 
         # Esc and ← clear a row filter before they leave the page.
@@ -1934,6 +1925,8 @@ class SettingsScreen(Screen[None]):
                 app._config = load()  # type: ignore[attr-defined]
                 app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
                 app._refresh_status()  # type: ignore[attr-defined]
+                # A setting can leave a collection out of date (spec D4); its row says so now.
+                app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         except Exception as e:
             self.query_one(EditBar).show_error(_summarise(e))
             return
@@ -2472,6 +2465,13 @@ class TreePickerScreen(Screen[None]):
 # ── Collection-form screens (rebuilt from CollectionsScreen) ────────
 
 
+def _repopulate_keeping_cursor(lst: SettingsList, items: list[MenuItem]) -> None:
+    """Rebuild a form's rows on the row the user was on, so returning from a part
+    lands where it was opened rather than on the first field."""
+    here = lst._items[lst.cursor_index].id if 0 <= lst.cursor_index < len(lst._items) else None
+    lst.set_items(items, cursor_id=here)
+
+
 def _kinds_to_include_globs(kind_ids: list[str]) -> list[str]:
     """Expand selected kind ids to include globs for all their suffixes."""
     from fnd.kinds import KIND_BY_ID
@@ -2708,7 +2708,7 @@ class SourceFormScreen(DocumentScreen):
         return f"{count} overridden" if count else "inherited"
 
     def _populate_fields(self) -> None:
-        self.query_one(SettingsList).set_items(self._build_field_items())
+        _repopulate_keeping_cursor(self.query_one(SettingsList), self._build_field_items())
         self._refresh_sample_tester()
         # A rejected save left its reason on screen while the user fixed the
         # very field it named, so "Name is required." sat above a filled name.
@@ -3395,7 +3395,7 @@ class AddCollectionWizard(DocumentScreen):
         self._render_footer()
 
     def _populate_fields(self) -> None:
-        self.query_one(SettingsList).set_items(self._build_field_items())
+        _repopulate_keeping_cursor(self.query_one(SettingsList), self._build_field_items())
         self._refresh_sample_tester()
         # A rejected save left its reason on screen while the user fixed the
         # very field it named, so "Name is required." sat above a filled name.
@@ -4025,7 +4025,7 @@ class DeleteCollectionScreen(Screen[None]):
         enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4223,7 +4223,7 @@ class CacheMaintenanceConfirm(Screen[None]):
         enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4371,7 +4371,7 @@ class UpdateAllConfirm(Screen[None]):
         enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4565,7 +4565,7 @@ class StructuredPdfConfirmScreen(Screen[None]):
         enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4937,7 +4937,7 @@ class DeleteSourceScreen(Screen[None]):
         enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -5035,7 +5035,7 @@ class CloneSourcePickCollectionScreen(Screen[None]):
         self.query_one("#clone_list", OptionList).focus()
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Pick"), ("Esc", "Cancel")))
+            _hint_bar(app, (("⏎", "Pick"), ("Esc", CANCEL)))
         )
 
     def action_back(self) -> None:
@@ -5132,7 +5132,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
         self.query_one("#clone_list", OptionList).focus()
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Clone"), ("Esc", "Cancel")))
+            _hint_bar(app, (("⏎", "Clone"), ("Esc", CANCEL)))
         )
 
     def action_back(self) -> None:
@@ -5492,7 +5492,7 @@ class StillFlatDrillIn(Screen[None]):
         )
         with _ctx.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
-                _hint_bar(app, (*row_keys, ("Esc", "Back")))
+                _hint_bar(app, (*row_keys, leave_hint(with_left=False)))
             )
 
     def _refresh(self) -> None:

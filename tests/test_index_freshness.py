@@ -115,7 +115,7 @@ def test_a_summary_names_the_state_and_the_reasons(tmp_path: Path) -> None:
     """The marker's description reads as one phrase."""
     before = _now(_config(tmp_path))
     after = _now(_config(tmp_path, excludes=["b/**"], follow_symlinks=True))
-    assert compare(after, before).summary == "needs update: excludes, follow symlinks changed"
+    assert compare(after, before).summary == "needs update (excludes, follow symlinks changed)"
 
 
 def _ledger_dir(tmp_path: Path) -> Path:

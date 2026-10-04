@@ -52,7 +52,7 @@ class Verdict:
     def summary(self) -> str:
         if not self.reasons:
             return self.state.value
-        return f"{self.state.value}: {', '.join(self.reasons)} changed"
+        return f"{self.state.value} ({', '.join(self.reasons)} changed)"
 
 
 def indexed_with(collection: CollectionConfig, defaults: Defaults) -> dict[str, Any]:

@@ -51,7 +51,10 @@ def announce_saved(app: FNDApp, names: Sequence[str]) -> None:
         return
     if len(behind) == 1:
         name, verdict = behind[0]
-        app.notify(f"Saved. {name!r} {verdict.summary}: press u to run it.", timeout=8)
+        app.notify(
+            f"Saved. {name!r} {verdict.summary}: press u on it in Collections to run it.",
+            timeout=8,
+        )
         return
     app.notify(
         f"Saved. {len(behind)} collections are out of date: "

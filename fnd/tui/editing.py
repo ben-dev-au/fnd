@@ -205,3 +205,44 @@ def ask_before_leaving(
             blocked=reason,
         )
     )
+
+
+def editing_help_rows() -> tuple[tuple[str, str, str, str], ...]:
+    """The Keybindings sheet's Editing section, in the words the footers use."""
+    return (
+        (
+            "⏎",
+            "Toggle / Select / Edit",
+            "",
+            "A setting applies the moment it changes; there is nothing to save.",
+        ),
+        (
+            "Esc / ←",
+            BACK,
+            "",
+            "Go back a screen. Changes go with you: settings are already applied, "
+            "and a part carries its edits into the form it came from. A form with "
+            "unsaved changes asks first.",
+        ),
+        (
+            "Esc / ←",
+            CLEAR,
+            "",
+            "With text in a row filter, empties it first; the next press goes back.",
+        ),
+        (
+            SAVE_KEY,
+            SAVE,
+            "",
+            "Only on a form (a source, Add collection, Index filters): writes it to "
+            "the config. Saving never indexes; a collection that is then out of "
+            "date carries ↻, and u brings it up to date.",
+        ),
+        ("⏎ (typing)", SET, "", "Take the typed value."),
+        (
+            "Esc (typing)",
+            CANCEL,
+            "",
+            "Abandon the value being typed, or a confirm dialog's action.",
+        ),
+    )

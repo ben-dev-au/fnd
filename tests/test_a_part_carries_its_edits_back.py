@@ -250,3 +250,32 @@ async def test_fixing_the_typing_carries_the_fixed_value(
         gone = app.screen is not rule
     assert gone
     assert got == ["status == 'done'"]
+
+
+@pytest.mark.asyncio
+async def test_coming_back_from_a_part_keeps_the_row_it_was_opened_from(
+    config_file: Path, index_dir: Path
+) -> None:
+    """Esc returns to the Index filters row, not the top: the next Enter reopens it."""
+    from fnd.tui.settings_screen import SettingsList
+
+    app = FNDApp(index_dir=index_dir, config=load(config_file))
+    async with app.run_test(size=(110, 30)) as pilot:
+        await _settle(pilot, 5)
+        app.push_screen(SourceFormScreen(collection_name="notes", source_index=0))
+        await _settle(pilot)
+        form = app.screen
+        assert isinstance(form, SourceFormScreen)
+        lst = form.query_one(SettingsList)
+        lst.cursor_index = next(i for i, it in enumerate(lst._items) if it.id == "form.filters")
+        await _settle(pilot, 3)
+        await pilot.press("enter")
+        await _settle(pilot)
+        browser = app.screen
+        assert isinstance(browser, FilterBrowserScreen)
+        _exclude_draft(browser)
+        await pilot.press("escape")
+        await _settle(pilot, 8)
+        assert app.screen is form
+        row = lst._items[lst.cursor_index].id
+    assert row == "form.filters", row

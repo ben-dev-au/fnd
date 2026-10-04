@@ -40,8 +40,8 @@ from fnd.config import (
 )
 from fnd.fsmeta import path_is_absent
 from fnd.index_freshness import State
+from fnd.tui.editing import BACK, CLEAR, SAVE, SAVE_KEY, editing_help_rows
 from fnd.tui.freshness_view import MARKER, run_pending, verdict_for
-from fnd.tui.widgets import COMMIT_KEY
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -381,9 +381,9 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "Esc",
-        "Clear search / back",
+        f"{CLEAR} / {BACK}",
         "",
-        "If the filter is active, clears it first. Press again to pop the current screen.",
+        "If the filter is active, clears it first. Press again to go back a screen.",
     ),
 )
 
@@ -403,22 +403,25 @@ _KEYS_SOURCE_FORM: tuple[tuple[str, str, str, str], ...] = (
         "Edit, pick, or toggle the focused field. Scalar fields open the inline edit bar; multi-select fields push a picker.",
     ),
     (
-        COMMIT_KEY,
-        "Save & close",
+        SAVE_KEY,
+        SAVE,
         "",
-        "Persist this source to config.toml. Triggers an async reindex if the source set or includes/excludes changed.",
+        "Write this source to the config. Nothing is indexed; the collection is "
+        "marked with ↻ if it needs an update.",
     ),
     (
         "Ctrl+D",
         "Delete source",
         "",
-        "Only available when editing an existing source. Pushes a confirmation modal; on confirm, removes the entry from config and reindexes.",
+        "Only available when editing an existing source. Asks first; on confirm, "
+        "removes the entry from the config, and the collection then needs an update.",
     ),
     (
         "Esc / ←",
-        "Cancel",
+        BACK,
         "",
-        "Discard unsaved changes and pop back to the Sources screen.",
+        "Go back to the Sources screen. With unsaved changes, asks: save, discard, "
+        "or keep editing.",
     ),
 )
 
@@ -511,7 +514,7 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
             "Edit as text",
             "",
             "Open the whole filter set as its expression, for anything the "
-            "pickers cannot say. Applies back into the screen, not to disk.",
+            "pickers cannot say. Esc carries it back into this screen.",
         ),
         (
             "y",
@@ -523,23 +526,17 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
             _CLEAR_FILTERS_KEY,
             "Return to defaults",
             "",
-            "Drop every rule on this screen. Shown only while there is something to drop.",
-        ),
-        (
-            COMMIT_KEY,
-            "Save / Apply",
-            "",
-            "On the global defaults this writes them and indexes nothing; "
-            "collections keep their current contents until the next Update "
-            "index. On a source it is Apply, handing the set back to the form, "
-            "which is what saves and rebuilds that collection.",
+            "Return this source to the inherited filters. Shown only where it "
+            "has departed from them.",
         ),
         (
             "Esc / ←",
-            "Leave",
+            BACK,
             "",
-            "Leave without saving (← does so from a collapsed top-level row). Asks first when "
-            "there are unsaved edits. With text in the filter box, clears it first.",
+            "On a source, go back to its form carrying the change; the form saves it. "
+            f"On the global defaults, a form of their own: {SAVE_KEY} saves, and leaving with "
+            "unsaved changes asks. ← does so from a collapsed top-level row; with text "
+            "in the filter box, Esc clears it first.",
         ),
     )
 
@@ -731,6 +728,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     # Pass section name so widget-only rows that share labels across
     # sections (multiple "Cancel" rows) get distinct MenuItem ids.
     sections["Settings menu"] = [_key_row(*row, section="settings") for row in _KEYS_SETTINGS]
+    sections["Editing"] = [_key_row(*row, section="editing") for row in editing_help_rows()]
     sections["Source form"] = [_key_row(*row, section="source_form") for row in _KEYS_SOURCE_FORM]
     sections["Index filters"] = [
         _key_row(*row, section="filter_browser") for row in _keys_filter_browser()
@@ -778,6 +776,8 @@ def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
         app._config = load()  # type: ignore[attr-defined]
         app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
+        # A setting can leave a collection out of date (spec D4); its row says so now.
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
 
     return _set
 
@@ -1521,7 +1521,7 @@ def _summary_collection_update(app: FNDApp, name: str) -> str:
         return f"⚠ incomplete: {done} of {total} files · {n_sources} sources"
     verdict = verdict_for(app, name)
     if verdict.state is not State.CURRENT:
-        return f"needed: {verdict.summary} · {n_sources} sources"
+        return f"{verdict.summary} · {n_sources} sources"
     return f"{n_sources} sources"
 
 
@@ -1657,6 +1657,9 @@ def _push_update_all_confirm(
 
 def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
     """Per-collection sub-menu."""
+    verdict = verdict_for(app, name)
+    # The row that runs the remedy says it is needed, and why (spec D4).
+    needed = verdict.summary if verdict.state is not State.CURRENT else ""
     return (
         MenuItem(
             id=f"col.{name}.rename",
@@ -1714,8 +1717,9 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         ),
         MenuItem(
             id=f"col.{name}.reindex",
-            label="Update index",
-            description=(
+            label="Update index (needed)" if needed else "Update index",
+            description=(f"{needed[:1].upper()}{needed[1:]}. " if needed else "")
+            + (
                 "Add new / changed files and drop deleted ones; unchanged files "
                 "are skipped and their existing texturing is left untouched. The "
                 "cheap, battery-friendly pass: it never re-texturises what's "

@@ -174,5 +174,69 @@ async def test_the_update_row_says_why_it_is_needed(tmp_path: Path, tmp_index_di
     async with app.run_test(size=(120, 30)) as pilot:
         await _settle(pilot)
         assert _summary_collection_update(app, "notes").startswith(
-            "needed: needs update: excludes changed"
+            "needs update (excludes changed)"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_settings_change_redraws_the_sidebar_marker(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tag key set in Settings marks the row at once, not after a restart."""
+    from fnd.config import load, write_collection
+
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    (tmp_path / "notes").mkdir()
+    write_collection(
+        config_path=cfg_path,
+        name="notes",
+        collection=CollectionConfig(sources=[SourceConfig(path=tmp_path / "notes")]),
+    )
+    cfg = load(cfg_path)
+    tmp_index_dir.mkdir(parents=True, exist_ok=True)
+    Ledger(tmp_index_dir).record("notes", indexed_with(cfg.collections["notes"], cfg.defaults))
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle(pilot)
+        from fnd.tui.menu import walk_all_sections
+
+        item = next(i for _c, i in walk_all_sections(app) if i.id == "filters.tag_frontmatter_keys")
+        from fnd.tui.settings_screen import EditBar, SettingsScreen
+
+        screen = SettingsScreen(breadcrumb=("Filters",), items=(item,))
+        app.push_screen(screen)
+        await _settle(pilot)
+        screen.post_message(EditBar.EditCommitted(item, ["Course"]))
+        await _settle(pilot)
+        assert MARKER in _row(app)
+
+
+@pytest.mark.asyncio
+async def test_the_update_row_is_labelled_needed_with_its_reason(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """The row that runs the remedy says it is needed, and why, where the user reads it."""
+    from fnd.tui.menu import _provider_collection
+
+    _record_clean(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=tmp_index_dir, config=_cfg(tmp_path, excludes=["build/**"]))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle(pilot)
+        row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.reindex")
+    assert row.label == "Update index (needed)"
+    assert row.description.startswith("Needs update (excludes changed). ")
+
+
+@pytest.mark.asyncio
+async def test_a_current_update_row_reads_as_before(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """The control: nothing needed, nothing added."""
+    from fnd.tui.menu import _provider_collection
+
+    _record_clean(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=tmp_index_dir, config=_cfg(tmp_path))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle(pilot)
+        row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.reindex")
+    assert row.label == "Update index"
+    assert row.description.startswith("Add new")
