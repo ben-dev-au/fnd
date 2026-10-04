@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from fnd.config import CollectionConfig, Config, SourceConfig
-from fnd.index_freshness import Ledger, State, Verdict, indexed_with
+from fnd.index_freshness import SIDECAR_NAME, Ledger, State, Verdict, indexed_with
 from fnd.tui import FNDApp
 from fnd.tui.freshness_view import MARKER, sidebar_value, verdict_for
 
@@ -89,6 +89,8 @@ async def test_an_index_from_before_the_sidecar_is_adopted(
     cfg = _cfg(tmp_path)
     (tmp_path / "notes" / "a.md").write_text("# A\n\nalpha\n", encoding="utf-8")
     build_index(roots=[tmp_path / "notes"], index_dir=tmp_index_dir, collection="notes")
+    # An index from before this feature has no record at all.
+    (tmp_index_dir / SIDECAR_NAME).unlink()
     app = FNDApp(index_dir=tmp_index_dir, config=cfg)
     async with app.run_test(size=(120, 30)) as pilot:
         for _ in range(40):

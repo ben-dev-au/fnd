@@ -234,3 +234,25 @@ def test_a_replace_within_one_clock_tick_is_still_read(tmp_path: Path) -> None:
     other.record("notes", _now(_config(tmp_path, excludes=["x/**"])))
     os.utime(path, ns=(stamp, stamp))
     assert ledger.recorded("notes") != first
+
+
+def test_a_fresh_index_has_nothing_to_adopt(tmp_path: Path) -> None:
+    """An index created after the record existed holds no pre-record documents."""
+    from fnd.index import _ensure_index
+    from fnd.index_freshness import Ledger
+
+    _ensure_index(tmp_path / "idx")
+    assert Ledger(tmp_path / "idx").adopt(_config(tmp_path), is_empty=lambda _n: False) == []
+
+
+def test_an_existing_index_is_still_adopted(tmp_path: Path) -> None:
+    """The control: an index from before the record still has its collections adopted."""
+    from fnd.index import _ensure_index
+    from fnd.index_freshness import Ledger
+    from fnd.schema import SCHEMA_VERSION
+
+    (tmp_path / "idx").mkdir()
+    (tmp_path / "idx" / ".fnd-schema-version").write_text(str(SCHEMA_VERSION), encoding="utf-8")
+    _ensure_index(tmp_path / "idx")
+    adopted = Ledger(tmp_path / "idx").adopt(_config(tmp_path), is_empty=lambda _n: False)
+    assert adopted == ["notes"]

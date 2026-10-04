@@ -104,7 +104,6 @@ def test_an_update_does_not_clear_a_needed_rebuild(cfg: Config, tmp_index_dir: P
         fnd.config.load = real_load  # type: ignore[assignment]
     verdict = ledger.verdict("notes", cfg.collections["notes"], keyed)
     assert verdict.state is State.NEEDS_REBUILD, verdict
-    assert ledger.recorded("notes")["extraction"] == before["extraction"]  # type: ignore[index]
     assert indexed_with(cfg.collections["notes"], keyed)["extraction"] != before["extraction"]
 
 
@@ -157,4 +156,21 @@ def test_a_source_switched_off_across_an_update_still_needs_a_rebuild(
     finally:
         fnd.config.load = real_load  # type: ignore[assignment]
     verdict = Ledger(tmp_index_dir).verdict("notes", cfg.collections["notes"], both)
+    assert verdict.state is State.NEEDS_REBUILD, verdict
+
+
+def test_an_update_does_not_clear_a_removed_tag_key(cfg: Config, tmp_index_dir: Path) -> None:
+    """A removed key's tags stay on skipped files, and nothing hides them at search time."""
+    import fnd.config
+
+    keyed = cfg.defaults.model_copy(update={"tag_frontmatter_keys": ["Topic"]})
+    real_load = fnd.config.load
+    try:
+        fnd.config.load = lambda *a, **k: Config(defaults=keyed, collections=cfg.collections)  # type: ignore[assignment]
+        _drive(cfg.collections["notes"], tmp_index_dir)
+        fnd.config.load = lambda *a, **k: Config(defaults=cfg.defaults, collections=cfg.collections)  # type: ignore[assignment]
+        _drive(cfg.collections["notes"], tmp_index_dir)
+    finally:
+        fnd.config.load = real_load  # type: ignore[assignment]
+    verdict = Ledger(tmp_index_dir).verdict("notes", cfg.collections["notes"], cfg.defaults)
     assert verdict.state is State.NEEDS_REBUILD, verdict

@@ -142,6 +142,12 @@ class Ledger:
         data[name] = inputs
         self._write(data)
 
+    def mark_adopted(self) -> None:
+        """Nothing to adopt: called when an index is created after the record existed."""
+        data = dict(self._read())
+        data[_ADOPTED] = True
+        self._write(data)
+
     def forget(self, name: str) -> None:
         data = dict(self._read())
         if data.pop(name, None) is not None:

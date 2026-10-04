@@ -684,8 +684,14 @@ def _process_one_file(
 
 
 def _common_extraction(prior: dict[str, Any], now: dict[str, Any]) -> dict[str, Any]:
-    """The extraction inputs every indexed file was read under, after a run that skipped some."""
-    return {key: sorted(set(prior.get(key) or ()) & set(now[key])) for key in now}
+    """The extraction inputs every indexed file was read under, after a run that skipped some.
+
+    A source turned off is hidden at search time, so the overlap is true of every file. A
+    removed key's tags are not hidden, so differing keys record None, which matches nothing."""
+    keys = "tag_frontmatter_keys"
+    common = prior.get(keys) if prior.get(keys) == now[keys] else None
+    sources = sorted(set(prior.get("tag_sources") or ()) & set(now["tag_sources"]))
+    return {**now, keys: common, "tag_sources": sources}
 
 
 async def run_indexer(
