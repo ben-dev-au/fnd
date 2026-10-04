@@ -17,7 +17,8 @@ from textual.widgets import Static
 
 from fnd.config import CollectionConfig, Config, SourceConfig
 from fnd.tui import FNDApp
-from fnd.tui.menu import _make_rebuild, _make_reindex
+from fnd.tui.freshness_view import run_pending
+from fnd.tui.menu import _make_rebuild
 from fnd.tui.settings_screen import RebuildConfirmScreen
 
 
@@ -150,7 +151,7 @@ async def test_update_index_still_runs_straight_away(config: Config, tmp_index_d
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.pause()
         app._indexer.reindex_with_warning = lambda name, **_kw: started.append(name)  # type: ignore[assignment]
-        _make_reindex("papers")(app)
+        run_pending(app, "papers")
         for _ in range(10):
             await pilot.pause()
         asked = app.screen.__class__ is RebuildConfirmScreen

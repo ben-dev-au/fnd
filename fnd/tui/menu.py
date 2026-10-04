@@ -39,6 +39,8 @@ from fnd.config import (
     is_all_collections,
 )
 from fnd.fsmeta import path_is_absent
+from fnd.index_freshness import State
+from fnd.tui.freshness_view import MARKER, run_pending, verdict_for
 from fnd.tui.widgets import COMMIT_KEY
 
 if TYPE_CHECKING:
@@ -1308,6 +1310,8 @@ def _collection_summary(app: FNDApp, name: str) -> str:
         # A filter that empties a collection leaves every other column reading
         # exactly as it did: `● 1 source · ranking:default` over zero files.
         summary = f"⚠ nothing indexed · {summary}"
+    elif (verdict := verdict_for(app, name)).state in (State.NEEDS_UPDATE, State.NEEDS_REBUILD):
+        summary = f"{summary} · {MARKER} {verdict.summary}"
     return summary
 
 
@@ -1391,15 +1395,6 @@ def _make_open_delete_confirm(name: str) -> Callable[[FNDApp], None]:
         app.push_screen(DeleteCollectionScreen(collection_name=name))
 
     return _open
-
-
-def _make_reindex(name: str) -> Callable[[FNDApp], None]:
-    def _run(app: FNDApp) -> None:
-        # Route through the warning + IndexerScreen modal so the user
-        # sees progress instead of a silent background task.
-        app._indexer.reindex_with_warning(name)  # type: ignore[attr-defined]
-
-    return _run
 
 
 def _make_texturise_flat(name: str) -> Callable[[FNDApp], None]:
@@ -1524,6 +1519,9 @@ def _summary_collection_update(app: FNDApp, name: str) -> str:
     if part is not None:
         done, total = part
         return f"⚠ incomplete: {done} of {total} files · {n_sources} sources"
+    verdict = verdict_for(app, name)
+    if verdict.state is not State.CURRENT:
+        return f"needed: {verdict.summary} · {n_sources} sources"
     return f"{n_sources} sources"
 
 
@@ -1724,7 +1722,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             ),
             kind=KIND_ACTION,
             action_label="Update",
-            external=_make_reindex(name),
+            external=(lambda n: lambda a: run_pending(a, n))(name),
             value_getter=(lambda n: lambda a: _summary_collection_update(a, n))(name),
         ),
         MenuItem(

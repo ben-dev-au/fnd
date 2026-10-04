@@ -1381,6 +1381,7 @@ class SettingsScreen(Screen[None]):
         # consumes the key when the list has focus, so this only
         # fires while the Input is focused (Input has no Down handler).
         Binding("down", "list_from_input", show=False),
+        Binding("u", "update_collection", show=False),
     ]
 
     CSS = """
@@ -1579,7 +1580,34 @@ class SettingsScreen(Screen[None]):
             return self.query_one("#settings_search", Input).has_focus
         return False
 
+    def _collection_in_context(self) -> str | None:
+        """The collection this page is about, or the one under the cursor on the list."""
+        if self._breadcrumb[:1] == ("Collections",) and len(self._breadcrumb) >= 2:
+            return self._breadcrumb[1]
+        row = self._cursor_item()
+        if row is not None and row.id.startswith("collection."):
+            return row.id.removeprefix("collection.")
+        return None
+
+    def action_update_collection(self) -> None:
+        from fnd.tui.freshness_view import run_pending
+
+        if (name := self._collection_in_context()) is not None:
+            run_pending(self.app, name)  # type: ignore[arg-type]
+
     def _hint_cluster(self) -> tuple[tuple[str, str], ...]:
+        cluster = self._row_hint_cluster()
+        if self._is_typing() or self.is_keybindings:
+            return cluster
+        from fnd.index_freshness import State
+        from fnd.tui.freshness_view import verdict_for
+
+        name = self._collection_in_context()
+        if name and verdict_for(self.app, name).state is not State.CURRENT:  # type: ignore[arg-type]
+            return (*cluster, ("u", "Update"))
+        return cluster
+
+    def _row_hint_cluster(self) -> tuple[tuple[str, str], ...]:
         """Choose the contextual hint cluster for the current state.
 
         Priority: edit-bar open > search input focused > Keybindings

@@ -59,6 +59,7 @@ from fnd.index import (
     read_file_metadata,
     unreadable_roots,
 )
+from fnd.index_freshness import Ledger, indexed_with
 from fnd.walk import walk_sources
 
 EventKind = Literal[
@@ -749,14 +750,15 @@ async def run_indexer(
     # indexing path — including the TUI "Update index" modal that drives
     # this runner — honours tag_sources / tag_frontmatter_keys rather than
     # the bare defaults. Missing config falls back to the defaults.
-    tag_sources: Sequence[str] = ("frontmatter", "os")
-    tag_frontmatter_keys: Sequence[str] = ()
+    from fnd.config import Defaults
+
+    run_defaults = Defaults()
     with contextlib.suppress(Exception):
         from fnd.config import load as _load_config
 
-        _defaults = _load_config().defaults
-        tag_sources = tuple(_defaults.tag_sources)
-        tag_frontmatter_keys = tuple(_defaults.tag_frontmatter_keys)
+        run_defaults = _load_config().defaults
+    tag_sources: Sequence[str] = tuple(run_defaults.tag_sources)
+    tag_frontmatter_keys: Sequence[str] = tuple(run_defaults.tag_frontmatter_keys)
 
     # Clear any cancel beacon left over from a previous Cancel click
     # so a fresh run isn't aborted by stale state.
@@ -1222,6 +1224,10 @@ async def run_indexer(
     if cancel is not None and cancel.is_set():
         yield _emit("cancelled")
         return
+    if not blocked_roots:
+        # Unreadable roots skip the prune, so the selection did not converge.
+        with contextlib.suppress(OSError):
+            Ledger(index_dir).record(collection, indexed_with(config, run_defaults))
     yield _emit(
         "done",
         chunks_written=written,

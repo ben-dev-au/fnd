@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from fnd.tui.collection_marks import MARK_STYLES
+from fnd.tui.freshness_view import MARKER_STYLE
 from fnd.tui.results_labels import reapply_styles
 
 if TYPE_CHECKING:
@@ -22,4 +23,4 @@ class CollectionMarkLabel:
         rendered = super().render_label(node, base_style, style)  # type: ignore[misc]
         if self.has_focus:  # type: ignore[attr-defined]
             return rendered
-        return reapply_styles(rendered, node._label, MARK_STYLES)
+        return reapply_styles(rendered, node._label, MARK_STYLES | {MARKER_STYLE})

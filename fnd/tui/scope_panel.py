@@ -20,6 +20,7 @@ from fnd.fsmeta import path_is_absent
 from fnd.kinds import CATEGORIES, CATEGORY_BY_ID, KIND_BY_ID, KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope, SearchSnapshot
 from fnd.tui.collection_marks import INACTIVE, CollectionMarks, Mark, mark_style
+from fnd.tui.freshness_view import MARKER, MARKER_STYLE, sidebar_value, verdict_for
 from fnd.tui.results_labels import (
     _styled_action_label,
     _styled_parent_label,
@@ -639,7 +640,6 @@ class ScopeController:
     ) -> Any:
         marker = self.collection_marker(name)
         n_sources = len(col.sources) if col else 0
-        plural = "s" if n_sources != 1 else ""
         # A source that is not there indexes nothing, and every other column
         # on this row reads perfectly healthy while it does. One stat each,
         # because this rebuilds on every scope toggle.
@@ -648,8 +648,7 @@ class ScopeController:
         # at the front: a bare cut (`research-note`) names a collection that
         # could exist.
         prefix = f"{marker}  "
-        value = f"{n_sources} source{plural}"
-        compact = f"{n_sources} src"
+        value, compact = sidebar_value(verdict_for(self._app, name), n_sources)
         if gone:
             value = f"⚠ {gone} of {n_sources} missing"
             compact = f"⚠ {gone} missing"
@@ -658,7 +657,11 @@ class ScopeController:
         label = prefix + _branch_row(
             name, value, compact, max(0, budget - len(prefix) - shape_cells), column=0
         )
-        return _legend_label(label, len(prefix), mark)
+        styled = _legend_label(label, len(prefix), mark)
+        at = styled.plain.rfind(MARKER)
+        if at > styled.plain.rfind(" ("):
+            styled.stylize(MARKER_STYLE, at, at + len(MARKER))
+        return styled
 
     def _relabel_collection_rows(self) -> None:
         """Every row, since a toggle moves the marks of the collections after it."""

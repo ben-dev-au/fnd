@@ -560,6 +560,9 @@ class IndexerService:
         # gone stays offered, and one the run admitted cannot be reached.
         with contextlib.suppress(Exception):
             self._app._scope.refresh_filters_panel()
+        # The run just recorded what it indexed with, so the marker may have cleared.
+        with contextlib.suppress(Exception):
+            self._app._scope.refresh_collections_panel()
         self._refresh_open_settings()
         if self._app._search.current_query:
             self._app._search.run(self._app._search.current_query)

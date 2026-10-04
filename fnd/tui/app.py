@@ -40,6 +40,7 @@ from textual.widgets.tree import TreeNode
 
 from fnd import opener, os_labels
 from fnd.config import Config, default_index_dir
+from fnd.index_freshness import Ledger
 from fnd.launch_command import LaunchCommandSerializer, LaunchScope
 from fnd.matching import MatchSpec
 from fnd.query import Searcher
@@ -563,6 +564,7 @@ class FNDApp(App[None]):
     ) -> None:
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
+        self._ledger = Ledger(self._index_dir)
         self._initial_query = initial_query
         # Search state + orchestration (searcher, query, match spec,
         # result groups, trace); see fnd/tui/search_controller.py.
@@ -887,6 +889,10 @@ class FNDApp(App[None]):
             # No index yet — the app still opens so the user can manage
             # collections, then reindex outside or from the CLI.
             self._search.searcher = None
+        # Before the panel's first paint, or adopted rows flash "not indexed". Only
+        # names missing from the sidecar query the index, so later launches skip it.
+        with contextlib.suppress(Exception):
+            self._adopt_untracked_collections()
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
@@ -1992,6 +1998,26 @@ class FNDApp(App[None]):
         node = tree.cursor_node
         if node is not None and node.children:
             node.expand_all()
+
+    def _adopt_untracked_collections(self) -> None:
+        """Collections indexed before the sidecar existed are taken as current."""
+        from fnd.index import collection_is_empty
+
+        index = getattr(self._search.searcher, "_index", None)
+        if self._config is None or index is None:
+            return
+        self._ledger.adopt(self._config, lambda name: collection_is_empty(index, name))
+
+    def action_update_collection(self) -> None:
+        from fnd.tui.freshness_view import run_pending
+
+        if self._focus_context() != "collections":
+            return
+        node = self.query_one("#collections_panel_tree", Tree).cursor_node
+        data = getattr(node, "data", None) or {}
+        name = data.get("name") if data.get("kind") == "collection" else data.get("collection")
+        if name:
+            run_pending(self, str(name))
 
     def action_scope_toggle_batch(self) -> None:
         """Toggle the focused scope or filter row without re-running the query.
