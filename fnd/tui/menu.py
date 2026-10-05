@@ -39,7 +39,9 @@ from fnd.config import (
     is_all_collections,
 )
 from fnd.fsmeta import path_is_absent
-from fnd.tui.widgets import COMMIT_KEY
+from fnd.index_freshness import State
+from fnd.tui.editing import BACK, CLEAR, SAVE, SAVE_KEY, editing_help_rows
+from fnd.tui.freshness_view import MARKER, badge, run_pending, verdict_for
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -137,6 +139,8 @@ class MenuItem:
     # picker open, etc. The `…` suffix is included literally when the
     # action shows a confirm.
     action_label: str = "Run"
+    # A state shown before the button, in the warning colour; "" shows none.
+    badge_getter: Callable[[FNDApp], str] | None = None
 
     # SCALAR
     setting_path: str = ""
@@ -379,9 +383,9 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "Esc",
-        "Clear search / back",
+        f"{CLEAR} / {BACK}",
         "",
-        "If the filter is active, clears it first. Press again to pop the current screen.",
+        "If the filter is active, clears it first. Press again to go back a screen.",
     ),
 )
 
@@ -401,22 +405,25 @@ _KEYS_SOURCE_FORM: tuple[tuple[str, str, str, str], ...] = (
         "Edit, pick, or toggle the focused field. Scalar fields open the inline edit bar; multi-select fields push a picker.",
     ),
     (
-        COMMIT_KEY,
-        "Save & close",
+        SAVE_KEY,
+        SAVE,
         "",
-        "Persist this source to config.toml. Triggers an async reindex if the source set or includes/excludes changed.",
+        "Write this source to the config. Nothing is indexed; the collection is "
+        "marked ↻ outdated if the change affects what is indexed.",
     ),
     (
         "Ctrl+D",
         "Delete source",
         "",
-        "Only available when editing an existing source. Pushes a confirmation modal; on confirm, removes the entry from config and reindexes.",
+        "Only available when editing an existing source. Asks first; on confirm, "
+        "removes the entry from the config, and the collection then reads outdated.",
     ),
     (
         "Esc / ←",
-        "Cancel",
+        BACK,
         "",
-        "Discard unsaved changes and pop back to the Sources screen.",
+        "Go back to the Sources screen. With unsaved changes, asks: save, discard, "
+        "or keep editing.",
     ),
 )
 
@@ -509,7 +516,7 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
             "Edit as text",
             "",
             "Open the whole filter set as its expression, for anything the "
-            "pickers cannot say. Applies back into the screen, not to disk.",
+            "pickers cannot say. Esc carries it back into this screen.",
         ),
         (
             "y",
@@ -521,23 +528,17 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
             _CLEAR_FILTERS_KEY,
             "Return to defaults",
             "",
-            "Drop every rule on this screen. Shown only while there is something to drop.",
-        ),
-        (
-            COMMIT_KEY,
-            "Save / Apply",
-            "",
-            "On the global defaults this writes them and indexes nothing; "
-            "collections keep their current contents until the next Update "
-            "index. On a source it is Apply, handing the set back to the form, "
-            "which is what saves and rebuilds that collection.",
+            "Return this source to the inherited filters. Shown only where it "
+            "has departed from them.",
         ),
         (
             "Esc / ←",
-            "Leave",
+            BACK,
             "",
-            "Leave without saving (← does so from a collapsed top-level row). Asks first when "
-            "there are unsaved edits. With text in the filter box, clears it first.",
+            "On a source, go back to its form carrying the change; the form saves it. "
+            f"On the global defaults, a form of their own: {SAVE_KEY} saves, and leaving with "
+            "unsaved changes asks. ← does so from a collapsed top-level row; with text "
+            "in the filter box, Esc clears it first.",
         ),
     )
 
@@ -729,6 +730,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     # Pass section name so widget-only rows that share labels across
     # sections (multiple "Cancel" rows) get distinct MenuItem ids.
     sections["Settings menu"] = [_key_row(*row, section="settings") for row in _KEYS_SETTINGS]
+    sections["Editing"] = [_key_row(*row, section="editing") for row in editing_help_rows()]
     sections["Source form"] = [_key_row(*row, section="source_form") for row in _KEYS_SOURCE_FORM]
     sections["Index filters"] = [
         _key_row(*row, section="filter_browser") for row in _keys_filter_browser()
@@ -776,6 +778,8 @@ def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
         app._config = load()  # type: ignore[attr-defined]
         app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
+        # A setting can leave a collection out of date (spec D4); its row says so now.
+        app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
 
     return _set
 
@@ -1308,6 +1312,8 @@ def _collection_summary(app: FNDApp, name: str) -> str:
         # A filter that empties a collection leaves every other column reading
         # exactly as it did: `● 1 source · ranking:default` over zero files.
         summary = f"⚠ nothing indexed · {summary}"
+    elif (verdict := verdict_for(app, name)).state in (State.NEEDS_UPDATE, State.NEEDS_REBUILD):
+        summary = f"{summary} · {MARKER} {verdict.state.value}"
     return summary
 
 
@@ -1391,15 +1397,6 @@ def _make_open_delete_confirm(name: str) -> Callable[[FNDApp], None]:
         app.push_screen(DeleteCollectionScreen(collection_name=name))
 
     return _open
-
-
-def _make_reindex(name: str) -> Callable[[FNDApp], None]:
-    def _run(app: FNDApp) -> None:
-        # Route through the warning + IndexerScreen modal so the user
-        # sees progress instead of a silent background task.
-        app._indexer.reindex_with_warning(name)  # type: ignore[attr-defined]
-
-    return _run
 
 
 def _make_texturise_flat(name: str) -> Callable[[FNDApp], None]:
@@ -1524,6 +1521,9 @@ def _summary_collection_update(app: FNDApp, name: str) -> str:
     if part is not None:
         done, total = part
         return f"⚠ incomplete: {done} of {total} files · {n_sources} sources"
+    verdict = verdict_for(app, name)
+    if verdict.state is not State.CURRENT:
+        return f"{verdict.label} · {n_sources} sources"
     return f"{n_sources} sources"
 
 
@@ -1659,14 +1659,18 @@ def _push_update_all_confirm(
 
 def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
     """Per-collection sub-menu."""
+    verdict = verdict_for(app, name)
+    # The row that runs the remedy shows the index's state, and why (spec D4).
+    behind = verdict.summary if verdict.state is not State.CURRENT else ""
     return (
         MenuItem(
             id=f"col.{name}.rename",
             label="Rename",
             description=(
-                "Change this collection's name. The index is rebuilt under the "
-                "new name, and your saved scope selection does not follow it; "
-                "re-tick the collection afterwards."
+                "Change this collection's name. Its documents are dropped from "
+                "the index and it reads not indexed until Update index runs, and "
+                "your saved scope selection does not follow it; re-tick the "
+                "collection afterwards."
             ),
             kind=KIND_EXTERNAL,
             external=_make_open_rename(name),
@@ -1716,7 +1720,9 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"col.{name}.reindex",
             label="Update index",
-            description=(
+            badge_getter=(lambda n: lambda a: badge(a, n))(name),
+            description=(f"{behind}. " if behind else "")
+            + (
                 "Add new / changed files and drop deleted ones; unchanged files "
                 "are skipped and their existing texturing is left untouched. The "
                 "cheap, battery-friendly pass: it never re-texturises what's "
@@ -1724,7 +1730,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             ),
             kind=KIND_ACTION,
             action_label="Update",
-            external=_make_reindex(name),
+            external=(lambda n: lambda a: run_pending(a, n))(name),
             value_getter=(lambda n: lambda a: _summary_collection_update(a, n))(name),
         ),
         MenuItem(
@@ -2421,7 +2427,7 @@ def _open_filter_browser(app: FNDApp) -> None:
         write_settings,
     )
     from fnd.tui.settings_screen import (
-        FilterBrowserScreen,
+        DefaultFiltersScreen,
         _spec_from_filters,
         _spec_to_mapping,
     )
@@ -2453,28 +2459,18 @@ def _open_filter_browser(app: FNDApp) -> None:
         )
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
-        # Nothing reindexes here, unlike the per-source route, so every
-        # collection keeps its current contents until the user says otherwise.
-        app.notify(
-            "Filters saved. Collections keep their current contents until the next Update index.",
-            severity="warning",
-        )
-        # These govern EVERY collection, so a save leaves all of them behind
-        # the config at once and a toast was the only thing that said so.
-        # Offered after the browser pops, so the dialog lands on the menu.
-        app.call_later(_push_update_all_confirm, app, texturise_override=None)
+        app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
 
     app.push_screen(
-        FilterBrowserScreen(
+        DefaultFiltersScreen(
             title="Index filters",
-            save_note="applies at the next Update index",
             spec=_spec_from_filters(current),
             gitignore=current.respect_gitignore,
             fndignore=current.respect_fndignore,
             sample_provider=lambda _spec: _indexed_tags(app),
             no_tags_note="no tags in what is indexed",
             unindexed_note="tags are offered once a collection is indexed",
-            on_save=_save,
+            on_commit=_save,
         )
     )
 
@@ -3153,8 +3149,9 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
                 "comma-separated, e.g. Course, Notes_Type, Topic. Values are "
                 "grouped under the key in the Tags pane (course/algebra), so "
                 "they never collide with a plain tag. Matched "
-                "case-insensitively. Needs a Rebuild index: tags are read when "
-                "a file is indexed, and an Update skips unchanged files."
+                "case-insensitively. Changing them leaves collections with "
+                "outdated tags, shown with ↻ on their rows: tags are read when a "
+                "file is indexed, and an Update skips unchanged files."
             ),
             kind=KIND_SCALAR,
             setting_path="defaults.tag_frontmatter_keys",
@@ -3171,9 +3168,8 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
                 "Which sources feed the Tags filter. Tags are read per file: "
                 "a tag on a folder does not apply to what is inside it. Tick "
                 "none to turn tag filtering off. Turning one off hides its tags "
-                "straight away; turning one on needs a Rebuild index, since "
-                "tags are read when a file is indexed and an Update skips "
-                "unchanged files."
+                "straight away; turning one on leaves collections with outdated "
+                "tags, shown with ↻ on their rows."
             ),
             kind=KIND_PICKER,
             multi=True,

@@ -59,6 +59,7 @@ from fnd.index import (
     read_file_metadata,
     unreadable_roots,
 )
+from fnd.index_freshness import Ledger, indexed_with
 from fnd.walk import walk_sources
 
 EventKind = Literal[
@@ -682,6 +683,17 @@ def _process_one_file(
     return _FileOutcome(n_chunks, reused, reported_already, has_textured, "")
 
 
+def _common_extraction(prior: dict[str, Any], now: dict[str, Any]) -> dict[str, Any]:
+    """The extraction inputs every indexed file was read under, after a run that skipped some.
+
+    A source turned off is hidden at search time, so the overlap is true of every file. A
+    removed key's tags are not hidden, so differing keys record None, which matches nothing."""
+    keys = "tag_frontmatter_keys"
+    common = prior.get(keys) if prior.get(keys) == now[keys] else None
+    sources = sorted(set(prior.get("tag_sources") or ()) & set(now["tag_sources"]))
+    return {**now, keys: common, "tag_sources": sources}
+
+
 async def run_indexer(
     *,
     config: CollectionConfig,
@@ -749,14 +761,15 @@ async def run_indexer(
     # indexing path — including the TUI "Update index" modal that drives
     # this runner — honours tag_sources / tag_frontmatter_keys rather than
     # the bare defaults. Missing config falls back to the defaults.
-    tag_sources: Sequence[str] = ("frontmatter", "os")
-    tag_frontmatter_keys: Sequence[str] = ()
+    from fnd.config import Defaults
+
+    run_defaults = Defaults()
     with contextlib.suppress(Exception):
         from fnd.config import load as _load_config
 
-        _defaults = _load_config().defaults
-        tag_sources = tuple(_defaults.tag_sources)
-        tag_frontmatter_keys = tuple(_defaults.tag_frontmatter_keys)
+        run_defaults = _load_config().defaults
+    tag_sources: Sequence[str] = tuple(run_defaults.tag_sources)
+    tag_frontmatter_keys: Sequence[str] = tuple(run_defaults.tag_frontmatter_keys)
 
     # Clear any cancel beacon left over from a previous Cancel click
     # so a fresh run isn't aborted by stale state.
@@ -1222,6 +1235,18 @@ async def run_indexer(
     if cancel is not None and cancel.is_set():
         yield _emit("cancelled")
         return
+    if not blocked_roots:
+        # Unreadable roots skip the prune, so the selection did not converge.
+        with contextlib.suppress(OSError):
+            ledger = Ledger(index_dir)
+            inputs = indexed_with(config, run_defaults)
+            prior = ledger.recorded(collection)
+            if prior is not None and skip_unchanged and not rebuild:
+                # Skipped files hold the prior inputs and re-read ones the current: only both are true.
+                inputs["extraction"] = _common_extraction(
+                    prior.get("extraction") or {}, inputs["extraction"]
+                )
+            ledger.record(collection, inputs)
     yield _emit(
         "done",
         chunks_written=written,

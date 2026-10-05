@@ -14,7 +14,7 @@ import pytest
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen
 from tests._pilot_wait import wait_until
 
 
@@ -24,13 +24,13 @@ async def test_a_sample_landing_on_a_closed_browser_is_let_go(tmp_index_dir: Pat
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=FilterSpec(),
             gitignore=True,
             fndignore=True,
             sample_provider=lambda _spec: SourceSample(kinds={"md": 1}, tags={}),
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         app.push_screen(screen)
         await wait_until(pilot, lambda: bool(screen.query("#filter_tree")), timeout=10)

@@ -63,7 +63,7 @@ async def test_a_truncated_scan_says_so_even_on_a_tagless_source(
     from fnd.filters import FilterSpec
     from fnd.index import build_index
     from fnd.tui import FNDApp
-    from fnd.tui.settings_screen import FilterBrowserScreen
+    from fnd.tui.settings_screen import DefaultFiltersScreen
     from tests._pilot_wait import wait_until
 
     root = tmp_path / "corpus"
@@ -73,14 +73,14 @@ async def test_a_truncated_scan_says_so_even_on_a_tagless_source(
 
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 34)) as pilot:
-        screen = FilterBrowserScreen(
+        screen = DefaultFiltersScreen(
             title="Index filters",
             spec=FilterSpec(),
             gitignore=True,
             fndignore=True,
             no_tags_note="no tags found in this source",
             sample_provider=lambda _spec: SourceSample(kinds={"md": 3}, truncated=True),
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
         app.push_screen(screen)
         await wait_until(

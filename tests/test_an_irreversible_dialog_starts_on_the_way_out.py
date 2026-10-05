@@ -1,11 +1,8 @@
-"""A confirm dialog whose Yes cannot be undone starts on Cancel.
+"""Every confirm dialog starts on Cancel.
 
 Every one of these screens is reached by pressing Enter, so landing the cursor
-on "Yes, delete…" puts the irreversible act one keypress from the one that
-opened it. The rebuild, rename and delete screens and the cache clear share the
-same hand-rolled `on_mount`.
-
-`UpdateAllConfirm` is the control: its affirmative is safe, and nothing moves.
+on "Yes…" puts the act one keypress from the one that opened it. Irreversible or
+merely costly, the safe row is where each one opens.
 
 The footer follows the cursor: `⏎ Confirm` while Enter cancels is silent, so the
 screen you land on is indistinguishable from the one you would land on if it
@@ -85,19 +82,21 @@ async def test_it_starts_on_cancel(config: Config, tmp_index_dir: Path, make: An
 
 
 @pytest.mark.asyncio
-async def test_a_recoverable_act_is_not_moved(config: Config, tmp_index_dir: Path) -> None:
-    """The control: the rule is irreversibility, not confirm screens at large."""
+async def test_a_recoverable_act_starts_on_cancel_too(config: Config, tmp_index_dir: Path) -> None:
+    """A costly act that can be redone is still one Enter from the key that opened it."""
     app = FNDApp(index_dir=tmp_index_dir, config=config)
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.pause()
         landed = await _landed_on(app, pilot, UpdateAllConfirm(collection_names=["papers"]))
 
-    assert landed == "yes"
+    assert landed == "no"
 
 
 @pytest.mark.asyncio
-async def test_a_reversible_cache_run_is_not_moved(config: Config, tmp_index_dir: Path) -> None:
-    """The same screen serves both, so the flag is what decides."""
+async def test_a_reversible_cache_run_starts_on_cancel_too(
+    config: Config, tmp_index_dir: Path
+) -> None:
+    """The flag marks the danger in red; it no longer decides where the cursor opens."""
     app = FNDApp(index_dir=tmp_index_dir, config=config)
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.pause()
@@ -113,7 +112,7 @@ async def test_a_reversible_cache_run_is_not_moved(config: Config, tmp_index_dir
             ),
         )
 
-    assert landed == "yes"
+    assert landed == "no"
 
 
 def test_no_confirm_screen_focuses_the_list_itself() -> None:

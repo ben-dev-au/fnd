@@ -16,7 +16,7 @@ import pytest
 from fnd.config import EXCLUDES_PRESETS
 from fnd.filters import FilterSpec
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen
 
 _README = Path(__file__).resolve().parent.parent / "README.md"
 
@@ -42,12 +42,12 @@ async def test_the_browser_summary_says_it(tmp_index_dir: Path) -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(15):

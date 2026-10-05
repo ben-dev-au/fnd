@@ -1,4 +1,4 @@
-"""Leaving a form with an invalid field offered "Save changes" as the default.
+"""Leaving a form with an invalid field offered its save as the default.
 
 Choosing it ran the save, which refused, popped nothing and repainted nothing
 (the error line was already on screen from the last attempt), so the prompt came
@@ -7,7 +7,6 @@ straight back. Enter on the default looped; the only exit was Discard.
 
 from __future__ import annotations
 
-import ast
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -125,39 +124,27 @@ async def test_the_wizard_answers_the_same_way(app_with_a_source: FNDApp) -> Non
         wizard = app.screen
         assert isinstance(wizard, AddCollectionWizard)
         wizard._fields["name"] = "probe"  # already taken
-        assert "already exists" in wizard.save_blocked()
+        assert "already exists" in wizard.blocked_reason()
 
         wizard._fields["name"] = ""
-        assert wizard.save_blocked() == "Name is required."
+        assert wizard.blocked_reason() == "Name is required."
 
 
 def test_the_save_and_the_prompt_read_one_answer() -> None:
     """They disagreed once already: the prompt offered what the save refused."""
-    module = Path("fnd/tui/settings_screen.py").read_text(encoding="utf-8")
-    tree = ast.parse(module)
-    checked = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef) or node.name not in (
-            "SourceFormScreen",
-            "AddCollectionWizard",
-        ):
-            continue
-        save = next(
-            f for f in node.body if isinstance(f, ast.FunctionDef) and f.name == "action_save_close"
-        )
-        body = ast.get_source_segment(module, save) or ""
-        assert "self.save_blocked()" in body, f"{node.name} validates on its own"
-        checked += 1
-    assert checked == 2
+    from fnd.tui.editing import DocumentScreen
+
+    for cls in (SourceFormScreen, AddCollectionWizard):
+        assert issubclass(cls, DocumentScreen)
+        assert cls.save is DocumentScreen.save, f"{cls.__name__} validates on its own"
 
 
 @pytest.mark.asyncio
-async def test_a_buried_form_says_why_it_cannot_be_saved(
+async def test_a_buried_form_can_be_saved_from_the_prompt(
     tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A form under another editor cannot be saved from the prompt. That was
-    already true; the prompt just never said so, and defaulted to Discard."""
-    from fnd.tui.settings_screen import unsaved_on_stack
+    """Saving writes config without navigating, so a form under another screen saves too."""
+    from fnd.tui.editing import pending_document
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
@@ -180,10 +167,6 @@ async def test_a_buried_form_says_why_it_cannot_be_saved(
         app.push_screen(AddCollectionWizard())
         for _ in range(20):
             await pilot.pause()
-        pending = unsaved_on_stack(app.screen_stack)
+        pending = pending_document(app.screen_stack)
 
-    assert pending is not None
-    what, save, blocked = pending
-    assert what == "this source"
-    assert save is None
-    assert blocked, "no save offered and no reason given"
+    assert pending == (form, "")

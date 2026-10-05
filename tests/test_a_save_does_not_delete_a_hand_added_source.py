@@ -1,6 +1,6 @@
 """Toggling one source's checkbox deleted a source added to the file by hand.
 
-`action_save_close` builds its write from `app._config`, loaded at launch, and
+The save builds its write from `app._config`, loaded at launch, and
 `write_collection` replaces the collection table wholesale, so anything added
 to that table after launch is written away. Scalar hand-edits survive because
 they live in `[defaults.filters]`, which this write does not touch.
@@ -67,7 +67,7 @@ async def test_a_hand_added_source_survives_an_unrelated_save(
 
         _append_by_hand(two_sources, tmp_path / "three")
         screen._fields["follow_symlinks"] = True
-        screen.action_save_close()
+        screen.action_save()
         for _ in range(20):
             await pilot.pause()
 
@@ -85,7 +85,7 @@ async def test_the_edit_still_lands(two_sources: Path, tmp_path: Path, tmp_index
         await pilot.pause()
         screen = await _open_form(app, pilot, 0)
         screen._fields["follow_symlinks"] = True
-        screen.action_save_close()
+        screen.action_save()
         for _ in range(20):
             await pilot.pause()
 
@@ -116,7 +116,7 @@ async def test_a_reordered_file_is_refused_rather_than_guessed(
         )
         before = two_sources.read_text(encoding="utf-8")
         screen._fields["follow_symlinks"] = True
-        screen.action_save_close()
+        screen.action_save()
         for _ in range(20):
             await pilot.pause()
 
@@ -146,7 +146,7 @@ async def test_a_config_that_will_not_load_refuses_rather_than_falling_back(
         )
         before = two_sources.read_text(encoding="utf-8")
         screen._fields["follow_symlinks"] = True
-        screen.action_save_close()
+        screen.action_save()
         for _ in range(20):
             await pilot.pause()
 
@@ -176,7 +176,7 @@ async def test_an_empty_snapshot_does_not_wave_the_guard_through(
         )
         before = two_sources.read_text(encoding="utf-8")
         screen._fields["follow_symlinks"] = True
-        screen.action_save_close()
+        screen.action_save()
         for _ in range(20):
             await pilot.pause()
 
@@ -209,7 +209,7 @@ async def test_the_refusal_advice_actually_works(
             encoding="utf-8",
         )
         screen._fields["follow_symlinks"] = True
-        screen.action_save_close()
+        screen.action_save()
         for _ in range(15):
             await pilot.pause()
 

@@ -6,7 +6,7 @@ flow (that's covered by the lower-level config tests). Verifies:
 * ``_set_app('obsidian')`` triggers vault auto-detection from the
   source path when no vault is set yet.
 * ``_set_app('')`` clears the per-source app override.
-* ``action_save_close``'s assembled SourceConfig carries ``app`` and
+* the save's assembled SourceConfig carries ``app`` and
   ``app_params`` correctly.
 """
 

@@ -298,11 +298,20 @@ Press `:` to open Settings, move to **Collections**, then:
   **Name**, a **Source path** (a folder; `~/…` is fine), the file types to
   **Include** and patterns to **Exclude**, an optional markdown
   **Frontmatter filter**, and a **Follow symlinks** toggle. Press **Ctrl+S** to
-  save and index right away (`Esc` cancels).
+  save; you land on the new collection's page, where **Update index** builds it.
 - **Add a source to an existing collection**: open the collection, then
   **Sources → Add source**, and set the path, includes/excludes, an optional
   per-source app, and (for Obsidian) the vault name. **Ctrl+S** saves and
-  returns; **Ctrl+A** saves and adds another. Reindex the collection afterward.
+  returns; **Ctrl+A** saves and adds another.
+- **How editing works**:
+  - A single setting (a toggle, a picker, a value) applies the moment it changes.
+  - A form (a source, Add collection, Index filters) saves with **Ctrl+S**;
+    `Esc` goes back, and asks first if there are unsaved changes.
+  - A screen opened from a form (a source's filters, a picker) carries its
+    changes back to the form on `Esc`.
+  - Saving never indexes. A collection whose index no longer matches its
+    config shows `↻` in the Collections pane; press `u` there, or on its
+    Settings page, to update it.
 
 ### From the command line
 

@@ -20,7 +20,7 @@ import pytest
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, FilterBrowserScreen
 from fnd.tui.widgets.clear_bar import RETURN_TO_DEFAULTS, ClearFiltersBar, clear_label
 from fnd.tui.widgets.toggle_tree import ToggleTree
 from tests._pilot_wait import wait_until
@@ -40,15 +40,15 @@ async def _browser(
     pilot: object,
     spec: FilterSpec,
     inherited: tuple[FilterSpec, bool, bool] | None = None,
-) -> FilterBrowserScreen:
-    screen = FilterBrowserScreen(
+) -> DefaultFiltersScreen:
+    screen = DefaultFiltersScreen(
         title="Index filters",
         spec=spec,
         gitignore=True,
         fndignore=True,
         inherited=inherited,
         sample_provider=lambda _spec: _SAMPLE,
-        on_save=lambda *_a: None,
+        on_commit=lambda *_a: None,
     )
     app.push_screen(screen)
     await wait_until(
@@ -268,19 +268,19 @@ class TestSavingNothingSaysNothingWasSaved:
         app = FNDApp(index_dir=tmp_index_dir)
         async with app.run_test(size=(110, 30)) as pilot:
             await pilot.pause()
-            screen = FilterBrowserScreen(
+            screen = DefaultFiltersScreen(
                 title="Index filters",
                 spec=_DEFAULTS[0],
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: _SAMPLE,
-                on_save=lambda *a: saved.append(a),
+                on_commit=lambda *a: saved.append(a),
             )
             app.push_screen(screen)
             for _ in range(25):
                 await pilot.pause()
             assert not screen._dirty(), "the premise: nothing has been touched"
-            screen.action_save_close()
+            screen.action_save()
             for _ in range(8):
                 await pilot.pause()
 
@@ -293,20 +293,20 @@ class TestSavingNothingSaysNothingWasSaved:
         app = FNDApp(index_dir=tmp_index_dir)
         async with app.run_test(size=(110, 30)) as pilot:
             await pilot.pause()
-            screen = FilterBrowserScreen(
+            screen = DefaultFiltersScreen(
                 title="Index filters",
                 spec=_DEFAULTS[0],
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: _SAMPLE,
-                on_save=lambda *a: saved.append(a),
+                on_commit=lambda *a: saved.append(a),
             )
             app.push_screen(screen)
             for _ in range(25):
                 await pilot.pause()
             screen._spec = FilterSpec(kinds=("md",))
             assert screen._dirty(), "the premise"
-            screen.action_save_close()
+            screen.action_save()
             for _ in range(8):
                 await pilot.pause()
 
@@ -320,9 +320,9 @@ class TestSavingNothingSaysNothingWasSaved:
         async with app.run_test(size=(110, 30)) as pilot:
             await pilot.pause()
             screen = await _browser(app, pilot, _DEFAULTS[0])
-            clean_guard = screen.unsaved_work()
+            clean_guard = screen.is_dirty()
             screen._spec = FilterSpec(kinds=("md",))
-            dirty_guard = screen.unsaved_work()
+            dirty_guard = screen.is_dirty()
 
-        assert clean_guard is None
-        assert dirty_guard is not None
+        assert clean_guard is False
+        assert dirty_guard is True

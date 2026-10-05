@@ -324,6 +324,12 @@ class IndexerService:
         can't silently resume that chain's leftover collections. Chain
         continuations re-enter ``start_indexer`` directly and inherit this
         state untouched."""
+        if any(w.group.startswith("rename-") and not w.is_finished for w in self._app.workers):
+            # The index takes one writer, and a rename is still dropping the old name with it.
+            self._app.notify(
+                "The old name's documents are still being dropped; try again in a moment."
+            )
+            return
         from fnd.config import load as _load_config
         from fnd.tui.first_reindex_warning import (
             FirstReindexWarningScreen,
@@ -560,6 +566,9 @@ class IndexerService:
         # gone stays offered, and one the run admitted cannot be reached.
         with contextlib.suppress(Exception):
             self._app._scope.refresh_filters_panel()
+        # The run just recorded what it indexed with, so the marker may have cleared.
+        with contextlib.suppress(Exception):
+            self._app._scope.relabel_collection_rows()
         self._refresh_open_settings()
         if self._app._search.current_query:
             self._app._search.run(self._app._search.current_query)

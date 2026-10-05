@@ -1,6 +1,6 @@
 """A no-op source-form save is a no-op, on every field the form cannot show.
 
-``action_save_close`` rebuilt a fresh SourceConfig from the form's own fields,
+the save rebuilt a fresh SourceConfig from the form's own fields,
 so opening a source, changing nothing and pressing Ctrl+S deleted ``app_for``
 and every ``app_params`` key but ``vault``. ``app_for[kind]`` is the first step
 of app resolution, so afterwards Open opened files with the wrong app and the

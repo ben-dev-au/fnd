@@ -22,6 +22,7 @@ from fnd.config import Config, load
 from fnd.index import build_index_from_config
 from fnd.tui import FNDApp
 from fnd.tui.menu import _indexed_tags
+from fnd.tui.settings_screen import DefaultFiltersScreen
 
 
 @pytest.fixture
@@ -128,20 +129,20 @@ async def test_the_screen_says_why_it_offers_none(tmp_index_dir: Path) -> None:
     from textual.containers import Vertical
 
     from fnd.filters import FilterSpec
-    from fnd.tui.settings_screen import FilterBrowserScreen
+    from fnd.tui.settings_screen import DefaultFiltersScreen
 
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
                 sample_provider=lambda _spec: None,
                 no_tags_note="tags are offered once a collection is indexed",
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(25):
@@ -213,7 +214,6 @@ async def test_the_two_states_say_different_things(tmp_index_dir: Path) -> None:
 
     from fnd.filters import FilterSpec
     from fnd.filters.scan import SourceSample
-    from fnd.tui.settings_screen import FilterBrowserScreen
 
     def _painted(app: FNDApp) -> str:
         rows = [
@@ -238,7 +238,7 @@ async def test_the_two_states_say_different_things(tmp_index_dir: Path) -> None:
             ),
         ):
             app.push_screen(
-                FilterBrowserScreen(
+                DefaultFiltersScreen(
                     title="Index filters",
                     spec=FilterSpec(),
                     gitignore=True,
@@ -246,7 +246,7 @@ async def test_the_two_states_say_different_things(tmp_index_dir: Path) -> None:
                     sample_provider=provider,
                     no_tags_note="no tags in what is indexed",
                     unindexed_note="tags are offered once a collection is indexed",
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(25):

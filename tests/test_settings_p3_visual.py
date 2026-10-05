@@ -324,7 +324,7 @@ async def test_hint_bar_search_focused_variant(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
-    """Spec: Hint bar — Edit-bar open shows `⏎ Save · Esc Cancel`."""
+    """Spec: Hint bar, edit bar open: `⏎ Set · Esc Cancel` (the typing vocabulary)."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import EditBar, SettingsScreen
 
@@ -355,7 +355,7 @@ async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
         assert "-hidden" not in bar.classes
         cluster = screen._hint_cluster()
         labels = [label for _, label in cluster]
-        assert "Save" in labels, f"expected Save in edit-bar cluster; got: {cluster!r}"
+        assert "Set" in labels, f"expected Set in edit-bar cluster; got: {cluster!r}"
         assert "Cancel" in labels, f"expected Cancel in edit-bar cluster; got: {cluster!r}"
 
 

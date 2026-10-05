@@ -19,7 +19,12 @@ from textual.widgets import Input, TextArea
 from fnd.config import CollectionConfig, Config, SourceConfig, load, write_collection
 from fnd.tui import FNDApp
 from fnd.tui.menu import MenuItem, _provider_keybindings
-from fnd.tui.settings_screen import SettingsList, SettingsScreen, SourceFormScreen
+from fnd.tui.settings_screen import (
+    DefaultFiltersScreen,
+    SettingsList,
+    SettingsScreen,
+    SourceFormScreen,
+)
 
 
 def _sheet() -> tuple[MenuItem, ...]:
@@ -191,18 +196,17 @@ async def test_help_from_the_filter_browser_lifts_its_section(
     config: Config, tmp_index_dir: Path
 ) -> None:
     from fnd.filters import FilterSpec
-    from fnd.tui.settings_screen import FilterBrowserScreen
 
     app = FNDApp(index_dir=tmp_index_dir, config=config)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(20):
@@ -210,3 +214,25 @@ async def test_help_from_the_filter_browser_lifts_its_section(
         hint = app._keybindings_context_hint()
 
     assert hint == "Index filters"
+
+
+def test_the_editing_rows_use_the_footer_words() -> None:
+    """The sheet cannot say Discard or Apply where the footers say Back and Save."""
+    from fnd.tui.editing import BACK, SAVE, SAVE_KEY
+    from fnd.tui.menu import _KEYS_SOURCE_FORM, _keys_filter_browser
+
+    rows = (*_KEYS_SOURCE_FORM, *_keys_filter_browser())
+    labels = {label for _key, label, _a, _d in rows}
+    assert {BACK, SAVE} <= labels, labels
+    assert not labels & {"Leave", "Save & close", "Save / Apply", "Discard", "Cancel"}, labels
+    assert SAVE_KEY not in [key for key, *_ in _keys_filter_browser()]
+
+
+def test_the_sheet_has_an_editing_section_naming_the_three_roles() -> None:
+    """Settings apply at once; forms save with the save key; parts carry back on Esc."""
+    from fnd.tui.editing import SAVE_KEY, editing_help_rows
+
+    text = " ".join(d for *_x, d in editing_help_rows())
+    assert "applies the moment" in text
+    assert SAVE_KEY in [k for k, *_ in editing_help_rows()]
+    assert "carries its edits" in text

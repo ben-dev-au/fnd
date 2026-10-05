@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import UnsavedChangesScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, UnsavedChangesScreen
 from fnd.tui.widgets import COMMIT_KEY
 from tests._pilot_wait import screen_ready, settings_ready, wait_until
 
@@ -171,8 +171,8 @@ def test_an_emptied_override_beats_the_global_default() -> None:
 async def test_editing_as_text_fills_the_rows_back_in(built_index: Path) -> None:
     """The text view and the rows are two views of one set.
 
-    Typing a row-shaped clause must populate that row on save; that is the
-    "text informs the UI" half, not a mis-parse.
+    Typing a row-shaped clause must populate that row when Esc carries it back;
+    that is the "text informs the UI" half, not a mis-parse.
     """
     from textual.widgets import TextArea
 
@@ -198,7 +198,7 @@ async def test_editing_as_text_fills_the_rows_back_in(built_index: Path) -> None
             "#filter_text", TextArea
         ).text = "(file.kind in ['pdf']) AND (file.size <= 500)"
         await pilot.pause()
-        screen.action_save_close()
+        await pilot.press("escape")
         await pilot.pause()
 
     assert len(saved) == 1
@@ -228,9 +228,9 @@ async def test_malformed_text_refuses_to_save(built_index: Path) -> None:
         assert isinstance(screen, FilterTextScreen)
         screen.query_one("#filter_text", TextArea).text = "file.kind in ["
         await pilot.pause()
-        screen.action_save_close()
+        await pilot.press("escape")
         await pilot.pause()
-        assert saved == [], "invalid text must not be saved"
+        assert saved == [], "invalid text must not be carried back"
         assert isinstance(app.screen, FilterTextScreen), "screen stays open on error"
 
 
@@ -300,13 +300,13 @@ async def test_the_source_scan_does_not_block_the_screen(built_index: Path) -> N
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="t",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
                 sample_provider=provider,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(10):
@@ -463,19 +463,18 @@ async def test_the_expression_can_be_copied(built_index: Path) -> None:
     Not ctrl+y: the app binds that to "copy query command" with priority, so
     a screen binding there silently never fires."""
     from fnd.filters import FilterSpec
-    from fnd.tui.settings_screen import FilterBrowserScreen
 
     copied: list[str] = []
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="t",
                 spec=FilterSpec(exclude_tags=("no_index",), kinds=("md",)),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(20):
@@ -507,19 +506,18 @@ async def test_the_summary_says_what_the_expression_leaves_out(built_index: Path
     rows a narrow terminal has.
     """
     from fnd.filters import FilterSpec
-    from fnd.tui.settings_screen import FilterBrowserScreen
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="t",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
                 globs=["**/*.md"],
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(20):
@@ -561,19 +559,18 @@ class TestClearClearsWhatItClaims:
     async def test_clear_leaves_the_ignore_toggles_alone(self, built_index: Path) -> None:
         """They have their own rows, and switching them off admits everything
         the ignore files were keeping out."""
-        from fnd.tui.settings_screen import FilterBrowserScreen
 
         app = FNDApp(index_dir=built_index)
         async with app.run_test() as pilot:
             await pilot.pause()
             from fnd.filters import FilterSpec
 
-            screen = FilterBrowserScreen(
+            screen = DefaultFiltersScreen(
                 title="t",
                 spec=FilterSpec(kinds=("md",)),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_: None,
+                on_commit=lambda *_: None,
             )
             app.push_screen(screen)
             for _ in range(20):
@@ -739,12 +736,12 @@ async def test_a_partial_scan_says_so(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(15):
@@ -776,7 +773,7 @@ async def test_the_wizard_refuses_an_invalid_rule_instead_of_crashing(built_inde
         wizard = app.screen
         assert isinstance(wizard, AddCollectionWizard)
         wizard._fields.update({"name": "probe", "path": "~", "filter": "status =="})
-        wizard.action_save_close()
+        wizard.action_save()
         for _ in range(8):
             await pilot.pause()
         assert isinstance(app.screen, AddCollectionWizard), "the form must survive"
@@ -895,51 +892,48 @@ def test_the_pickers_name_what_they_hold() -> None:
 
 
 @pytest.mark.asyncio
-async def test_each_route_says_what_saving_does_to_the_index(built_index: Path) -> None:
-    """The two routes differ and neither said so: a source save reindexes its
-    collection, the defaults save reindexes nothing and leaves every
-    collection holding what it already held."""
+async def test_only_the_global_route_offers_a_save(built_index: Path) -> None:
+    """The defaults are a document with ^s; a source's filters are a part of its form."""
     from fnd.filters import FilterSpec
-    from fnd.tui.settings_screen import FilterBrowserScreen
+    from fnd.tui.settings_screen import SourceFiltersScreen
 
-    async def _head(note: str) -> str:
+    async def _footer(cls: Any) -> str:
         app = FNDApp(index_dir=built_index)
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(140, 30)) as pilot:
             await pilot.pause()
             app.push_screen(
-                FilterBrowserScreen(
+                cls(
                     title="Index filters",
                     spec=FilterSpec(),
                     gitignore=True,
                     fndignore=True,
-                    save_note=note,
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(12):
                 await pilot.pause()
-            return _summary_text(app.screen)
+            rows = app.screen._compositor.render_strips()
+            return "".join(seg.text for seg in rows[-1])
 
-    assert "saving does not reindex" in await _head("saving does not reindex")
-    assert "saving reindexes this collection" in await _head("saving reindexes this collection")
+    assert "^s  Save" in await _footer(DefaultFiltersScreen)
+    assert "^s" not in await _footer(SourceFiltersScreen)
 
 
 class TestUnsavedFilterWork:
-    """`?` does not return here: it lands on the settings menu, taking the
-    edit with it. `:` returns intact, so it is deliberately left alone."""
+    """`?` opens the sheet over the screen and Esc comes back to it, edit intact;
+    `:` asks first, and keeping editing comes back the same way."""
 
     @staticmethod
     async def _browser(app: FNDApp, pilot: Any) -> Any:
         from fnd.filters import FilterSpec
-        from fnd.tui.settings_screen import FilterBrowserScreen
 
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(15):
@@ -947,7 +941,7 @@ class TestUnsavedFilterWork:
         return app.screen
 
     @pytest.mark.asyncio
-    async def test_an_edit_holds_the_help_key(self, built_index: Path) -> None:
+    async def test_help_comes_back_with_the_edit(self, built_index: Path) -> None:
         from dataclasses import replace
 
         from fnd.tui.settings_screen import FilterBrowserScreen
@@ -960,7 +954,12 @@ class TestUnsavedFilterWork:
             await pilot.press("question_mark")
             for _ in range(10):
                 await pilot.pause()
-            assert isinstance(app.screen, FilterBrowserScreen), "the edit was carried off"
+            assert not isinstance(app.screen, FilterBrowserScreen), "? must open the sheet"
+            await pilot.press("escape")
+            for _ in range(10):
+                await pilot.pause()
+            assert app.screen is screen, "the edit was carried off"
+            assert screen._spec.kinds == ("md",)
 
     @pytest.mark.asyncio
     async def test_help_still_opens_when_nothing_is_unsaved(self, built_index: Path) -> None:
@@ -999,9 +998,8 @@ class TestUnsavedFilterWork:
 
 
 class TestEscMeansOneThing:
-    """It committed on a multi-select picker and cancelled on the single-select
-    row beside it: one key, opposite meanings, and no way to back out of a
-    multi picker at all."""
+    """A picker edits one value, applied as it changes, so Esc only goes back on
+    both kinds: no save key, and nothing held to lose."""
 
     @staticmethod
     def _item(multi: bool, sink: list[Any]) -> Any:
@@ -1021,7 +1019,7 @@ class TestEscMeansOneThing:
         )
 
     @pytest.mark.asyncio
-    async def test_esc_discards_a_multi_selection(self, built_index: Path) -> None:
+    async def test_esc_keeps_a_multi_selection(self, built_index: Path) -> None:
         from fnd.tui.settings_screen import PickerScreen
 
         sink: list[Any] = []
@@ -1035,10 +1033,10 @@ class TestEscMeansOneThing:
             await pilot.press("escape")
             for _ in range(8):
                 await pilot.pause()
-        assert sink == [], "Esc must not commit"
+        assert sink == [["a"]], "the toggle applies, and Esc keeps it"
 
     @pytest.mark.asyncio
-    async def test_ctrl_s_commits_it(self, built_index: Path) -> None:
+    async def test_each_toggle_applies_before_leaving(self, built_index: Path) -> None:
         from fnd.tui.settings_screen import PickerScreen
 
         sink: list[Any] = []
@@ -1049,17 +1047,15 @@ class TestEscMeansOneThing:
             for _ in range(12):
                 await pilot.pause()
             await pilot.press("enter")
-            await pilot.press("ctrl+s")
             for _ in range(8):
                 await pilot.pause()
-        assert sink, "^S must commit"
-        assert sink[-1] == ["a"], sink
+            still_open = isinstance(app.screen, PickerScreen)
+        assert still_open
+        assert sink == [["a"]], sink
 
 
 def test_the_rename_row_describes_what_rename_does() -> None:
-    """It claimed scope follows the new name and the index is not rebuilt.
-    Neither is true: `_save` ends in `reindex_with_warning(rebuild=True)` and
-    nothing migrates the saved selection."""
+    """The row says the scope does not follow the new name and the documents are dropped."""
     import inspect
 
     from fnd.tui.menu import _provider_collection
@@ -1067,11 +1063,9 @@ def test_the_rename_row_describes_what_rename_does() -> None:
 
     stub = cast("Any", None)
     row = next(i for i in _provider_collection(stub, "c") if i.id == "col.c.rename")
-    # The whole class, not one method: the rebuild runs outside `_save`,
-    # after the old name's index drop.
     source = inspect.getsource(RenameCollectionScreen)
-    assert "rebuild=True" in source, "guard: this test pins the row against the code"
-    assert "not rebuilt" not in row.description
+    assert "drop_collection" in source, "guard: this test pins the row against the code"
+    assert "not indexed until Update index runs" in row.description
     assert "does not follow" in row.description
 
 
@@ -1219,18 +1213,17 @@ def test_a_bound_no_picker_holds_is_still_visible() -> None:
 async def test_the_summary_says_when_nothing_can_match(built_index: Path) -> None:
     """A contradictory pair indexes nothing and said nothing about it."""
     from fnd.filters import FilterSpec
-    from fnd.tui.settings_screen import FilterBrowserScreen
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(min_size=5000, max_size=100),
                 gitignore=True,
                 fndignore=True,
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(15):
@@ -1258,10 +1251,9 @@ async def test_a_text_editor_advertises_only_keys_that_work(built_index: Path) -
         painted = screen.query_one("#footer_hints", Static).render_line(0).text
         for dead in ("Search", "Menu", "Keys", "Quit"):
             assert dead not in painted, f"{dead} is advertised but types into the box: {painted}"
-        # The commit key, whatever it is called: this editor applies rather
-        # than saves, since it hands back to the browser.
-        assert COMMIT_KEY in painted
-        assert "Cancel" in painted
+        # A part: no save key, and Esc carries the rule back.
+        assert COMMIT_KEY not in painted
+        assert "Back" in painted
 
         for key in ("slash", "colon", "question_mark", "q"):
             await pilot.press(key)
@@ -1278,9 +1270,8 @@ class TestTheTwoLevelSaveSaysWhichLevelItIs:
     the work discarded, after the user had pressed save."""
 
     @pytest.mark.asyncio
-    async def test_the_source_route_calls_it_applying(self, built_index: Path) -> None:
-        from textual.widgets import Static
-
+    async def test_the_source_route_offers_no_save(self, built_index: Path) -> None:
+        """It is a part of the form: Esc carries the set back, and only the form saves."""
         from fnd.config import CollectionConfig, Config, SourceConfig
         from fnd.tui.settings_screen import FilterBrowserScreen, SourceFormScreen
 
@@ -1300,10 +1291,10 @@ class TestTheTwoLevelSaveSaysWhichLevelItIs:
                 await pilot.pause()
             assert isinstance(app.screen, FilterBrowserScreen)
             summary = _summary_text(app.screen)
-            assert "applies here" in summary, summary
-            assert "saving reindexes this collection" not in summary
-            footer = app.screen.query_one("#footer_hints", Static).render_line(0).text
-            assert "Apply" in footer, footer
+            assert "reindex" not in summary, summary
+            footer = "".join(seg.text for seg in app.screen._compositor.render_strips()[-1])
+            assert "^s" not in footer, footer
+            assert "Back" in footer, footer
 
     @pytest.mark.asyncio
     async def test_the_defaults_route_still_calls_it_saving(self, built_index: Path) -> None:
@@ -1311,19 +1302,17 @@ class TestTheTwoLevelSaveSaysWhichLevelItIs:
         from textual.widgets import Static
 
         from fnd.filters import FilterSpec
-        from fnd.tui.settings_screen import FilterBrowserScreen
 
         app = FNDApp(index_dir=built_index)
         async with app.run_test(size=(110, 30)) as pilot:
             await pilot.pause()
             app.push_screen(
-                FilterBrowserScreen(
+                DefaultFiltersScreen(
                     title="Index filters",
                     spec=FilterSpec(),
                     gitignore=True,
                     fndignore=True,
-                    save_note="saving does not reindex",
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(15):
@@ -1385,19 +1374,19 @@ class TestClearSaysWhatItTook:
         """On a SOURCE, which is the only place the act exists: the global
         set inherits from nothing, so there is nothing to return to there."""
         from fnd.filters import FilterSpec
-        from fnd.tui.settings_screen import _CLEAR_FILTERS_KEY, FilterBrowserScreen
+        from fnd.tui.settings_screen import _CLEAR_FILTERS_KEY
 
         app = FNDApp(index_dir=built_index)
         async with app.run_test(size=(110, 30)) as pilot:
             await pilot.pause()
             app.push_screen(
-                FilterBrowserScreen(
+                DefaultFiltersScreen(
                     title="Index filters",
                     spec=FilterSpec(kinds=("md",), exclude_tags={"os": ("no_index",)}),
                     gitignore=True,
                     fndignore=True,
                     inherited=(FilterSpec(), True, True),
-                    on_save=lambda *_a: None,
+                    on_commit=lambda *_a: None,
                 )
             )
             for _ in range(15):
@@ -1531,7 +1520,7 @@ class TestARejectedSaveStopsComplainingOnceFixed:
             wizard = app.screen
             assert isinstance(wizard, AddCollectionWizard)
             error = wizard.query_one("#wizard_error", Static)
-            wizard.action_save_close()
+            wizard.action_save()
             for _ in range(8):
                 await pilot.pause()
             assert "-hidden" not in error.classes, "the premise: a bad save complains"
@@ -1610,41 +1599,33 @@ class TestNothingIsThrownAwayInSilence:
             )
 
     @pytest.mark.asyncio
-    async def test_the_text_view_says_it_discarded_typing(self, built_index: Path) -> None:
+    async def test_the_text_view_carries_typing_back(self, built_index: Path) -> None:
+        """A part never discards on Esc: it hands the typed set to the browser."""
         from textual.widgets import TextArea
 
         from fnd.filters import FilterSpec
         from fnd.tui.settings_screen import FilterTextScreen
 
+        got: list[Any] = []
         app = FNDApp(index_dir=built_index)
         async with app.run_test(size=(100, 26)) as pilot:
             await pilot.pause()
             app.push_screen(
-                FilterTextScreen(title="As text", spec=FilterSpec(), on_save=lambda _s: None)
-            )
-            for _ in range(15):
-                await pilot.pause()
-            screen = app.screen
-            assert isinstance(screen, FilterTextScreen)
-            screen.action_back()
-            await pilot.pause()
-            assert not isinstance(app.screen, UnsavedChangesScreen), (
-                "untouched text must not stop the user"
-            )
-
-            app.push_screen(
-                FilterTextScreen(title="As text", spec=FilterSpec(), on_save=lambda _s: None)
+                FilterTextScreen(title="As text", spec=FilterSpec(), on_save=got.append)
             )
             for _ in range(15):
                 await pilot.pause()
             screen = app.screen
             assert isinstance(screen, FilterTextScreen)
             screen.query_one("#filter_text", TextArea).text = "file.kind in ['md']"
-            screen.action_back()
-            await pilot.pause()
-            assert isinstance(app.screen, UnsavedChangesScreen), (
-                "typed text was discarded without asking"
-            )
+            for _ in range(4):
+                await pilot.pause()
+            await pilot.press("escape")
+            for _ in range(4):
+                await pilot.pause()
+            assert not isinstance(app.screen, UnsavedChangesScreen)
+            assert app.screen is not screen
+        assert got, "typed text was discarded"
 
 
 class TestSavingLandsAnOpenEdit:
@@ -1799,24 +1780,17 @@ class TestTheCollectionsTitleCountsWhatIsSearched:
 
 
 def test_only_a_screen_that_writes_says_save() -> None:
-    """Of four nested screens only one writes: "Apply" hands the value up,
-    "Save" reaches disk."""
+    """Of the nested screens only the documents write, and only they name the save key."""
     import inspect
-    import re
 
     from fnd.tui import settings_screen as module
 
-    # Match the identifier, not the spelling: this scraped a literal and broke
-    # the moment the label became one constant, which is what it is for.
-    staging = ("FilterTextScreen", "RuleTextScreen")
-    for name in staging:
+    for name in ("FilterTextScreen", "RuleTextScreen", "SourceFiltersScreen"):
         source = inspect.getsource(getattr(module, name))
-        labels = set(re.findall(r'COMMIT_KEY,\s*"([^"]+)"', source))
-        assert labels, f"{name} names no commit key"
-        assert labels == {"Apply"}, f"{name} says {labels}, but it never writes"
-
-    writes = inspect.getsource(module.SourceFormScreen)
-    assert re.search(r'COMMIT_KEY,\s*"Save"', writes), "the screen that does write still says Save"
+        assert "save_hint" not in source, f"{name} names a save, but it never writes"
+        assert "COMMIT_KEY" not in source, name
+    for name in ("SourceFormScreen", "AddCollectionWizard", "DefaultFiltersScreen"):
+        assert "save_hint()" in inspect.getsource(getattr(module, name)), name
 
 
 class TestTheDefaultsScreenOffersEveryType:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -24,6 +24,7 @@ from textual.widgets import Static
 
 from fnd import paths
 from fnd.config import CollectionConfig
+from fnd.tui.editing import Role
 from fnd.walk import walk_sources
 
 # Average per-PDF extraction cost when the cache is cold and the user
@@ -100,6 +101,8 @@ class FirstReindexWarningScreen(ModalScreen[bool]):
     Result via ``dismiss(False)``: user cancelled.
     """
 
+    ROLE: ClassVar[Role] = Role.CONFIRM
+
     BINDINGS = [  # noqa: RUF012
         Binding("escape", "cancel", "Cancel", show=False),
         Binding("up,k", "cursor(-1)", show=False),
@@ -154,7 +157,6 @@ class FirstReindexWarningScreen(ModalScreen[bool]):
             yield Static(body, id="first_reindex_body")
             yield OptionList(
                 Option(Text("Start", style="bold green"), id="start"),
-                Option("Don't show this again, start now", id="dont_show"),
                 Option("Cancel", id="cancel"),
                 id="first_reindex_list",
             )
@@ -185,12 +187,8 @@ class FirstReindexWarningScreen(ModalScreen[bool]):
         mark_seen()
         self.dismiss(True)
 
-    def action_dont_show_again(self) -> None:
-        mark_seen()
-        self.dismiss(True)
-
     def on_option_list_option_selected(self, ev: Any) -> None:
-        if ev.option.id == "start" or ev.option.id == "dont_show":
+        if ev.option.id == "start":
             mark_seen()
             self.dismiss(True)
         elif ev.option.id == "cancel":

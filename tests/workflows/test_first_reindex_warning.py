@@ -112,3 +112,20 @@ async def test_cancel_does_not_mark_seen(tmp_path: Path) -> None:
         await pilot.press("enter")
         await pilot.pause()
     assert not has_been_seen()
+
+
+@pytest.mark.asyncio
+async def test_the_warning_offers_start_and_cancel_only(tmp_path: Path) -> None:
+    """Start already marks it seen, so a separate "don't show again" was the same act."""
+    from textual.app import App
+    from textual.widgets import OptionList
+
+    from fnd.tui.first_reindex_warning import FirstReindexWarningScreen
+
+    app: App[None] = App()
+    async with app.run_test() as pilot:
+        app.push_screen(FirstReindexWarningScreen(collection="notes", n_pdfs=3))
+        for _ in range(5):
+            await pilot.pause()
+        ids = [o.id for o in app.screen.query_one(OptionList)._options]
+    assert ids == ["start", "cancel"]

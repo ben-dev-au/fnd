@@ -15,6 +15,7 @@ from tantivy import Document, Index, IndexWriter, Query, Schema
 from fnd.config import CollectionConfig
 from fnd.extract import Chunk, ExtractError, extract, no_text_reason
 from fnd.fsmeta import path_is_absent
+from fnd.index_freshness import Ledger
 from fnd.membership import after_index, after_prune
 from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import (
@@ -153,6 +154,8 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
             _wipe_index_dir(index_dir, sidecar)
     else:
         sidecar.write_text(str(SCHEMA_VERSION), encoding="utf-8")
+        # Created now, so it holds nothing from before the freshness record.
+        Ledger(index_dir).mark_adopted()
 
     try:
         return Index(schema, path=str(index_dir))

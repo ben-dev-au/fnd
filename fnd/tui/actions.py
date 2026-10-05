@@ -105,6 +105,17 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="update_collection",
+        description="Bring the highlighted collection's index up to date with its "
+        "config: an Update, or a confirmed rebuild when tags must be read again. "
+        "Collections that need one carry a ↻ on their row.",
+        default_key="u",
+        command="update",
+        footer_label="Update",
+        contexts=("collections",),
+        show_in_footer=False,
+    ),
+    Action(
         id="scope_toggle_batch",
         description="Toggle a collection, source or filter WITHOUT re-running the "
         f"query: hold Ctrl / {os_labels.ALT_WORD} while pressing Enter to change "

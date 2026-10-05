@@ -19,7 +19,7 @@ from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen, FilterBrowserScreen
 from tests._pilot_wait import wait_until
 
 
@@ -50,13 +50,13 @@ def _provider(seen: list[Any]) -> Any:
 
 
 async def _open(app: FNDApp, pilot: Any, seen: list[Any]) -> FilterBrowserScreen:
-    screen = FilterBrowserScreen(
+    screen = DefaultFiltersScreen(
         title="Index filters",
         spec=FilterSpec(kinds=("md",)),
         gitignore=True,
         fndignore=True,
         sample_provider=_provider(seen),
-        on_save=lambda *_a: None,
+        on_commit=lambda *_a: None,
     )
     app.push_screen(screen)
     await wait_until(

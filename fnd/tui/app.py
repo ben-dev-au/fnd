@@ -40,6 +40,7 @@ from textual.widgets.tree import TreeNode
 
 from fnd import opener, os_labels
 from fnd.config import Config, default_index_dir
+from fnd.index_freshness import Ledger
 from fnd.launch_command import LaunchCommandSerializer, LaunchScope
 from fnd.matching import MatchSpec
 from fnd.query import Searcher
@@ -563,6 +564,7 @@ class FNDApp(App[None]):
     ) -> None:
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
+        self._ledger = Ledger(self._index_dir)
         self._initial_query = initial_query
         # Search state + orchestration (searcher, query, match spec,
         # result groups, trace); see fnd/tui/search_controller.py.
@@ -887,6 +889,10 @@ class FNDApp(App[None]):
             # No index yet — the app still opens so the user can manage
             # collections, then reindex outside or from the CLI.
             self._search.searcher = None
+        # Before the panel's first paint, or adopted rows flash "not indexed". Only
+        # names missing from the sidecar query the index, so later launches skip it.
+        with contextlib.suppress(Exception):
+            self._adopt_untracked_collections()
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
@@ -1093,27 +1099,18 @@ class FNDApp(App[None]):
         Esc is back and `q` is quit on every screen; both ask first, so a quit
         never throws an unsaved edit away.
         """
-        from fnd.tui.settings_screen import UnsavedChangesScreen, unsaved_on_stack
+        from fnd.tui.editing import Leave, ask_before_leaving, pending_document
+        from fnd.tui.settings_screen import UnsavedChangesScreen
 
         if isinstance(self.screen, UnsavedChangesScreen):
-            # The third route that asks it. The question is already on screen
-            # waiting for an answer, and asking again stacks a guard that has
-            # dropped its own Save option.
+            # The question is already on screen; asking again stacks a second one.
             return
-        pending = unsaved_on_stack(self.screen_stack)
+        pending = pending_document(self.screen_stack)
         if pending is None:
             self.exit()
             return
-        what, save, blocked = pending
-        self.push_screen(
-            UnsavedChangesScreen(
-                what=what,
-                on_save=save,
-                on_leave=self.exit,
-                leave_label="Discard and quit",
-                blocked=blocked,
-            )
-        )
+        document, blocked = pending
+        ask_before_leaving(document, Leave("quit", self.exit), blocked=blocked)
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.
@@ -1993,6 +1990,32 @@ class FNDApp(App[None]):
         if node is not None and node.children:
             node.expand_all()
 
+    def _adopt_untracked_collections(self) -> None:
+        """Collections indexed before the sidecar existed are taken as current."""
+        from fnd.index import collection_is_empty
+
+        index = getattr(self._search.searcher, "_index", None)
+        if index is None:
+            return
+        config = self._config
+        if config is None:
+            from fnd.config import load
+
+            # Built without a config, the app reads the file later anyway; adopt against it.
+            config = load()
+        self._ledger.adopt(config, lambda name: collection_is_empty(index, name))
+
+    def action_update_collection(self) -> None:
+        from fnd.tui.freshness_view import run_pending
+
+        if self._focus_context() != "collections":
+            return
+        node = self.query_one("#collections_panel_tree", Tree).cursor_node
+        data = getattr(node, "data", None) or {}
+        name = data.get("name") if data.get("kind") == "collection" else data.get("collection")
+        if name:
+            run_pending(self, str(name))
+
     def action_scope_toggle_batch(self) -> None:
         """Toggle the focused scope or filter row without re-running the query.
 
@@ -2407,11 +2430,11 @@ class FNDApp(App[None]):
         full-screen list of every action and setting, with a search Input
         at the top for free-text filtering across all sections.
         """
+        from fnd.tui.editing import Leave, ask_before_leaving, pending_document
         from fnd.tui.settings_screen import (
             SettingsScreen,
             UnsavedChangesScreen,
             open_settings,
-            unsaved_on_stack,
         )
 
         if isinstance(self.screen, UnsavedChangesScreen):
@@ -2425,17 +2448,11 @@ class FNDApp(App[None]):
         # The filter browser is not a SettingsScreen: a second settings stack
         # over it could open and save a second Index filters, leaving the
         # first holding stale values that its own `^s` then writes back.
-        pending = unsaved_on_stack(self.screen_stack)
+        pending = pending_document(self.screen_stack)
         if pending is not None:
-            what, save, blocked = pending
-            self.push_screen(
-                UnsavedChangesScreen(
-                    what=what,
-                    on_save=save,
-                    on_leave=self._discard_and_open_settings,
-                    leave_label="Discard and open the menu",
-                    blocked=blocked,
-                )
+            document, blocked = pending
+            ask_before_leaving(
+                document, Leave("open the menu", self._discard_and_open_settings), blocked=blocked
             )
             return
         open_settings(self)
@@ -2449,24 +2466,18 @@ class FNDApp(App[None]):
         exit like any other: Esc, ←, `q`, the menu and `:` (which the screen's
         own footer advertises) all ask before discarding.
         """
-        from fnd.tui.settings_screen import (
-            UnsavedChangesScreen,
-            unsaved_on_stack,
-        )
+        from fnd.tui.editing import Leave, ask_before_leaving, pending_document
+        from fnd.tui.settings_screen import UnsavedChangesScreen
 
         if isinstance(self.screen, UnsavedChangesScreen):
             return
-        pending = unsaved_on_stack(self.screen_stack) if ask else None
+        pending = pending_document(self.screen_stack) if ask else None
         if pending is not None:
-            what, save, blocked = pending
-            self.push_screen(
-                UnsavedChangesScreen(
-                    what=what,
-                    on_save=save,
-                    on_leave=lambda: self._close_settings_stack(ask=False),
-                    leave_label="Discard and close",
-                    blocked=blocked,
-                )
+            document, blocked = pending
+            ask_before_leaving(
+                document,
+                Leave("close Settings", lambda: self._close_settings_stack(ask=False)),
+                blocked=blocked,
             )
             return
         self._discard_settings_stack()
@@ -2477,11 +2488,11 @@ class FNDApp(App[None]):
         The editors that can hold unsaved work are not SettingsScreens, so
         popping only those stopped at the editor and discarded nothing.
         """
-        from fnd.tui.settings_screen import SettingsScreen, unsaved_on_stack
+        from fnd.tui.settings_screen import SettingsScreen
 
         while len(self.screen_stack) > 1 and (
             isinstance(self.screen, SettingsScreen)
-            or unsaved_on_stack(self.screen_stack) is not None
+            or getattr(self.screen, "ROLE", None) is not None
         ):
             self.pop_screen()
 

@@ -31,7 +31,7 @@ import copy
 import textwrap
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from rich.text import Text
 from textual import events, on
@@ -48,6 +48,17 @@ from textual.widgets.option_list import Option, OptionDoesNotExist
 from fnd.display_text import sanitise_display_text
 from fnd.fsmeta import path_is_absent
 from fnd.tui.actions import Keymap, load_keymap
+from fnd.tui.editing import (
+    CANCEL,
+    KEEP_EDITING,
+    DocumentScreen,
+    PartScreen,
+    Role,
+    leave_hint,
+    save_hint,
+    typing_hints,
+)
+from fnd.tui.freshness_view import announce_saved
 from fnd.tui.menu import (
     KIND_ACTION,
     KIND_DISPLAY,
@@ -66,7 +77,7 @@ from fnd.tui.menu import (
     section_label,
     walk_all_sections,
 )
-from fnd.tui.widgets import COMMIT_KEY, DetailStrip
+from fnd.tui.widgets import DetailStrip
 from fnd.tui.widgets.clear_bar import RETURN_TO_DEFAULTS, ClearFiltersBar
 from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem, ToggleTree
 
@@ -82,9 +93,9 @@ _KEY_COL = 12
 def _form_hint_bar(screen: Any, app: Any, fields: tuple[tuple[str, str], ...]) -> Any:
     """A form's footer for whichever pane has focus; ``fields`` is the field list's."""
     if "-hidden" not in screen.query_one(EditBar).classes:
-        return _editor_hint_bar((("⏎", "Save"), ("Esc", "Cancel")))
+        return _editor_hint_bar(typing_hints())
     if screen.query_one("#frontmatter_sample", TextArea).has_focus:
-        return _editor_hint_bar((("Tab", "Fields"), ("Esc", "Cancel")))
+        return _editor_hint_bar((("Tab", "Fields"), leave_hint(with_left=False)))
     return _hint_bar(app, fields, screen=screen)
 
 
@@ -179,15 +190,6 @@ def _hint_bar(app: FNDApp, contextual: tuple[tuple[str, str], ...], *, screen: A
     return render_hint_bar(
         tuple((key, renamed.get(key, label)) for key, label in anchors if key != "/"), contextual
     )
-
-
-_SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
-    ("↑↓", "Nav"),
-    ("⏎", "Open"),
-    ("←", "Back"),
-    ("/", "Filter"),
-    ("Esc", "Back"),
-)
 
 
 # ── Confirm-screen helpers (Phase E) ────────────────────────────────
@@ -640,7 +642,13 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
         # narrow widths.
         if item.key:
             return []
-        return [(f"[ {item.action_label} ]", "bold cyan")]
+        button = (f"[ {item.action_label} ]", "bold cyan")
+        state = item.badge_getter(app) if item.badge_getter is not None else ""
+        if state:
+            from fnd.tui.freshness_view import BADGE_STYLE
+
+            return [(state, BADGE_STYLE), ("  ", ""), button]
+        return [button]
 
     if item.kind == KIND_SUBMENU:
         summary = ""
@@ -1372,6 +1380,8 @@ class SettingsScreen(Screen[None]):
     ``Screen`` on top; ``Esc`` pops one level naturally.
     """
 
+    ROLE: ClassVar[Role] = Role.VIEW
+
     BINDINGS = [  # noqa: RUF012
         Binding("escape", "back", "Back", show=False),
         Binding("left", "back", "Back", show=False),
@@ -1381,6 +1391,7 @@ class SettingsScreen(Screen[None]):
         # consumes the key when the list has focus, so this only
         # fires while the Input is focused (Input has no Down handler).
         Binding("down", "list_from_input", show=False),
+        Binding("u", "update_collection", show=False),
     ]
 
     CSS = """
@@ -1579,7 +1590,34 @@ class SettingsScreen(Screen[None]):
             return self.query_one("#settings_search", Input).has_focus
         return False
 
+    def _collection_in_context(self) -> str | None:
+        """The collection this page is about, or the one under the cursor on the list."""
+        if self._breadcrumb[:1] == ("Collections",) and len(self._breadcrumb) >= 2:
+            return self._breadcrumb[1]
+        row = self._cursor_item()
+        if row is not None and row.id.startswith("collection."):
+            return row.id.removeprefix("collection.")
+        return None
+
+    def action_update_collection(self) -> None:
+        from fnd.tui.freshness_view import run_pending
+
+        if (name := self._collection_in_context()) is not None:
+            run_pending(self.app, name)  # type: ignore[arg-type]
+
     def _hint_cluster(self) -> tuple[tuple[str, str], ...]:
+        cluster = self._row_hint_cluster()
+        if self._is_typing() or self.is_keybindings:
+            return cluster
+        from fnd.index_freshness import State
+        from fnd.tui.freshness_view import verdict_for
+
+        name = self._collection_in_context()
+        if name and verdict_for(self.app, name).state is not State.CURRENT:  # type: ignore[arg-type]
+            return (*cluster, ("u", "Update"))
+        return cluster
+
+    def _row_hint_cluster(self) -> tuple[tuple[str, str], ...]:
         """Choose the contextual hint cluster for the current state.
 
         Priority: edit-bar open > search input focused > Keybindings
@@ -1594,14 +1632,14 @@ class SettingsScreen(Screen[None]):
         try:
             bar = self.query_one(EditBar)
             if "-hidden" not in bar.classes:
-                return (("⏎", "Save"), ("Esc", "Cancel"))
+                return typing_hints()
         except Exception:
             pass
 
         # Search input focused: hand-off / clear cluster.
         focused = self.focused
         if isinstance(focused, Input) and getattr(focused, "id", None) == "settings_search":
-            esc = ("Esc", "Clear") if focused.value else ("Esc", "Back")
+            esc = leave_hint(clearing=bool(focused.value), with_left=False)
             return (("↓", "Results"), ("⏎", "Go to first"), esc)
 
         # Esc and ← clear a row filter before they leave the page.
@@ -1893,6 +1931,8 @@ class SettingsScreen(Screen[None]):
                 app._config = load()  # type: ignore[attr-defined]
                 app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
                 app._refresh_status()  # type: ignore[attr-defined]
+                # A setting can leave a collection out of date (spec D4); its row says so now.
+                app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
         except Exception as e:
             self.query_one(EditBar).show_error(_summarise(e))
             return
@@ -1981,15 +2021,17 @@ def _summarise(exc: Exception) -> str:
 
 
 class PickerScreen(Screen[None]):
-    """Sub-screen for a KIND_PICKER item.
+    """Sub-screen for a KIND_PICKER item: one value, applied as it changes.
 
-    Single-select: Enter writes immediately and pops. Multi-select:
-    Enter toggles ``✓``, ``^S`` commits, Esc cancels.
+    Single-select: Enter applies and goes back. Multi-select: Enter toggles
+    ``✓`` and applies; Esc goes back. Into config from Settings, into the form
+    from a form.
     """
+
+    ROLE: ClassVar[Role] = Role.SETTING
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Back", show=False),
-        Binding("ctrl+s", "save_close", show=False),
         Binding("enter", "activate", show=False),
         Binding("up,k", "cursor(-1)", show=False),
         Binding("down,j", "cursor(1)", show=False),
@@ -2047,9 +2089,8 @@ class PickerScreen(Screen[None]):
     def _render_footer(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         hints: tuple[tuple[str, str], ...] = (
-            (("⏎", "Toggle"), (COMMIT_KEY, "Save"), ("Esc", "Cancel"))
-            if self._item.multi
-            else (("⏎", "Select"), ("Esc", "Cancel"))
+            ("⏎", "Toggle" if self._item.multi else "Select"),
+            leave_hint(),
         )
         bar = _editor_hint_bar(hints) if _typing_in(self) else _hint_bar(app, hints, screen=self)
         self.query_one("#footer_hints", Static).update(bar)
@@ -2086,6 +2127,7 @@ class PickerScreen(Screen[None]):
             # it to index 0 every time and force the user to re-navigate.
             lst = self.query_one("#picker_list", OptionList)
             lst.replace_option_prompt_at_index(target_index, self._render_choice_prompt(target))
+            self._commit(self._selected)
             return
         self._commit({target.value})
         self.app.pop_screen()
@@ -2098,15 +2140,6 @@ class PickerScreen(Screen[None]):
         return t
 
     def action_back(self) -> None:
-        """Esc cancels, on a multi picker too, as on the single-select row.
-
-        `^S` saves, as on every other screen that edits something.
-        """
-        self.app.pop_screen()
-
-    def action_save_close(self) -> None:
-        if self._item.multi:
-            self._commit(self._selected)
         self.app.pop_screen()
 
     def action_cursor(self, direction: int) -> None:
@@ -2213,7 +2246,7 @@ def open_source_filter_browser(
         on_change()
 
     app.push_screen(
-        FilterBrowserScreen(
+        SourceFiltersScreen(
             title="Index filters · this source",
             spec=_spec_from_filters(resolved),
             gitignore=resolved.respect_gitignore,
@@ -2227,11 +2260,7 @@ def open_source_filter_browser(
                 defaults.respect_gitignore,
                 defaults.respect_fndignore,
             ),
-            save_note=(
-                f"{COMMIT_KEY} applies here; {COMMIT_KEY} on the source form saves and reindexes"
-            ),
-            commit_label="Apply",
-            on_save=_save,
+            on_commit=_save,
         )
     )
 
@@ -2372,15 +2401,12 @@ class TreePickerScreen(Screen[None]):
     """Nested category→item multi-select for a picker item that supplies a
     ``groups_provider``. Reuses the shared :class:`ToggleTree`, so it toggles,
     cascades, and repaints exactly like the file-type filter. Changes apply as
-    they are toggled, so leaving is all there is to do.
+    they are toggled, so leaving is all there is to do."""
 
-    That is the opposite of the filter browser, which holds its edits because
-    saving one reindexes. Both are right for what they edit; what was wrong is
-    that the gesture a user learnt on one did nothing on the other."""
+    ROLE: ClassVar[Role] = Role.SETTING
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Back", show=False),
-        Binding("ctrl+s", "back", "Done", show=False),
     ]
 
     CSS = """
@@ -2415,11 +2441,7 @@ class TreePickerScreen(Screen[None]):
         self.query_one("#footer_hints", Static).update(
             _hint_bar(
                 app,
-                (
-                    ("⏎", "Toggle"),
-                    ("←/→", "Collapse/Expand"),
-                    (f"Esc/{COMMIT_KEY}", "Done"),
-                ),
+                (("⏎", "Toggle"), ("←/→", "Collapse/Expand"), leave_hint()),
             )
         )
 
@@ -2435,7 +2457,6 @@ class TreePickerScreen(Screen[None]):
         self.action_back()
 
     def action_back(self) -> None:
-        self._commit(self.query_one("#tree_picker", ToggleTree).selected)
         self.app.pop_screen()
 
     def _commit(self, values: frozenset[str]) -> None:
@@ -2448,6 +2469,13 @@ class TreePickerScreen(Screen[None]):
 
 
 # ── Collection-form screens (rebuilt from CollectionsScreen) ────────
+
+
+def _repopulate_keeping_cursor(lst: SettingsList, items: list[MenuItem]) -> None:
+    """Rebuild a form's rows on the row the user was on, so returning from a part
+    lands where it was opened rather than on the first field."""
+    here = lst._items[lst.cursor_index].id if 0 <= lst.cursor_index < len(lst._items) else None
+    lst.set_items(items, cursor_id=here)
 
 
 def _kinds_to_include_globs(kind_ids: list[str]) -> list[str]:
@@ -2482,19 +2510,19 @@ def _split_excludes_globs(globs: list[str]) -> tuple[list[str], str]:
     return preset_keys, ", ".join(remaining)
 
 
-class SourceFormScreen(Screen[None]):
-    """Per-source editor.
+class SourceFormScreen(DocumentScreen):
+    """Per-source editor: a document (see :mod:`fnd.tui.editing`).
 
     Multi-field form (Path, Includes, Excludes, Filter, Follow symlinks)
     plus a TextArea below for the pasted-frontmatter sample tester. Same
     chrome as the other Settings screens.
     """
 
+    SUBJECT = "this source"
+
     BINDINGS = [  # noqa: RUF012
-        Binding("escape,left", "back", "Back", show=False),
         Binding("tab", "cycle_focus(1)", show=False),
         Binding("shift+tab", "cycle_focus(-1)", show=False),
-        Binding("ctrl+s", "save_close", show=False),
         Binding("ctrl+a", "save_add_another", show=False),
         Binding("ctrl+d", "delete_source", "Delete", show=False),
     ]
@@ -2545,9 +2573,10 @@ class SourceFormScreen(Screen[None]):
             # Sparse SourceFilters overrides; empty means "inherit everything".
             "filters": {},
         }
-        # Snapshot the current source (if editing) for cancel and the
-        # "needs reindex on save" check.
+        # The source as loaded, for the same-source check on save.
         self._snapshot: dict[str, Any] = {}
+        # The fields as opened, new form included, so an untouched form is clean.
+        self._opened_with: dict[str, Any] = {}
 
     def compose(self) -> ComposeResult:
         title = (
@@ -2591,6 +2620,7 @@ class SourceFormScreen(Screen[None]):
 
     def on_mount(self) -> None:
         self._load_snapshot()
+        self._opened_with = copy.deepcopy(self._fields)
         self._populate_fields()
         self._render_footer()
         self.query_one(SettingsList).focus()
@@ -2684,7 +2714,7 @@ class SourceFormScreen(Screen[None]):
         return f"{count} overridden" if count else "inherited"
 
     def _populate_fields(self) -> None:
-        self.query_one(SettingsList).set_items(self._build_field_items())
+        _repopulate_keeping_cursor(self.query_one(SettingsList), self._build_field_items())
         self._refresh_sample_tester()
         # A rejected save left its reason on screen while the user fixed the
         # very field it named, so "Name is required." sat above a filled name.
@@ -2722,7 +2752,7 @@ class SourceFormScreen(Screen[None]):
                 hint="path or ~/path",
                 description=(
                     "The folder to index. ~ expands; the path must exist. "
-                    "Changing it reindexes this source from scratch."
+                    "Changing it leaves the collection outdated."
                 ),
             ),
             MenuItem(
@@ -3054,8 +3084,8 @@ class SourceFormScreen(Screen[None]):
         hints: tuple[tuple[str, str], ...] = (
             *_sample_tab_hint(self),
             ("⏎", "Edit"),
-            (COMMIT_KEY, "Save"),
-            ("Esc", "Cancel"),
+            save_hint(),
+            leave_hint(),
         )
         if self._source_index is not None:
             hints = (*hints, ("Ctrl+D", "Delete source"))
@@ -3079,14 +3109,21 @@ class SourceFormScreen(Screen[None]):
                 collection_name=self._collection_name,
                 source_index=self._source_index,
                 source_path=str(self._snapshot.get("path") or ""),
+                discarding=self.is_dirty(),
             )
         )
 
-    def action_save_close(self) -> None:
-        # An open edit bar holds a value the user has typed but not submitted;
-        # saving over the top of it dropped that value silently.
-        if _commit_then(self, self.action_save_close):
-            return
+    def land_typing(self, resume: Callable[[], None]) -> bool:
+        # An open edit bar holds a value typed but not submitted; saving over it lost it.
+        return _commit_then(self, resume)
+
+    def show_refusal(self, reason: str) -> None:
+        self._show_error(reason)
+
+    def after_save(self) -> None:
+        announce_saved(self.app, [self._collection_name])  # type: ignore[arg-type]
+
+    def write(self) -> str:
         from pathlib import Path
 
         from fnd.config import (
@@ -3102,9 +3139,6 @@ class SourceFormScreen(Screen[None]):
         self._clear_error()
 
         path = str(self._fields["path"] or "").strip().strip("'\"")
-        if blocked := self.save_blocked():
-            self._show_error(blocked)
-            return
         includes_globs: list[str] = []
         for g in str(self._fields.get("includes_custom") or "").split(","):
             g = g.strip()
@@ -3124,14 +3158,12 @@ class SourceFormScreen(Screen[None]):
         try:
             cfg = load()
         except Exception as e:
-            self._show_error(
+            return (
                 f"The config on disk cannot be read, so this save would overwrite it: "
                 f"{_summarise(e)}"
             )
-            return
         if self._collection_name not in cfg.collections:
-            self._show_error("Collection vanished. Please reopen the menu.")
-            return
+            return "Collection vanished. Please reopen the menu."
         col: CollectionConfig = cfg.collections[self._collection_name]
         # A fresh read makes the row index mean whatever now sits there, so an
         # edit could land on a different source. Refuse rather than guess.
@@ -3140,11 +3172,10 @@ class SourceFormScreen(Screen[None]):
             # reseeds from `app._config`, so without this the "reopen it" advice
             # could never succeed.
             app._config = cfg  # type: ignore[attr-defined]
-            self._show_error(
+            return (
                 "This row is not the source it was when the form opened: the "
                 "config changed on disk. Press Esc and reopen it."
             )
-            return
         app._config = cfg  # type: ignore[attr-defined]
         # Start from the source as it stands and overwrite only the fields this
         # form owns, keeping those it has no control for (app_for, and
@@ -3173,8 +3204,7 @@ class SourceFormScreen(Screen[None]):
         try:
             new_source = SourceConfig.model_validate(values)
         except Exception as e:
-            self._show_error(_summarise(e))
-            return
+            return _summarise(e)
 
         overlap, overlap_contains = overlapping_source(col.sources, new_source, self._source_index)
         if self._source_index is None:
@@ -3188,8 +3218,7 @@ class SourceFormScreen(Screen[None]):
                 collection=col,
             )
         except Exception as e:
-            self._show_error(_summarise(e))
-            return
+            return _summarise(e)
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         if overlap:
@@ -3201,15 +3230,8 @@ class SourceFormScreen(Screen[None]):
                 f"{overlap!r} in this collection; files reached by both are indexed once.",
                 severity="warning",
             )
-        # Trigger a reindex if the source set materially changed. Pop
-        # FIRST so the IndexerScreen lands on top of the menu, not on
-        # top of this wizard.
-        needs_reindex = self._snapshot != self._fields or self._source_index is None
-        self.app.pop_screen()
-        if needs_reindex:
-            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
-                self._collection_name, rebuild=True
-            )
+        self._opened_with = copy.deepcopy(self._fields)
+        return ""
 
     def action_save_add_another(self) -> None:
         """Save the current source, then immediately re-open the form
@@ -3218,7 +3240,9 @@ class SourceFormScreen(Screen[None]):
         like Ctrl+S."""
         collection = self._collection_name
         was_new = self._source_index is None
-        self.action_save_close()
+        if self.land_typing(self.action_save_add_another) or self.save():
+            return
+        self.app.pop_screen()
         if not was_new:
             return
 
@@ -3230,13 +3254,10 @@ class SourceFormScreen(Screen[None]):
 
         self.app.call_later(_chain)
 
-    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
-        """What leaving now would lose, and how to keep it."""
-        if self._snapshot == self._fields:
-            return None
-        return "this source", self.action_save_close
+    def is_dirty(self) -> bool:
+        return self._fields != self._opened_with
 
-    def save_blocked(self) -> str:
+    def blocked_reason(self) -> str:
         """Why ``^s`` would be refused, or "". The save and the leaving prompt
         read this same answer, so the prompt cannot offer a save that is
         certain to fail."""
@@ -3248,17 +3269,6 @@ class SourceFormScreen(Screen[None]):
         if path_is_absent(Path(path).expanduser()):
             return f"Path does not exist: {path}"
         return ""
-
-    def action_back(self) -> None:
-        # The filter browser saves into `_fields`, not to disk, so leaving the
-        # form is what discards it, including an edit the user has just
-        # committed one screen down.
-        _leave_or_confirm(
-            self,
-            dirty=self._snapshot != self._fields,
-            what="this source",
-            on_save=self.action_save_close,
-        )
 
     # ── Tab cycles field list ↔ sample TextArea ───────────────
 
@@ -3275,17 +3285,17 @@ class SourceFormScreen(Screen[None]):
         target.focus()
 
 
-class AddCollectionWizard(Screen[None]):
+class AddCollectionWizard(DocumentScreen):
     """Single-screen form for creating a new collection + its first source.
 
     Field rows live in a SettingsList; the frontmatter sample tester docks
-    below. Ctrl+S validates everything and writes via write_collection +
-    triggers a reindex.
+    below. Ctrl+S validates everything and writes the collection; indexing is
+    the user's next step, from the collection page it lands on.
     """
 
+    SUBJECT = "this collection"
+
     BINDINGS = [  # noqa: RUF012
-        Binding("escape,left", "back", "Cancel", show=False),
-        Binding("ctrl+s", "save_close", "Save", show=False),
         Binding("tab", "cycle_focus(1)", show=False),
         Binding("shift+tab", "cycle_focus(-1)", show=False),
     ]
@@ -3379,8 +3389,8 @@ class AddCollectionWizard(Screen[None]):
         hints = (
             ("⏎", "Edit"),
             *_sample_tab_hint(self),
-            (COMMIT_KEY, "Save & Index"),
-            ("Esc", "Cancel"),
+            save_hint(),
+            leave_hint(),
         )
         self.query_one("#footer_hints", Static).update(_form_hint_bar(self, app, hints))
 
@@ -3391,7 +3401,7 @@ class AddCollectionWizard(Screen[None]):
         self._render_footer()
 
     def _populate_fields(self) -> None:
-        self.query_one(SettingsList).set_items(self._build_field_items())
+        _repopulate_keeping_cursor(self.query_one(SettingsList), self._build_field_items())
         self._refresh_sample_tester()
         # A rejected save left its reason on screen while the user fixed the
         # very field it named, so "Name is required." sat above a filled name.
@@ -3668,12 +3678,10 @@ class AddCollectionWizard(Screen[None]):
         self._refresh_match_status()
         self.query_one(SettingsList).focus()
 
-    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
-        if self._fields == getattr(self, "_opened_with", self._fields):
-            return None
-        return "this collection", self.action_save_close
+    def is_dirty(self) -> bool:
+        return self._fields != getattr(self, "_opened_with", self._fields)
 
-    def save_blocked(self) -> str:
+    def blocked_reason(self) -> str:
         """As on the source form: the one answer both the save and the leaving
         prompt read."""
         from pathlib import Path
@@ -3698,19 +3706,26 @@ class AddCollectionWizard(Screen[None]):
             return f"Path does not exist: {expanded}"
         return ""
 
-    def action_back(self) -> None:
-        _leave_or_confirm(
-            self,
-            dirty=self._fields != getattr(self, "_opened_with", self._fields),
-            what="this collection",
-            on_save=self.action_save_close,
-        )
+    def land_typing(self, resume: Callable[[], None]) -> bool:
+        # An open edit bar holds a value typed but not submitted; saving over it lost it.
+        return _commit_then(self, resume)
 
-    def action_save_close(self) -> None:
-        # An open edit bar holds a value the user has typed but not submitted;
-        # saving over the top of it dropped that value silently.
-        if _commit_then(self, self.action_save_close):
+    def show_refusal(self, reason: str) -> None:
+        self._show_error(reason)
+
+    def action_save(self) -> None:
+        """Lands on the new collection's page, where Update index runs the first index."""
+        if self.land_typing(self.action_save) or self.save():
             return
+        self.app.pop_screen()
+        from fnd.tui.menu import _make_open_collection_screen
+
+        _make_open_collection_screen(str(self._fields["name"]).strip())(self.app)  # type: ignore[arg-type]
+
+    def after_save(self) -> None:
+        announce_saved(self.app, [str(self._fields["name"]).strip()])  # type: ignore[arg-type]
+
+    def write(self) -> str:
         from pathlib import Path
 
         from fnd.config import (
@@ -3727,13 +3742,6 @@ class AddCollectionWizard(Screen[None]):
 
         name = str(self._fields["name"]).strip()
         path = str(self._fields["path"]).strip().strip("'\"")
-        # Validated up-front so the user sees a focused error instead of a
-        # crash from deep inside write_collection if they typed something
-        # the persistence layer would reject (path separators, quotes,
-        # control chars, …). Spaces ARE allowed — see validate_collection_name.
-        if blocked := self.save_blocked():
-            self._show_error(blocked)
-            return
         p = Path(path).expanduser()
 
         includes_globs: list[str] = _kinds_to_include_globs(list(self._fields["includes"]))
@@ -3776,8 +3784,7 @@ class AddCollectionWizard(Screen[None]):
         except ValueError as e:
             # pydantic's ValidationError is a ValueError; `_summarise` renders
             # it as the field and message the row already showed.
-            self._show_error(_summarise(e))
-            return
+            return _summarise(e)
         new_collection = CollectionConfig(sources=[source])
         config_path = default_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3788,21 +3795,11 @@ class AddCollectionWizard(Screen[None]):
                 collection=new_collection,
             )
         except InvalidCollectionNameError as e:
-            self._show_error(str(e))
-            return
+            return str(e)
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        # Pop wizard FIRST so the IndexerScreen lands on top of the
-        # per-collection menu, not on top of this wizard. Switching the
-        # reindex from the headless _reindex_collection_async worker to
-        # the unified _reindex_with_warning_if_needed path gives the
-        # user the same modal + Cancel + progress they get from
-        # 'Update index now'.
-        self.app.pop_screen()
-        from fnd.tui.menu import _make_open_collection_screen
-
-        _make_open_collection_screen(name)(app)
-        app._indexer.reindex_with_warning(name, rebuild=True)  # type: ignore[attr-defined]
+        self._opened_with = copy.deepcopy(self._fields)
+        return ""
 
     def action_cycle_focus(self, direction: int) -> None:
         widgets = _focus_targets(self)
@@ -3815,63 +3812,15 @@ class AddCollectionWizard(Screen[None]):
         widgets[(idx + direction) % len(widgets)].focus()
 
 
-class NewCollectionScreen(Screen[None]):
-    """Tiny one-Input prompt for creating an empty collection."""
-
-    BINDINGS = [  # noqa: RUF012
-        Binding("escape,left", "back", "Cancel", show=False),
-    ]
-
-    CSS = chrome_css("NewCollectionScreen")
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="settings_box") as box:
-            box.border_title = "Collections › New collection"
-            yield Input(placeholder="Collection name (e.g. research)", id="new_collection_name")
-        yield Static("", id="footer_hints")
-
-    def on_mount(self) -> None:
-        self.query_one("#new_collection_name", Input).focus()
-        self._render_footer()
-
-    def _render_footer(self) -> None:
-        self.query_one("#footer_hints", Static).update(
-            _editor_hint_bar((("⏎", "Create"), ("Esc", "Cancel")))
-        )
-
-    @on(Input.Submitted, "#new_collection_name")
-    def _create(self, ev: Input.Submitted) -> None:
-        name = ev.value.strip()
-        if not name:
-            self.app.pop_screen()
-            return
-        from fnd.config import CollectionConfig, default_config_path, load, write_collection
-
-        app: FNDApp = self.app  # type: ignore[assignment]
-        if app._config and name in app._config.collections:  # type: ignore[attr-defined]
-            self.notify(f"Collection {name!r} already exists.", severity="warning")
-            return
-        write_collection(
-            config_path=default_config_path(),
-            name=name,
-            collection=CollectionConfig(sources=[]),
-        )
-        app._config = load()  # type: ignore[attr-defined]
-        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        self.app.pop_screen()
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-
 class RenameCollectionScreen(Screen[None]):
-    """Tiny one-Input prompt for renaming a collection.
+    """Tiny one-Input prompt for renaming a collection: a setting, set on Enter.
 
-    Implementation note: there is no atomic "rename collection" in
-    `fnd.config`, so this writes the new name (copy of the existing
-    collection) then deletes the old. Reindex follows because the
-    on-disk index keys chunks by collection name.
+    There is no atomic "rename collection" in `fnd.config`, so this writes the
+    new name (a copy of the collection), then deletes the old. The index keys
+    documents by name, so the new name reads not indexed until it is run.
     """
+
+    ROLE: ClassVar[Role] = Role.SETTING
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -3891,9 +3840,7 @@ class RenameCollectionScreen(Screen[None]):
 
     def on_mount(self) -> None:
         self.query_one("#new_collection_name", Input).focus()
-        self.query_one("#footer_hints", Static).update(
-            _editor_hint_bar((("⏎", "Save"), ("Esc", "Cancel")))
-        )
+        self.query_one("#footer_hints", Static).update(_editor_hint_bar(typing_hints()))
 
     @on(Input.Submitted, "#new_collection_name")
     def _save(self, ev: Input.Submitted) -> None:
@@ -3902,12 +3849,19 @@ class RenameCollectionScreen(Screen[None]):
             self.app.pop_screen()
             return
         from fnd.config import (
+            InvalidCollectionNameError,
             default_config_path,
             delete_collection,
             load,
+            validate_collection_name,
             write_collection,
         )
 
+        try:
+            validate_collection_name(new_name)
+        except InvalidCollectionNameError as e:
+            self.notify(str(e), severity="error", timeout=6)
+            return
         app: FNDApp = self.app  # type: ignore[assignment]
         # The file, not `app._config`: the collection is copied whole under the
         # new name, so a stale model drops or resurrects sources.
@@ -3953,46 +3907,14 @@ class RenameCollectionScreen(Screen[None]):
         )
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        # Pop twice — past Rename and the now-stale per-collection
-        # screen — before pushing the IndexerScreen.
+        # Past Rename and the now-stale per-collection screen.
         self.app.pop_screen()
         self.app.pop_screen()
-        # Confirmed like the other acts that empty the index: this drops the
-        # old name's documents and rebuilds from scratch, which on a large
-        # collection is minutes, from a single Enter in a text field.
-        self.app.push_screen(
-            RebuildConfirmScreen(
-                collection_name=new_name,
-                crumb="Rename",
-                body=(
-                    f"Renamed to {new_name!r}. Reindex it now?\n\n"
-                    f"The old name's documents are dropped and {new_name!r} is "
-                    "built from scratch, which takes as long as indexing it "
-                    "does. Until it finishes, this collection holds less than "
-                    "it does now.\n\n"
-                    "The config is already saved either way, and the files on "
-                    "disk are untouched. Skipping leaves the old name's "
-                    "documents in the index: nothing can reach them once the "
-                    "config no longer names that collection, and no later run "
-                    "removes them. Reindexing now is what clears them."
-                ),
-                confirm_label=f"Yes, reindex {new_name}",
-                # NOT "Cancel": the rename is already written, and only the
-                # reindex is on offer here. A user reading "Cancel" reasonably
-                # expects the rename undone, and it is not.
-                decline_label="No, leave the index for now",
-                on_confirm=lambda: self._drop_old_then_reindex(app, new_name),
-            )
-        )
+        self._drop_old(app, new_name)
 
-    def _drop_old_then_reindex(self, app: FNDApp, new_name: str) -> None:
-        """The old name's documents go before the new name's are built.
-
-        Nothing can reach them once the config no longer names them: Delete is
-        the only caller that drops by collection, and a rebuild only touches
-        the names the config still has. Sequential because tantivy takes one
-        writer, and threaded because the drop is seconds on a fragmented index.
-        """
+    def _drop_old(self, app: FNDApp, new_name: str) -> None:
+        """The old name's documents go now: nothing reaches them once the config
+        stops naming them. Threaded, because the drop is seconds on a fragmented index."""
         import contextlib
 
         from fnd.index import drop_collection
@@ -4005,7 +3927,10 @@ class RenameCollectionScreen(Screen[None]):
                 app.notify(
                     f"{old!r} could not be dropped from the index: {error}", severity="error"
                 )
-            app._indexer.reindex_with_warning(new_name, rebuild=True)  # type: ignore[attr-defined]
+            else:
+                app._ledger.forget(old)  # type: ignore[attr-defined]
+            app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
+            announce_saved(app, [new_name])
 
         _defaults = getattr(getattr(app, "_config", None), "defaults", None)
 
@@ -4034,6 +3959,8 @@ class RenameCollectionScreen(Screen[None]):
 class DeleteCollectionScreen(Screen[None]):
     """Confirm + execute deletion of a collection, including dropping
     its chunks from the on-disk index."""
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -4104,7 +4031,7 @@ class DeleteCollectionScreen(Screen[None]):
         enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4206,6 +4133,7 @@ class DeleteCollectionScreen(Screen[None]):
             # Two screens pop and the row is gone; nothing said the act had
             # happened, which on an irreversible one is the moment to say it.
             app.notify(f"{self._name!r} deleted. The files on disk are untouched.")
+            app._ledger.forget(self._name)  # type: ignore[attr-defined]
         if self._default_moved:
             app.notify(
                 f"{self._name!r} was your default collection. Searches now cover every one.",
@@ -4242,6 +4170,8 @@ class CacheMaintenanceConfirm(Screen[None]):
     Destructive variants use ``$error`` border; reversible variants
     use ``$warning``.
     """
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -4296,10 +4226,10 @@ class CacheMaintenanceConfirm(Screen[None]):
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
-        enter = open_confirm_list(self, land_on="no" if self._irreversible else "")
+        enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4342,6 +4272,8 @@ class UpdateAllConfirm(Screen[None]):
     when that completes, advances to the next. Phase F adds a
     proper aggregate progress modal — for now we delegate to
     sequential per-collection runs."""
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -4442,10 +4374,10 @@ class UpdateAllConfirm(Screen[None]):
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
-        enter = open_confirm_list(self)
+        enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4525,6 +4457,8 @@ class StructuredPdfConfirmScreen(Screen[None]):
     decides install vs uninstall copy. Confirming pushes the progress
     modal wired in step 6b.
     """
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -4634,10 +4568,10 @@ class StructuredPdfConfirmScreen(Screen[None]):
         )
 
     def on_mount(self) -> None:
-        enter = open_confirm_list(self)
+        enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -4710,20 +4644,18 @@ def _indexing_now(app: FNDApp) -> str | None:
 
 
 class UnsavedChangesScreen(Screen[None]):
-    """Save, discard, or stay: for a screen holding work that is not on disk.
+    """Save, discard, or stay: asked by a document the user is leaving unsaved."""
 
-    Esc on an editing screen asks rather than throwing the work away, so a
-    user who cannot lose work does not have to know which key saves.
-    """
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape,left", "back", "Keep editing", show=False),
+        Binding("escape,left", "back", KEEP_EDITING, show=False),
         Binding("up,k", "cursor(-1)", show=False),
         Binding("down,j", "cursor(1)", show=False),
         Binding("enter", "activate", show=False),
         # The question is "are you sure you want to quit"; `q` reaching the
         # app's quit through it would answer yes by pressing it again.
-        Binding("q", "back", "Keep editing", show=False, priority=True),
+        Binding("q", "back", KEEP_EDITING, show=False, priority=True),
     ]
 
     CSS = chrome_css("UnsavedChangesScreen", confirm=True)
@@ -4731,51 +4663,54 @@ class UnsavedChangesScreen(Screen[None]):
     def __init__(
         self,
         *,
-        what: str,
-        on_save: Callable[[], None] | None,
-        on_leave: Callable[[], None] | None = None,
-        leave_label: str = "Discard changes",
+        subject: str,
+        verb: str,
+        on_save: Callable[[], object] | None,
+        on_discard: Callable[[], object],
         blocked: str = "",
     ) -> None:
         super().__init__()
-        self._what = what
-        # A save the screen below has already refused loops: it repaints
-        # nothing, so pressing the default again looks like a dead key.
+        self._subject = subject
+        self._verb = verb
+        self._on_save = on_save
+        self._on_discard = on_discard
         self._blocked = blocked
-        self._on_save = None if blocked else on_save
-        self._leave_action = on_leave
-        self._leave_label = leave_label
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
             box.border_title = "Unsaved changes"
-            # Subject-agnostic: the subjects are a mix of singular and plural
-            # ("this source", "these filters"), and a sentence carrying its own
-            # verb would read "These filters has changes that are not saved."
-            yield Static(f"Unsaved changes to {self._what}.", classes="warning")
+            # Subject-agnostic: the subjects mix singular and plural.
+            yield Static(f"Unsaved changes to {self._subject}.", classes="warning")
             if self._blocked:
                 yield Static(f"Cannot save yet: {self._blocked}", classes="warning")
-            # Save is offered only where the work is on the screen below this
-            # one. A form buried under another editor cannot be saved from
-            # here: its own save pops whatever is on top, which is not it.
             options = (
-                [Option(Text("Save changes", style="bold"), id="save")] if self._on_save else []
+                [Option(Text(f"Save and {self._verb}", style="bold"), id="save")]
+                if self._on_save
+                else []
             )
-            options += [Option(self._leave_label, id="discard"), Option("Keep editing", id="stay")]
+            options += [
+                Option(f"Discard and {self._verb}", id="discard"),
+                Option(KEEP_EDITING, id="stay"),
+            ]
             yield ConfirmList(*options, id="confirm_list")
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
-        # Always the row that changes nothing. This dialog is reached by Esc,
-        # which the editor's footer offers as a way OUT, so landing on "Save
-        # changes" put a write one Enter from a key that means the opposite.
+        # Always the row that changes nothing: Esc opened this, and Esc means out.
         open_confirm_list(self, land_on="stay")
         from fnd.tui.app import render_hint_bar
 
         # No anchors: `q` means Keep editing here and `:` is ignored.
         self.query_one("#footer_hints", Static).update(
-            render_hint_bar((), (("↑↓", "Choose"), ("⏎", "Select"), ("Esc", "Keep editing")))
+            render_hint_bar((), (("↑↓", "Choose"), ("⏎", "Select"), ("Esc", KEEP_EDITING)))
         )
+
+    def option_labels(self) -> list[str]:
+        lst = self.query_one("#confirm_list", OptionList)
+        return [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+
+    def body_text(self) -> str:
+        return " ".join(str(w.render()) for w in self.query(".warning"))
 
     def action_cursor(self, direction: int) -> None:
         lst = self.query_one("#confirm_list", OptionList)
@@ -4792,84 +4727,11 @@ class UnsavedChangesScreen(Screen[None]):
 
     @on(OptionList.OptionSelected, "#confirm_list")
     def _chosen(self, ev: OptionList.OptionSelected) -> None:
-        choice = ev.option.id
         self.app.pop_screen()
-        if choice == "save" and self._on_save is not None:
-            # The editor's own save pops it, and reports its own failure.
+        if ev.option.id == "save" and self._on_save is not None:
             self._on_save()
-        elif choice == "discard":
-            with contextlib.suppress(Exception):
-                if self._leave_action is not None:
-                    self._leave_action()
-                else:
-                    self.app.pop_screen()
-
-
-def _leave_or_confirm(
-    screen: Screen[None], *, dirty: bool, what: str, on_save: Callable[[], None]
-) -> None:
-    """Leave, or ask first. Unsaved work never leaves without being offered."""
-    if not dirty:
-        screen.app.pop_screen()
-        return
-    screen.app.push_screen(
-        UnsavedChangesScreen(what=what, on_save=on_save, blocked=save_blocked_on(screen))
-    )
-
-
-def save_blocked_on(screen: object) -> str:
-    """Why the screen cannot save what it is holding, or "".
-
-    A screen answers by exposing ``save_blocked``; anything else can save.
-    """
-    ask = getattr(screen, "save_blocked", None)
-    if not callable(ask):
-        return ""
-    try:
-        return str(ask() or "")
-    except Exception:
-        return ""
-
-
-def unsaved_on_stack(
-    screens: Sequence[object],
-) -> tuple[str, Callable[[], None] | None, str] | None:
-    """What the SCREEN STACK would lose, topmost holder first, and why saving
-    it here is not on offer.
-
-    Every screen is asked, not only the top one: the filter browser is only
-    ever pushed on top of the source form, so a dirty form can sit under a
-    clean browser. The saver comes back only for the topmost screen: a form
-    buried under another editor cannot be saved from a modal, because its own
-    save pops whatever is on top of it.
-    """
-    for depth, screen in enumerate(reversed(list(screens))):
-        answer = unsaved_on(screen)
-        if answer is not None:
-            what, save = answer
-            if depth:
-                return what, None, "the screen holding it is behind this one"
-            return what, save, save_blocked_on(screen)
-    return None
-
-
-def unsaved_on(screen: object) -> tuple[str, Callable[[], None]] | None:
-    """What a screen would lose if it were left now, and how to save it.
-
-    One seam so `q` can ask the same question Esc does. A screen answers by
-    exposing ``unsaved_work``; anything else has nothing to lose.
-    """
-    ask = getattr(screen, "unsaved_work", None)
-    if not callable(ask):
-        return None
-    try:
-        answer = ask()
-    except Exception:
-        return None
-    if not isinstance(answer, tuple) or len(answer) != 2:
-        return None
-    what, save = answer
-    return str(what), cast("Callable[[], None]", save)
+        elif ev.option.id == "discard":
+            self._on_discard()
 
 
 class RebuildConfirmScreen(Screen[None]):
@@ -4885,6 +4747,8 @@ class RebuildConfirmScreen(Screen[None]):
     One screen, two callers: the wording differs because the acts do, but a
     second class would be a second dialog to keep in step.
     """
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -4976,12 +4840,14 @@ class DeleteSourceScreen(Screen[None]):
     Triggered by ``Ctrl+D`` inside :class:`SourceFormScreen` (only when
     editing an existing source). The source's path is dropped from
     ``[collections.<name>.sources]`` via :func:`fnd.config.write_collection`.
-    Reindex of the collection follows because the source set changed.
+    Nothing is indexed: the collection then reads outdated.
 
     The source is found by its path in the file as it is at each step, never by
     row index into ``app._config``: any reload replaces that model, and
     ``write_collection`` writes the whole collection table back.
     """
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -4993,11 +4859,18 @@ class DeleteSourceScreen(Screen[None]):
     CSS = chrome_css("DeleteSourceScreen", confirm=True)
 
     def __init__(
-        self, *, collection_name: str, source_index: int, source_path: str | None = None
+        self,
+        *,
+        collection_name: str,
+        source_index: int,
+        source_path: str | None = None,
+        discarding: bool = False,
     ) -> None:
         super().__init__()
         self._collection_name = collection_name
         self._source_index = source_index
+        # The form closes with the source, so its unsaved edits go too.
+        self._discarding = discarding
         # None pins whichever source sits at `source_index` when the dialog opens.
         self._source_path = source_path
 
@@ -5048,13 +4921,15 @@ class DeleteSourceScreen(Screen[None]):
                     if len(cfg.collections[name].sources) > 1
                     else "It is the only source, so the collection is left empty."
                 )
+                discarded = (
+                    "\nUnsaved edits to this source are discarded too." if self._discarding else ""
+                )
                 yield Static(
                     f"Remove this source from {name!r}?\n"
                     f"Path: {self._source_path}\n\n"
                     "The files on disk are untouched.\n"
-                    f"{name!r} is rebuilt straight afterwards, which "
-                    "takes as long as indexing it does and drops the chunks only "
-                    f"this source reached. {shared}",
+                    f"{name!r} then reads outdated; an Update drops the files only "
+                    f"this source reached. {shared}{discarded}",
                     classes="warning",
                 )
                 yield ConfirmList(
@@ -5068,7 +4943,7 @@ class DeleteSourceScreen(Screen[None]):
         enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", CANCEL)))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -5098,18 +4973,6 @@ class DeleteSourceScreen(Screen[None]):
             self.app.pop_screen()
             return
         col = cfg.collections[self._collection_name]
-        busy = _indexing_now(app)
-        if busy is not None:
-            # The dialog promises the collection is rebuilt straight
-            # afterwards. Mid-run that rebuild is refused and dropped, so the
-            # removed source's files stay searchable and the promise is false.
-            self.notify(
-                f"Indexing {busy!r} is still running, and removing a source "
-                "rebuilds the collection. Cancel it or let it finish first.",
-                severity="warning",
-                timeout=8,
-            )
-            return
         del col.sources[index]
         try:
             write_collection(
@@ -5122,18 +4985,10 @@ class DeleteSourceScreen(Screen[None]):
             return
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        # Pop DeleteSourceScreen AND the now-stale SourceFormScreen
-        # below it — land back on the Sources screen — then trigger
-        # the reindex so the IndexerScreen mounts on the right
-        # parent.
+        # This dialog and the now-stale form below it, back to Sources.
         self.app.pop_screen()
         self.app.pop_screen()
-        import contextlib
-
-        with contextlib.suppress(Exception):
-            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
-                self._collection_name, rebuild=True
-            )
+        announce_saved(app, [self._collection_name])
 
 
 class CloneSourcePickCollectionScreen(Screen[None]):
@@ -5143,6 +4998,8 @@ class CloneSourcePickCollectionScreen(Screen[None]):
     clone from a collection into itself. Enter pushes
     :class:`CloneSourcePickSourceScreen` for that collection.
     """
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -5184,7 +5041,7 @@ class CloneSourcePickCollectionScreen(Screen[None]):
         self.query_one("#clone_list", OptionList).focus()
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Pick"), ("Esc", "Cancel")))
+            _hint_bar(app, (("⏎", "Pick"), ("Esc", CANCEL)))
         )
 
     def action_back(self) -> None:
@@ -5224,6 +5081,8 @@ class CloneSourcePickSourceScreen(Screen[None]):
     :func:`fnd.config.clone_source` and pops back to the Sources screen
     of the target collection. Triggers a reindex of the target.
     """
+
+    ROLE: ClassVar[Role] = Role.CONFIRM
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Cancel", show=False),
@@ -5279,7 +5138,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
         self.query_one("#clone_list", OptionList).focus()
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Clone"), ("Esc", "Cancel")))
+            _hint_bar(app, (("⏎", "Clone"), ("Esc", CANCEL)))
         )
 
     def action_back(self) -> None:
@@ -5340,22 +5199,10 @@ class CloneSourcePickSourceScreen(Screen[None]):
 
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        self.notify(
-            f"Cloned source from {self._source_coll!r} into {self._target!r}. "
-            f"Reindexing {self._target}…",
-            title="Clone source",
-            timeout=4,
-        )
-        # Pop both: step-2 picker, then step-1 picker — then trigger
-        # the reindex so the IndexerScreen mounts on the right parent.
+        # Both pickers, back to the collection.
         self.app.pop_screen()
         self.app.pop_screen()
-        import contextlib
-
-        with contextlib.suppress(Exception):
-            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
-                self._target, rebuild=True
-            )
+        announce_saved(app, [self._target])
 
 
 # ── Public entry points used by the main app ────────────────────────
@@ -5579,6 +5426,8 @@ class StillFlatDrillIn(Screen[None]):
     forced on; the cache short-circuits already-textured PDFs so the
     cost is roughly one texturising pass per still-flat PDF."""
 
+    ROLE: ClassVar[Role] = Role.VIEW
+
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Back", show=False),
         Binding("up,k", "move(-1)", show=False),
@@ -5649,7 +5498,7 @@ class StillFlatDrillIn(Screen[None]):
         )
         with _ctx.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
-                _hint_bar(app, (*row_keys, ("Esc", "Back")))
+                _hint_bar(app, (*row_keys, leave_hint(with_left=False)))
             )
 
     def _refresh(self) -> None:
@@ -5879,17 +5728,12 @@ class StillFlatDrillIn(Screen[None]):
         self.app.pop_screen()
 
 
-class FilterTextScreen(Screen[None]):
-    """Edit a filter set as one expression.
+class FilterTextScreen(PartScreen):
+    """Edit a filter set as one expression: a part of the browser it opens from.
 
     The rows and this text are two views of the same set: a clause typed here
-    that matches a row's shape becomes that row when saved.
+    that matches a row's shape becomes that row when Esc carries it back.
     """
-
-    BINDINGS = [  # noqa: RUF012
-        Binding("escape", "back", "Back", show=False),
-        Binding("ctrl+s", "save_close", show=False),
-    ]
 
     CSS = """
     FilterTextScreen { background: $surface; }
@@ -5930,14 +5774,15 @@ class FilterTextScreen(Screen[None]):
     def on_mount(self) -> None:
         self.query_one("#filter_text", TextArea).focus()
         self._refresh_status()
-        self.query_one("#footer_hints", Static).update(
-            # Applies, never saves: both editors hand back to the filter
-            # browser, which decides whether anything reaches disk.
-            _editor_hint_bar(((COMMIT_KEY, "Apply"), ("Esc", "Cancel")))
-        )
+        self.on_refused()
+
+    def on_refused(self) -> None:
+        esc = ("Esc", CANCEL) if self.refused else leave_hint(with_left=False)
+        self.query_one("#footer_hints", Static).update(_editor_hint_bar((esc,)))
 
     @on(TextArea.Changed, "#filter_text")
     def _on_changed(self, _ev: TextArea.Changed) -> None:
+        self.edited()
         self._refresh_status()
 
     def _parsed(self) -> tuple[Any, Any]:
@@ -5969,37 +5814,17 @@ class FilterTextScreen(Screen[None]):
             return
         status.update(f"✓ {rows}" if rows else "✓ no filters")
 
-    def action_back(self) -> None:
+    def hand_back(self) -> str:
         from fnd.filters.text_form import render
 
-        typed = self.query_one("#filter_text", TextArea).text.strip()
-        _leave_or_confirm(
-            self,
-            dirty=typed != render(self._spec).strip(),
-            what="this filter text",
-            on_save=self.action_save_close,
-        )
-
-    def save_blocked(self) -> str:
-        """Why Apply would be refused, or "".
-
-        The leaving prompt reads this, as the source form's does, so it never
-        offers to save text the screen has already rejected.
-        """
-        _spec, err = self._parsed()
-        return f"col {err.column}: {err.message}" if err is not None else ""
-
-    def action_save_close(self) -> None:
+        if self.query_one("#filter_text", TextArea).text.strip() == render(self._spec).strip():
+            return ""
         spec, err = self._parsed()
         if err is not None or spec is None:
-            # The status line may already be showing this error, in which case
-            # refreshing it changes nothing on screen and the key reads dead:
-            # measured at 14 identical pane captures over 3.5 seconds.
-            self._refresh_status()
-            self.app.notify(f"Not applied: {self.save_blocked()}", severity="error", timeout=4)
-            return
+            return f"col {err.column}: {err.message}" if err is not None else "not a filter set"
         self._on_save(spec)
-        self.app.pop_screen()
+        self._spec = spec
+        return ""
 
 
 def _protection_dropped(before: Any, after: Any) -> str:
@@ -6175,17 +6000,12 @@ _RULE_HELP = (
 )
 
 
-class RuleTextScreen(Screen[None]):
-    """One typed filter rule, validated as you type.
+class RuleTextScreen(PartScreen):
+    """One typed filter rule, validated as you type: a part of the browser.
 
     Separate from :class:`FilterTextScreen`, which edits the whole set: a row
     that opens the entire expression to change one clause is a trap.
     """
-
-    BINDINGS = [  # noqa: RUF012
-        Binding("escape", "back", "Back", show=False),
-        Binding("ctrl+s", "save_close", show=False),
-    ]
 
     CSS = """
     RuleTextScreen { background: $surface; }
@@ -6230,14 +6050,15 @@ class RuleTextScreen(Screen[None]):
     def on_mount(self) -> None:
         self.query_one("#rule_text", TextArea).focus()
         self._refresh_status()
-        self.query_one("#footer_hints", Static).update(
-            # Applies, never saves: both editors hand back to the filter
-            # browser, which decides whether anything reaches disk.
-            _editor_hint_bar(((COMMIT_KEY, "Apply"), ("Esc", "Cancel")))
-        )
+        self.on_refused()
+
+    def on_refused(self) -> None:
+        esc = ("Esc", CANCEL) if self.refused else leave_hint(with_left=False)
+        self.query_one("#footer_hints", Static).update(_editor_hint_bar((esc,)))
 
     @on(TextArea.Changed, "#rule_text")
     def _on_changed(self, _ev: TextArea.Changed) -> None:
+        self.edited()
         self._refresh_status()
 
     def _parsed(self) -> Any:
@@ -6261,16 +6082,16 @@ class RuleTextScreen(Screen[None]):
         # exclude nothing.
         status.update(f"✓ reads as valid: it will be tested against {scope}")
 
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-    def action_save_close(self) -> None:
+    def hand_back(self) -> str:
+        text = self.query_one("#rule_text", TextArea).text.strip()
+        if text == self._value.strip():
+            return ""
         _pred, err = self._parsed()
         if err is not None:
-            self._refresh_status()
-            return
-        self._on_save(self.query_one("#rule_text", TextArea).text.strip())
-        self.app.pop_screen()
+            return f"col {err.column}: {err.message}"
+        self._on_save(text)
+        self._value = text
+        return ""
 
 
 #: Spec fields as the screens name them, so a message reads like the UI. Two
@@ -6331,7 +6152,6 @@ class FilterBrowserScreen(Screen[None]):
         # settings screen. Without it the box was a one-way door: narrow the
         # tree, then have no key that leaves the Input for what you narrowed.
         Binding("down", "tree_from_input", show=False),
-        Binding("ctrl+s", "save_close", show=False),
         Binding("t", "edit_text", show=False),
         # The sidebar's own clear gesture, not a second letter for the same
         # act: one pane cleared on `X` from anywhere, the other on `c`, and a
@@ -6340,9 +6160,6 @@ class FilterBrowserScreen(Screen[None]):
         # Not ctrl+y: the app binds that to "copy query command" with
         # priority, so a screen binding there never fires.
         Binding("y", "copy_text", show=False),
-        # `?` does not come back here: it lands on the settings menu, taking
-        # the unsaved edit with it. `:` returns intact, so it is left alone.
-        Binding("question_mark", "help_if_saved", show=False),
     ]
 
     CSS = """
@@ -6388,28 +6205,19 @@ class FilterBrowserScreen(Screen[None]):
         globs: list[str] | None = None,
         excludes: list[str] | None = None,
         inherited: tuple[Any, bool, bool] | None = None,
-        save_note: str = "",
         no_tags_note: str = "",
         unindexed_note: str = "",
-        commit_label: str = "Save",
-        on_save: Callable[[Any, bool, bool], None],
+        on_commit: Callable[[Any, bool, bool], None],
     ) -> None:
         super().__init__()
         # What this source falls back to with nothing of its own. `None` on the
         # global defaults, which inherit from nothing.
         self._inherited = inherited
-        # What Ctrl+S does to the index. The two routes differ: a source save
-        # reindexes its collection, the defaults save reindexes nothing.
-        self._save_note = save_note
         # A branch that is simply absent reads as a missing feature, and the
         # two routes are silent for different reasons, as are "nothing is
         # indexed yet" and "indexed, and none of it is tagged".
         self._no_tags_note = no_tags_note
         self._unindexed_note = unindexed_note
-        # And what it does at all. On a source this screen stages into the
-        # form, which owns the write, so calling it "Save" would promise
-        # something only the form does.
-        self._commit_label = commit_label
         # Include globs restrict the file types too, but they cannot be shown
         # as ticked kinds: saving them back as kinds would widen a glob that
         # names one suffix of a multi-suffix type. Say so instead.
@@ -6439,7 +6247,8 @@ class FilterBrowserScreen(Screen[None]):
         self._sampled_spec = spec
         self._scanning = sample_provider is not None
         self._query = ""
-        self._on_save = on_save
+        # Writes the config on the global set; hands the set to the form on a source.
+        self._on_commit = on_commit
 
     def compose(self) -> ComposeResult:
         from fnd.filters.tree_model import LEGEND
@@ -6572,17 +6381,16 @@ class FilterBrowserScreen(Screen[None]):
         tree = self.query_one("#filter_tree", ToggleTree)
         on_bar = isinstance(self.focused, ClearFiltersBar)
         enter = "Return to defaults" if on_bar else tree.enter_label()
-        # Esc, and ← where it leaves, clear a row filter before they leave.
-        esc = "Clear" if search.value else "Leave"
         left, right = ("Leave", None) if on_bar else tree.arrow_labels()
         arrows: tuple[tuple[str, str], ...] = (
             (*((("→", right),) if right else ()),)
             if left == "Leave"
             else ((("←/→", f"{left}/{right}") if right else ("←", left)),)
         )
-        leave = ("Esc/←", esc) if left == "Leave" else ("Esc", esc)
+        # Esc, and ← where it leaves, clear a row filter before they leave.
+        leave = leave_hint(clearing=bool(search.value), with_left=left == "Leave")
         cluster: tuple[tuple[str, str], ...] = (
-            (("⏎", "Rows"), ("Esc", esc))
+            (("⏎", "Rows"), leave_hint(clearing=bool(search.value), with_left=False))
             if typing
             else (
                 *((("⏎", enter),) if enter else ()),
@@ -6594,11 +6402,8 @@ class FilterBrowserScreen(Screen[None]):
                     if self._can_return_to_defaults()
                     else ()
                 ),
-                (COMMIT_KEY, self._commit_label),
+                *self._role_hints(),
                 ("y", "Copy"),
-                # Esc asks; it does not discard. Naming one of the answers on
-                # the key that opens the question invites Esc then Enter, which
-                # loses a filter set.
                 leave,
             )
         )
@@ -6818,8 +6623,6 @@ class FilterBrowserScreen(Screen[None]):
         for clash in self._spec.impossible_bounds():
             # Decidable without a corpus, and the outcome is an empty index.
             head.append(f"nothing can match: {clash}")
-        if self._save_note:
-            head.append(self._save_note)
         if self._query:
             head.append(f"showing rows matching {self._query!r}")
         if self._scanning:
@@ -6845,12 +6648,6 @@ class FilterBrowserScreen(Screen[None]):
 
     def _dirty(self) -> bool:
         return (self._spec, self._gitignore, self._fndignore) != self._opened_with
-
-    def action_help_if_saved(self) -> None:
-        if self._dirty():
-            self.notify(f"Unsaved filter changes: {COMMIT_KEY} to save, Esc to discard, then ?")
-            return
-        self.app.action_show_help()  # type: ignore[attr-defined]
 
     def action_copy_text(self) -> None:
         """Copy the expression. The app owns the mouse, so a terminal
@@ -6903,6 +6700,12 @@ class FilterBrowserScreen(Screen[None]):
             FilterTextScreen(title=f"{self._title} (text)", spec=self._spec, on_save=_save)
         )
 
+    def _role_hints(self) -> tuple[tuple[str, str], ...]:
+        return ()
+
+    def request_leave(self) -> None:
+        raise NotImplementedError
+
     def action_back(self) -> None:
         # Esc clears a narrowing before it leaves, as it does on the settings
         # list: leaving straight from a filtered tree loses the rows silently.
@@ -6911,26 +6714,51 @@ class FilterBrowserScreen(Screen[None]):
             search.value = ""
             self.query_one("#filter_tree", ToggleTree).focus()
             return
-        _leave_or_confirm(
-            self, dirty=self._dirty(), what="these filters", on_save=self.action_save_close
-        )
+        self.request_leave()
 
-    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
-        if not self._dirty():
-            return None
-        return "these filters", self.action_save_close
 
-    def action_save_close(self) -> None:
-        if not self._dirty():
-            # The exit guard calls this state clean and leaves without asking;
-            # saving anyway would report "Filters saved." over a byte-identical
-            # config and reindex, a costly answer to a question nobody asked.
-            self.app.notify("No changes to save")
-            self.app.pop_screen()
-            return
+class DefaultFiltersScreen(FilterBrowserScreen, DocumentScreen):
+    """The global default filters: a document, saved with ^s, indexing nothing."""
+
+    ROLE: ClassVar[Role] = Role.DOCUMENT
+    SUBJECT = "the index filters"
+    # Textual scopes a screen's CSS to its own class name, so the base's must be re-keyed.
+    CSS = FilterBrowserScreen.CSS.replace("FilterBrowserScreen", "DefaultFiltersScreen")
+
+    def _role_hints(self) -> tuple[tuple[str, str], ...]:
+        return (save_hint(),)
+
+    def request_leave(self) -> None:
+        DocumentScreen.request_leave(self)
+
+    def is_dirty(self) -> bool:
+        return self._dirty()
+
+    def write(self) -> str:
         try:
-            self._on_save(self._spec, self._gitignore, self._fndignore)
+            self._on_commit(self._spec, self._gitignore, self._fndignore)
         except Exception as e:
-            self.app.notify(_summarise(e), severity="error", title="Save failed")
-            return
-        self.app.pop_screen()
+            return _summarise(e)
+        self._opened_with = (self._spec, self._gitignore, self._fndignore)
+        return ""
+
+    def after_save(self) -> None:
+        cfg = getattr(self.app, "_config", None)
+        announce_saved(self.app, sorted(cfg.collections) if cfg else [])  # type: ignore[arg-type]
+
+
+class SourceFiltersScreen(FilterBrowserScreen, PartScreen):
+    """One source's filters: a part of its source form, which owns the save."""
+
+    ROLE: ClassVar[Role] = Role.PART
+
+    CSS = FilterBrowserScreen.CSS.replace("FilterBrowserScreen", "SourceFiltersScreen")
+
+    def request_leave(self) -> None:
+        PartScreen.request_leave(self)
+
+    def hand_back(self) -> str:
+        # Committing rebuilds the overrides, dropping any written equal to its default.
+        if self._dirty():
+            self._on_commit(self._spec, self._gitignore, self._fndignore)
+        return ""

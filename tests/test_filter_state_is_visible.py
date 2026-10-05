@@ -21,7 +21,7 @@ import pytest
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.tui import FNDApp
-from fnd.tui.settings_screen import FilterBrowserScreen
+from fnd.tui.settings_screen import DefaultFiltersScreen
 from fnd.tui.widgets.toggle_tree import ToggleTree
 
 
@@ -54,13 +54,13 @@ _SAMPLE = SourceSample(kinds={"md": 3, "pdf": 1}, tags={"frontmatter": {"no_inde
 
 async def _tree(app: FNDApp, pilot: object, spec: FilterSpec) -> ToggleTree:
     app.push_screen(
-        FilterBrowserScreen(
+        DefaultFiltersScreen(
             title="Index filters",
             spec=spec,
             gitignore=True,
             fndignore=True,
             sample_provider=lambda _spec: _SAMPLE,
-            on_save=lambda *_a: None,
+            on_commit=lambda *_a: None,
         )
     )
     for _ in range(25):
@@ -236,7 +236,7 @@ async def test_a_collapsed_screen_shows_colour(tmp_index_dir: Path) -> None:
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
         app.push_screen(
-            FilterBrowserScreen(
+            DefaultFiltersScreen(
                 title="Index filters",
                 spec=FilterSpec(exclude_tags={"frontmatter": ("no_index",)}),
                 gitignore=True,
@@ -246,7 +246,7 @@ async def test_a_collapsed_screen_shows_colour(tmp_index_dir: Path) -> None:
                 sample_provider=lambda _spec: SourceSample(
                     kinds={"md": 3}, tags={"frontmatter": {"no_index": 1}}
                 ),
-                on_save=lambda *_a: None,
+                on_commit=lambda *_a: None,
             )
         )
         for _ in range(25):

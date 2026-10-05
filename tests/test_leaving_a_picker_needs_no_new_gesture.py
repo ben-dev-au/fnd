@@ -1,9 +1,7 @@
 """The gestures that leave a settings editor work on every settings editor.
 
-The tree picker commits live and the filter browser holds its edits, both
-right for what they edit. What was wrong is that `^s` and `←`, learnt on every
-other screen, silently did nothing on the picker: same widget, same rows, a
-dead key.
+The tree picker applies each toggle, so leaving is all there is to do: Esc and
+←, learnt on every other screen, leave it, and no save key is offered.
 """
 
 from __future__ import annotations
@@ -43,7 +41,7 @@ async def _picker(app: FNDApp, pilot: object) -> list[list[str]]:
     return saved
 
 
-@pytest.mark.parametrize("key", ["escape", COMMIT_KEY.replace("^", "ctrl+"), "left"])
+@pytest.mark.parametrize("key", ["escape", "left"])
 @pytest.mark.asyncio
 async def test_every_leaving_gesture_leaves(tmp_index_dir: Path, key: str) -> None:
     app = FNDApp(index_dir=tmp_index_dir)
@@ -80,4 +78,6 @@ async def test_the_footer_names_the_keys_that_work(tmp_index_dir: Path) -> None:
             "".join(s.text for s in strip) for strip in app.screen._compositor.render_strips()
         )
 
-    assert COMMIT_KEY in on_screen, on_screen.splitlines()[-1]
+    footer = on_screen.splitlines()[-1]
+    assert "Back" in footer, footer
+    assert COMMIT_KEY not in footer, footer
