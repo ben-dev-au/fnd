@@ -40,14 +40,14 @@ def test_an_exclude_needs_an_update_and_names_it(tmp_path: Path) -> None:
     before = _now(_config(tmp_path))
     verdict = compare(_now(_config(tmp_path, excludes=["build/**"])), before)
     assert verdict.state is State.NEEDS_UPDATE
-    assert verdict.reasons == ("excludes",)
+    assert verdict.reasons == ("Excludes",)
 
 
 def test_an_index_filter_needs_an_update(tmp_path: Path) -> None:
     """Index-time filters are selection: an Update prunes what they now drop."""
     before = _now(_config(tmp_path))
     after = _now(_config(tmp_path, filters={"exclude_tags": ["draft"]}))
-    assert compare(after, before).reasons == ("index filters",)
+    assert compare(after, before).reasons == ("Index filters",)
 
 
 def test_an_extra_tag_key_needs_a_rebuild(tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_an_extra_tag_key_needs_a_rebuild(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     verdict = compare(_now(cfg, tag_frontmatter_keys=["Course"]), _now(cfg))
     assert verdict.state is State.NEEDS_REBUILD
-    assert verdict.reasons == ("extra tag keys",)
+    assert verdict.reasons == ("Extra frontmatter tag keys",)
 
 
 def test_a_tag_key_differing_only_in_case_is_no_change(tmp_path: Path) -> None:
@@ -115,7 +115,9 @@ def test_a_summary_names_the_state_and_the_reasons(tmp_path: Path) -> None:
     """The marker's description reads as one phrase."""
     before = _now(_config(tmp_path))
     after = _now(_config(tmp_path, excludes=["b/**"], follow_symlinks=True))
-    assert compare(after, before).summary == "needs update (excludes, follow symlinks changed)"
+    assert compare(after, before).summary == (
+        "Outdated: Excludes and Follow symlinks changed since the last index"
+    )
 
 
 def _ledger_dir(tmp_path: Path) -> Path:
@@ -209,13 +211,13 @@ def test_a_cli_run_before_the_first_launch_does_not_block_adoption(tmp_path: Pat
 
 
 def test_a_new_source_reads_as_a_source_list_change(tmp_path: Path) -> None:
-    """The reason reads as one phrase: "(the source list changed)"."""
+    """Reasons are named as Settings names them: a source added changes Sources."""
     before = _now(_config(tmp_path))
     cfg = _config(tmp_path)
     (tmp_path / "more").mkdir()
     cfg.collections["notes"].sources.append(SourceConfig(path=tmp_path / "more"))
     verdict = compare(_now(cfg), before)
-    assert verdict.summary == "needs update (the source list changed)"
+    assert verdict.summary == "Outdated: Sources changed since the last index"
 
 
 def test_a_replace_within_one_clock_tick_is_still_read(tmp_path: Path) -> None:
@@ -256,3 +258,16 @@ def test_an_existing_index_is_still_adopted(tmp_path: Path) -> None:
     _ensure_index(tmp_path / "idx")
     adopted = Ledger(tmp_path / "idx").adopt(_config(tmp_path), is_empty=lambda _n: False)
     assert adopted == ["notes"]
+
+
+def test_each_state_reads_as_a_state() -> None:
+    """The words name what the index is, not the work it wants."""
+    from fnd.index_freshness import Verdict
+
+    assert Verdict(State.NEEDS_UPDATE).label == "Outdated"
+    assert Verdict(State.NEEDS_REBUILD).label == "Tags outdated"
+    assert Verdict(State.NOT_INDEXED).label == "Not indexed"
+    three = Verdict(State.NEEDS_UPDATE, ("Path", "Excludes", "Index filters"))
+    assert (
+        three.summary == "Outdated: Path, Excludes and Index filters changed since the last index"
+    )

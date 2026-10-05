@@ -150,7 +150,7 @@ async def test_a_global_filter_save_writes_and_indexes_nothing(
     assert "draft" in cast("Any", load(config_file).defaults.filters.exclude_tags)["frontmatter"]
     assert started == []
     assert UpdateAllConfirm.__name__ not in names
-    assert any("needs update" in m and "press u" in m for m in seen), seen
+    assert any("is outdated" in m and "press u" in m for m in seen), seen
 
 
 @pytest.mark.asyncio

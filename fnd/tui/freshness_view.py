@@ -19,7 +19,10 @@ if TYPE_CHECKING:
 #: One cell, and used nowhere else in the app; `⚠` already means a missing source.
 MARKER = "↻"
 #: The theme's warning colour, undimmed so it survives the dimmed parent row.
-MARKER_STYLE = Style(color="#e0af68", dim=False)
+MARKER_COLOUR = "#e0af68"
+MARKER_STYLE = Style(color=MARKER_COLOUR, dim=False)
+#: The state badge on a Settings row, in the marker's colour.
+BADGE_STYLE = f"bold {MARKER_COLOUR}"
 
 
 def verdict_for(app: FNDApp, name: str) -> Verdict:
@@ -36,11 +39,15 @@ def sidebar_value(verdict: Verdict, n_sources: int) -> tuple[str, str]:
     compact = f"{n_sources} src"
     if verdict.state is State.NOT_INDEXED:
         return "not indexed", "new"
-    if verdict.state is State.NEEDS_UPDATE:
-        return f"{full} · {MARKER} update", f"{compact} {MARKER}"
-    if verdict.state is State.NEEDS_REBUILD:
-        return f"{full} · {MARKER} rebuild", f"{compact} {MARKER}"
-    return full, compact
+    if verdict.state is State.CURRENT:
+        return full, compact
+    return f"{full} · {MARKER} {verdict.state.value}", f"{compact} {MARKER}"
+
+
+def badge(app: FNDApp, name: str) -> str:
+    """The state a collection's Update row shows beside its button, or ""."""
+    verdict = verdict_for(app, name)
+    return "" if verdict.state is State.CURRENT else verdict.label
 
 
 def announce_saved(app: FNDApp, names: Sequence[str]) -> None:
@@ -51,16 +58,22 @@ def announce_saved(app: FNDApp, names: Sequence[str]) -> None:
         return
     if len(behind) == 1:
         name, verdict = behind[0]
-        app.notify(
-            f"Saved. {name!r} {verdict.summary}: press u on it in Collections to run it.",
-            timeout=8,
-        )
+        app.notify(f"Saved. {_sentence(name, verdict)}", timeout=8)
         return
     app.notify(
-        f"Saved. {len(behind)} collections are out of date: "
+        f"Saved. {len(behind)} collections are outdated: "
         "Settings › Collections › Update all collections brings them up to date.",
         timeout=8,
     )
+
+
+def _sentence(name: str, verdict: Verdict) -> str:
+    where = "press u on it in Collections"
+    if verdict.state is State.NOT_INDEXED:
+        return f"{name!r} is not indexed yet: {where} to index it."
+    if verdict.state is State.NEEDS_REBUILD:
+        return f"{name!r} has outdated tags: {verdict.because}; {where} to rebuild it."
+    return f"{name!r} is outdated: {verdict.because}; {where} to update it."
 
 
 def run_pending(app: FNDApp, name: str) -> None:
@@ -76,8 +89,8 @@ def run_pending(app: FNDApp, name: str) -> None:
             collection_name=name,
             crumb="Rebuild",
             body=(
-                f"{name!r} {verdict.summary}. Those are read when a file is indexed, "
-                "and an Update skips unchanged files, so every file is read again.\n\n"
+                f"{name!r} has outdated tags: {verdict.because}. Tags are read when a file "
+                "is indexed, and an Update skips unchanged files, so every file is read again.\n\n"
                 "PDF textures are reused from the cache. The files on disk are untouched."
             ),
             on_confirm=lambda: app._indexer.reindex_with_warning(name, rebuild=True),  # type: ignore[attr-defined]

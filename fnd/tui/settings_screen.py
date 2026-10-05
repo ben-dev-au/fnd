@@ -642,7 +642,13 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
         # narrow widths.
         if item.key:
             return []
-        return [(f"[ {item.action_label} ]", "bold cyan")]
+        button = (f"[ {item.action_label} ]", "bold cyan")
+        state = item.badge_getter(app) if item.badge_getter is not None else ""
+        if state:
+            from fnd.tui.freshness_view import BADGE_STYLE
+
+            return [(state, BADGE_STYLE), ("  ", ""), button]
+        return [button]
 
     if item.kind == KIND_SUBMENU:
         summary = ""

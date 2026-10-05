@@ -40,11 +40,11 @@ def test_the_sidebar_value_names_the_remedy() -> None:
     """Each state reads as the work it asks for, in both widths."""
     assert sidebar_value(Verdict(State.CURRENT), 3) == ("3 sources", "3 src")
     assert sidebar_value(Verdict(State.NEEDS_UPDATE), 3) == (
-        f"3 sources · {MARKER} update",
+        f"3 sources · {MARKER} outdated",
         f"3 src {MARKER}",
     )
     assert sidebar_value(Verdict(State.NEEDS_REBUILD), 1) == (
-        f"1 source · {MARKER} rebuild",
+        f"1 source · {MARKER} tags outdated",
         f"1 src {MARKER}",
     )
     assert sidebar_value(Verdict(State.NOT_INDEXED), 1) == ("not indexed", "new")
@@ -59,7 +59,7 @@ def test_the_marker_is_one_cell() -> None:
 
 @pytest.mark.asyncio
 async def test_a_changed_source_marks_its_sidebar_row(tmp_path: Path, tmp_index_dir: Path) -> None:
-    """The row says needs update when the config moved past the recorded run."""
+    """The row says outdated when the config moved past the recorded run."""
     _record_clean(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=tmp_index_dir, config=_cfg(tmp_path, excludes=["build/**"]))
     async with app.run_test(size=(120, 30)) as pilot:
@@ -175,9 +175,7 @@ async def test_the_update_row_says_why_it_is_needed(tmp_path: Path, tmp_index_di
     app = FNDApp(index_dir=tmp_index_dir, config=_cfg(tmp_path, excludes=["build/**"]))
     async with app.run_test(size=(120, 30)) as pilot:
         await _settle(pilot)
-        assert _summary_collection_update(app, "notes").startswith(
-            "needs update (excludes changed)"
-        )
+        assert _summary_collection_update(app, "notes").startswith("Outdated")
 
 
 @pytest.mark.asyncio
@@ -226,8 +224,12 @@ async def test_the_update_row_is_labelled_needed_with_its_reason(
     async with app.run_test(size=(120, 30)) as pilot:
         await _settle(pilot)
         row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.reindex")
-    assert row.label == "Update index (needed)"
-    assert row.description.startswith("Needs update (excludes changed). ")
+    assert row.label == "Update index"
+    assert row.description.startswith("Outdated: Excludes changed since the last index. ")
+    from fnd.tui.freshness_view import BADGE_STYLE
+    from fnd.tui.settings_screen import _trailing_segments
+
+    assert _trailing_segments(row, app)[0] == ("Outdated", BADGE_STYLE)
 
 
 @pytest.mark.asyncio
@@ -242,6 +244,9 @@ async def test_a_current_update_row_reads_as_before(tmp_path: Path, tmp_index_di
         row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.reindex")
     assert row.label == "Update index"
     assert row.description.startswith("Add new")
+    from fnd.tui.settings_screen import _trailing_segments
+
+    assert _trailing_segments(row, app) == [("[ Update ]", "bold cyan")]
 
 
 @pytest.mark.asyncio

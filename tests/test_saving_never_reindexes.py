@@ -103,7 +103,7 @@ async def test_the_save_toast_names_the_update_and_the_key(
         form._fields["excludes_custom"] = "build/**"
         await pilot.press("ctrl+s")
         await _settle(pilot, 8)
-    assert any("needs update" in m and "press u" in m for m in seen), seen
+    assert any("is outdated" in m and "press u" in m for m in seen), seen
 
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ async def test_adding_a_collection_starts_no_run_and_opens_its_page(
     assert "research" in load(config_file).collections
     assert started == []
     assert on_page
-    assert needed.startswith("not indexed yet"), needed
+    assert needed.startswith("Not indexed"), needed
 
 
 async def _rename(app: FNDApp, pilot: Any, new_name: str) -> Any:

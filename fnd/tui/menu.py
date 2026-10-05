@@ -41,7 +41,7 @@ from fnd.config import (
 from fnd.fsmeta import path_is_absent
 from fnd.index_freshness import State
 from fnd.tui.editing import BACK, CLEAR, SAVE, SAVE_KEY, editing_help_rows
-from fnd.tui.freshness_view import MARKER, run_pending, verdict_for
+from fnd.tui.freshness_view import MARKER, badge, run_pending, verdict_for
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -139,6 +139,8 @@ class MenuItem:
     # picker open, etc. The `…` suffix is included literally when the
     # action shows a confirm.
     action_label: str = "Run"
+    # A state shown before the button, in the warning colour; "" shows none.
+    badge_getter: Callable[[FNDApp], str] | None = None
 
     # SCALAR
     setting_path: str = ""
@@ -1311,7 +1313,7 @@ def _collection_summary(app: FNDApp, name: str) -> str:
         # exactly as it did: `● 1 source · ranking:default` over zero files.
         summary = f"⚠ nothing indexed · {summary}"
     elif (verdict := verdict_for(app, name)).state in (State.NEEDS_UPDATE, State.NEEDS_REBUILD):
-        summary = f"{summary} · {MARKER} {verdict.summary}"
+        summary = f"{summary} · {MARKER} {verdict.state.value}"
     return summary
 
 
@@ -1521,7 +1523,7 @@ def _summary_collection_update(app: FNDApp, name: str) -> str:
         return f"⚠ incomplete: {done} of {total} files · {n_sources} sources"
     verdict = verdict_for(app, name)
     if verdict.state is not State.CURRENT:
-        return f"{verdict.summary} · {n_sources} sources"
+        return f"{verdict.label} · {n_sources} sources"
     return f"{n_sources} sources"
 
 
@@ -1658,8 +1660,8 @@ def _push_update_all_confirm(
 def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
     """Per-collection sub-menu."""
     verdict = verdict_for(app, name)
-    # The row that runs the remedy says it is needed, and why (spec D4).
-    needed = verdict.summary if verdict.state is not State.CURRENT else ""
+    # The row that runs the remedy shows the index's state, and why (spec D4).
+    behind = verdict.summary if verdict.state is not State.CURRENT else ""
     return (
         MenuItem(
             id=f"col.{name}.rename",
@@ -1717,8 +1719,9 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         ),
         MenuItem(
             id=f"col.{name}.reindex",
-            label="Update index (needed)" if needed else "Update index",
-            description=(f"{needed[:1].upper()}{needed[1:]}. " if needed else "")
+            label="Update index",
+            badge_getter=(lambda n: lambda a: badge(a, n))(name),
+            description=(f"{behind}. " if behind else "")
             + (
                 "Add new / changed files and drop deleted ones; unchanged files "
                 "are skipped and their existing texturing is left untouched. The "

@@ -28,21 +28,23 @@ SIDECAR_NAME = ".fnd-indexed-with.json"
 #: Not a collection name: marks that the one-time adoption has run.
 _ADOPTED = "__adopted__"
 
-#: A source's selection inputs, and the words a reason uses for each.
+#: A source's selection inputs, named as the source form names them.
 _SOURCE_FIELDS: dict[str, str] = {
-    "path": "source paths",
-    "includes": "restricted paths",
-    "excludes": "excludes",
-    "follow_symlinks": "follow symlinks",
-    "filters": "index filters",
+    "path": "Path",
+    "includes": "Restrict to these paths",
+    "excludes": "Excludes",
+    "follow_symlinks": "Follow symlinks",
+    "filters": "Index filters",
 }
 
 
 class State(Enum):
+    """What the index is, against the config now: a state, never the work it wants."""
+
     CURRENT = "up to date"
-    NEEDS_UPDATE = "needs update"
-    NEEDS_REBUILD = "needs rebuild"
-    NOT_INDEXED = "not indexed yet"
+    NEEDS_UPDATE = "outdated"
+    NEEDS_REBUILD = "tags outdated"
+    NOT_INDEXED = "not indexed"
 
 
 @dataclass(frozen=True)
@@ -51,10 +53,21 @@ class Verdict:
     reasons: tuple[str, ...] = ()
 
     @property
-    def summary(self) -> str:
+    def label(self) -> str:
+        return self.state.value.capitalize()
+
+    @property
+    def because(self) -> str:
+        """The settings changed since the last index, as Settings names them, or ""."""
         if not self.reasons:
-            return self.state.value
-        return f"{self.state.value} ({', '.join(self.reasons)} changed)"
+            return ""
+        names = list(self.reasons)
+        joined = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+        return f"{joined} changed since the last index"
+
+    @property
+    def summary(self) -> str:
+        return f"{self.label}: {self.because}" if self.reasons else self.label
 
 
 def indexed_with(collection: CollectionConfig, defaults: Defaults) -> dict[str, Any]:
@@ -101,10 +114,10 @@ def compare(now: dict[str, Any], recorded: dict[str, Any] | None) -> Verdict:
 def _extraction_reasons(now: dict[str, Any], then: dict[str, Any]) -> tuple[str, ...]:
     reasons: list[str] = []
     if now["tag_frontmatter_keys"] != then.get("tag_frontmatter_keys"):
-        reasons.append("extra tag keys")
+        reasons.append("Extra frontmatter tag keys")
     # Turning a source off hides its tags at search time; only one turned on is unread.
     if set(now["tag_sources"]) - set(then.get("tag_sources") or ()):
-        reasons.append("tag sources")
+        reasons.append("Tag sources")
     return tuple(reasons)
 
 
@@ -112,13 +125,13 @@ def _selection_reasons(now: dict[str, Any], then: dict[str, Any]) -> tuple[str, 
     reasons: dict[str, None] = {}
     old = then.get("sources") or []
     if len(now["sources"]) != len(old):
-        reasons["the source list"] = None
+        reasons["Sources"] = None
     for new_source, old_source in zip(now["sources"], old, strict=False):
         for key, word in _SOURCE_FIELDS.items():
             if new_source.get(key) != old_source.get(key):
                 reasons[word] = None
     if now["junk_dirs"] != then.get("junk_dirs"):
-        reasons["skipped folders"] = None
+        reasons["Skipped folders"] = None
     return tuple(reasons)
 
 
