@@ -1932,7 +1932,7 @@ class SettingsScreen(Screen[None]):
                 app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
                 app._refresh_status()  # type: ignore[attr-defined]
                 # A setting can leave a collection out of date (spec D4); its row says so now.
-                app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
+                app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
         except Exception as e:
             self.query_one(EditBar).show_error(_summarise(e))
             return
@@ -3929,7 +3929,7 @@ class RenameCollectionScreen(Screen[None]):
                 )
             else:
                 app._ledger.forget(old)  # type: ignore[attr-defined]
-            app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
+            app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
             announce_saved(app, [new_name])
 
         _defaults = getattr(getattr(app, "_config", None), "defaults", None)

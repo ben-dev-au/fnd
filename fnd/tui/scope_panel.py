@@ -505,7 +505,7 @@ class ScopeController:
     def sync_legend(self, marks: CollectionMarks) -> None:
         """Repaint the panel when a new result set moved the marks it shows."""
         if marks.marks != self._legend_marks:
-            self._relabel_collection_rows()
+            self.relabel_collection_rows()
 
     def snapshot(self, query: str) -> SearchSnapshot:
         """Project the live scope into the read-only value object the command
@@ -663,8 +663,8 @@ class ScopeController:
             styled.stylize(MARKER_STYLE, at, at + len(MARKER))
         return styled
 
-    def _relabel_collection_rows(self) -> None:
-        """Every row, since a toggle moves the marks of the collections after it."""
+    def relabel_collection_rows(self) -> None:
+        """Every row in place, keeping the cursor: for a change to labels, not to the set."""
         try:
             tree = self._app.query_one("#collections_panel_tree", Tree)
         except Exception:
@@ -1539,7 +1539,7 @@ class ScopeController:
         # and resets the cursor to the root every time the user
         # toggles.
         self._update_collections_panel_node(ev.node)
-        self._relabel_collection_rows()
+        self.relabel_collection_rows()
         # A toggle moves the marks of later collections; rows must not wait for the re-search.
         self._app._results.relabel_rows(marks_only=True)
         self._refresh_collections_panel_title()

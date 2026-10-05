@@ -335,3 +335,53 @@ def test_update_all_is_named_when_it_fixes_outdated_and_unindexed(
         "Saved. 2 collections are outdated or not indexed: "
         "Settings › Collections › Update all collections brings them up to date."
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_run_keeps_the_collections_cursor(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """The run relabels the rows in place: a second `u` acts where the first did."""
+    from textual.widgets import Tree
+
+    _record_clean(tmp_path, tmp_index_dir)
+    (tmp_path / "papers").mkdir()
+    cfg = _cfg(tmp_path)
+    cfg.collections["papers"] = CollectionConfig(sources=[SourceConfig(path=tmp_path / "papers")])
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle(pilot)
+        tree = app.query_one("#collections_panel_tree", Tree)
+        tree.focus()
+        tree.cursor_line = 1
+        await _settle(pilot)
+        before = tree.cursor_node.data  # type: ignore[union-attr]
+        app._indexer.on_reindex_complete()
+        await _settle(pilot)
+        after = tree.cursor_node.data  # type: ignore[union-attr]
+    assert before == after
+
+
+@pytest.mark.asyncio
+async def test_an_app_built_without_a_config_still_adopts(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adoption reads the config file when the app was handed none."""
+    from fnd.config import write_collection
+    from fnd.index import build_index
+
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "a.md").write_text("# A\n\nalpha\n", encoding="utf-8")
+    write_collection(
+        config_path=cfg_path,
+        name="notes",
+        collection=CollectionConfig(sources=[SourceConfig(path=tmp_path / "notes")]),
+    )
+    build_index(roots=[tmp_path / "notes"], index_dir=tmp_index_dir, collection="notes")
+    (tmp_index_dir / SIDECAR_NAME).unlink()
+    app = FNDApp(index_dir=tmp_index_dir)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await _settle(pilot)
+    assert Ledger(tmp_index_dir).recorded("notes") is not None

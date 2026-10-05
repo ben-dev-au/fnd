@@ -779,7 +779,7 @@ def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
         app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
         # A setting can leave a collection out of date (spec D4); its row says so now.
-        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
 
     return _set
 
@@ -2459,7 +2459,7 @@ def _open_filter_browser(app: FNDApp) -> None:
         )
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
-        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.relabel_collection_rows()  # type: ignore[attr-defined]
 
     app.push_screen(
         DefaultFiltersScreen(

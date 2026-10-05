@@ -1995,9 +1995,15 @@ class FNDApp(App[None]):
         from fnd.index import collection_is_empty
 
         index = getattr(self._search.searcher, "_index", None)
-        if self._config is None or index is None:
+        if index is None:
             return
-        self._ledger.adopt(self._config, lambda name: collection_is_empty(index, name))
+        config = self._config
+        if config is None:
+            from fnd.config import load
+
+            # Built without a config, the app reads the file later anyway; adopt against it.
+            config = load()
+        self._ledger.adopt(config, lambda name: collection_is_empty(index, name))
 
     def action_update_collection(self) -> None:
         from fnd.tui.freshness_view import run_pending

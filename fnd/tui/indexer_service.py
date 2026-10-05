@@ -568,7 +568,7 @@ class IndexerService:
             self._app._scope.refresh_filters_panel()
         # The run just recorded what it indexed with, so the marker may have cleared.
         with contextlib.suppress(Exception):
-            self._app._scope.refresh_collections_panel()
+            self._app._scope.relabel_collection_rows()
         self._refresh_open_settings()
         if self._app._search.current_query:
             self._app._search.run(self._app._search.current_query)
