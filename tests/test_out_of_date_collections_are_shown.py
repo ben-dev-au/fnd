@@ -317,3 +317,21 @@ def test_an_all_outdated_save_toast_points_at_update_all(monkeypatch: pytest.Mon
         "Saved. 2 collections are outdated: "
         "Settings › Collections › Update all collections brings them up to date."
     ]
+
+
+def test_update_all_is_named_when_it_fixes_outdated_and_unindexed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Update all indexes a collection that has never been, so it covers both states."""
+    from types import SimpleNamespace
+
+    from fnd.tui.freshness_view import announce_saved
+
+    verdicts = {"a": Verdict(State.NEEDS_UPDATE, ("Path",)), "b": Verdict(State.NOT_INDEXED)}
+    monkeypatch.setattr("fnd.tui.freshness_view.verdict_for", lambda _a, n: verdicts[n])
+    seen: list[str] = []
+    announce_saved(SimpleNamespace(notify=lambda m, **_k: seen.append(m)), ["a", "b"])  # type: ignore[arg-type]
+    assert seen == [
+        "Saved. 2 collections are outdated or not indexed: "
+        "Settings › Collections › Update all collections brings them up to date."
+    ]

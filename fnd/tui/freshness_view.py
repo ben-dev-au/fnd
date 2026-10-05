@@ -60,14 +60,16 @@ def announce_saved(app: FNDApp, names: Sequence[str]) -> None:
         name, verdict = behind[0]
         app.notify(f"Saved. {_sentence(name, verdict)}", timeout=8)
         return
-    if all(v.state is State.NEEDS_UPDATE for _n, v in behind):
+    states = {v.state for _n, v in behind}
+    if State.NEEDS_REBUILD not in states:
+        word = " or ".join(s.value for s in (State.NEEDS_UPDATE, State.NOT_INDEXED) if s in states)
         app.notify(
-            f"Saved. {len(behind)} collections are outdated: "
+            f"Saved. {len(behind)} collections are {word}: "
             "Settings › Collections › Update all collections brings them up to date.",
             timeout=8,
         )
         return
-    # Update all leaves tags and unindexed collections as they are, so each is named.
+    # Update all skips unchanged files, so outdated tags are left as they are: each is named.
     phrases = [_STATE_PHRASE[v.state].format(name=repr(n)) for n, v in behind]
     joined = f"{', '.join(phrases[:-1])} and {phrases[-1]}"
     app.notify(
