@@ -277,3 +277,43 @@ async def test_u_waits_for_a_renames_drop(
         await app.workers.wait_for_complete()
     assert started == []
     assert any("still being dropped" in m for m in seen), seen
+
+
+def test_a_mixed_save_toast_names_each_collection_and_its_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Update all fixes only outdated ones, so a mixed set is named one by one."""
+    from types import SimpleNamespace
+
+    from fnd.tui.freshness_view import announce_saved
+
+    verdicts = {
+        "notes": Verdict(State.NEEDS_UPDATE, ("Excludes",)),
+        "papers": Verdict(State.NEEDS_REBUILD, ("Tag sources",)),
+    }
+    monkeypatch.setattr("fnd.tui.freshness_view.verdict_for", lambda _a, n: verdicts[n])
+    seen: list[str] = []
+    app = SimpleNamespace(notify=lambda m, **_k: seen.append(m))
+    announce_saved(app, ["notes", "papers"])  # type: ignore[arg-type]
+    assert seen == [
+        "Saved. 'notes' is outdated and 'papers' has outdated tags: "
+        "press u on each in Collections to bring it up to date."
+    ]
+
+
+def test_an_all_outdated_save_toast_points_at_update_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control: when Update all fixes every one, it is the one action named."""
+    from types import SimpleNamespace
+
+    from fnd.tui.freshness_view import announce_saved
+
+    monkeypatch.setattr(
+        "fnd.tui.freshness_view.verdict_for",
+        lambda _a, _n: Verdict(State.NEEDS_UPDATE, ("Index filters",)),
+    )
+    seen: list[str] = []
+    announce_saved(SimpleNamespace(notify=lambda m, **_k: seen.append(m)), ["a", "b"])  # type: ignore[arg-type]
+    assert seen == [
+        "Saved. 2 collections are outdated: "
+        "Settings › Collections › Update all collections brings them up to date."
+    ]

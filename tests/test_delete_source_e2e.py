@@ -207,7 +207,7 @@ class TestTheDialogDescribesWhatItDoes:
             said = str(screen.query_one(".warning", Static).render())
 
         assert "orphaned" not in said, said
-        assert "needs an update" in said
+        assert "reads outdated" in said
         assert "files on disk are untouched" in said
         assert "another source still reaches" in said
 

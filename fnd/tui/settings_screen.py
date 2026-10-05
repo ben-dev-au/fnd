@@ -2752,7 +2752,7 @@ class SourceFormScreen(DocumentScreen):
                 hint="path or ~/path",
                 description=(
                     "The folder to index. ~ expands; the path must exist. "
-                    "Changing it leaves the collection needing an update."
+                    "Changing it leaves the collection outdated."
                 ),
             ),
             MenuItem(
@@ -4840,7 +4840,7 @@ class DeleteSourceScreen(Screen[None]):
     Triggered by ``Ctrl+D`` inside :class:`SourceFormScreen` (only when
     editing an existing source). The source's path is dropped from
     ``[collections.<name>.sources]`` via :func:`fnd.config.write_collection`.
-    Nothing is indexed: the collection is marked as needing an update.
+    Nothing is indexed: the collection then reads outdated.
 
     The source is found by its path in the file as it is at each step, never by
     row index into ``app._config``: any reload replaces that model, and
@@ -4928,7 +4928,7 @@ class DeleteSourceScreen(Screen[None]):
                     f"Remove this source from {name!r}?\n"
                     f"Path: {self._source_path}\n\n"
                     "The files on disk are untouched.\n"
-                    f"{name!r} then needs an update, which drops the files only "
+                    f"{name!r} then reads outdated; an Update drops the files only "
                     f"this source reached. {shared}{discarded}",
                     classes="warning",
                 )

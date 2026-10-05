@@ -730,12 +730,12 @@ class Defaults(_ConfigModel):
 
     tag_sources: list[Literal["frontmatter", "os"]] = ["frontmatter", "os"]
     """Which tag sources feed the Tags filter. Removing one applies at once;
-    re-adding one needs a Rebuild index, since tags are read at index time."""
+    re-adding one leaves collections with outdated tags until a rebuild re-reads them."""
 
     tag_frontmatter_keys: list[str] = []
     """Extra frontmatter keys treated as tags, e.g. `Course:`. Values namespace
-    under the key (course/algebra). Needs a Rebuild index; tags are read at
-    index time."""
+    under the key (course/algebra). Changing them leaves tags outdated until a
+    rebuild."""
 
     result_limit: int = DEFAULT_RESULT_LIMIT
     """How many result rows a search returns. Lower it to speed up a slow query."""

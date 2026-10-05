@@ -409,14 +409,14 @@ _KEYS_SOURCE_FORM: tuple[tuple[str, str, str, str], ...] = (
         SAVE,
         "",
         "Write this source to the config. Nothing is indexed; the collection is "
-        "marked with ↻ if it needs an update.",
+        "marked ↻ outdated if the change affects what is indexed.",
     ),
     (
         "Ctrl+D",
         "Delete source",
         "",
         "Only available when editing an existing source. Asks first; on confirm, "
-        "removes the entry from the config, and the collection then needs an update.",
+        "removes the entry from the config, and the collection then reads outdated.",
     ),
     (
         "Esc / ←",
@@ -3149,8 +3149,9 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
                 "comma-separated, e.g. Course, Notes_Type, Topic. Values are "
                 "grouped under the key in the Tags pane (course/algebra), so "
                 "they never collide with a plain tag. Matched "
-                "case-insensitively. Needs a Rebuild index: tags are read when "
-                "a file is indexed, and an Update skips unchanged files."
+                "case-insensitively. Changing them leaves collections with "
+                "outdated tags, shown with ↻ on their rows: tags are read when a "
+                "file is indexed, and an Update skips unchanged files."
             ),
             kind=KIND_SCALAR,
             setting_path="defaults.tag_frontmatter_keys",
@@ -3167,8 +3168,8 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
                 "Which sources feed the Tags filter. Tags are read per file: "
                 "a tag on a folder does not apply to what is inside it. Tick "
                 "none to turn tag filtering off. Turning one off hides its tags "
-                "straight away; turning one on leaves collections needing a "
-                "rebuild, shown with ↻ on their rows."
+                "straight away; turning one on leaves collections with outdated "
+                "tags, shown with ↻ on their rows."
             ),
             kind=KIND_PICKER,
             multi=True,
