@@ -883,6 +883,8 @@ class MatchNavigator:
     def _scroll_to_stop(self, pane: VerticalScroll, top_y: int, vh: int) -> None:
         from textual.geometry import Region
 
+        from fnd.tui.preview_scrollbar import MatchAwareScroll
+
         # The anchor IS the view's top: views tile by exactly one viewport, so a
         # hop covers a screenful and the border's count of screenfuls and of
         # presses are the same number. Offsetting the match down the viewport
@@ -899,6 +901,8 @@ class MatchNavigator:
         if preview is not None:
             preview.begin_reconcile_scroll()
         try:
+            if isinstance(pane, MatchAwareScroll):
+                pane.halt_glide()
             pane.scroll_to_region(region, top=True, animate=False, immediate=True)
             self._app._diag_log(f"scroll site=nb_stop top_y={top_y}")
         finally:

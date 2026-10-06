@@ -24,7 +24,7 @@ from textual.widgets import DataTable, Tree
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_press, settle, wait_until
+from tests._pilot_wait import safe_press, settle, wait_stable, wait_until
 
 
 def _write(p: Path, body: str) -> None:
@@ -548,6 +548,54 @@ async def test_a_hand_over_onto_the_row_the_cursor_already_holds_still_lands(
                 f"focus={_focus_seq(app)} cursor={_cursor_section_seq(app)}"
             ),
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("site", ["landing", "nb_stop"])
+async def test_a_scroll_to_where_the_pane_already_is_still_ends_a_glide(
+    cfg: Config, flashcards_index: Path, site: str
+) -> None:
+    """A scroll that finds the pane already in place still supersedes a glide elsewhere."""
+    from textual.geometry import Region
+
+    app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        await wait_until(
+            pilot,
+            lambda: (
+                _focus_seq(app) is not None
+                and not app._preview_scroll.is_settling
+                and not app.animator.is_being_animated(pane, "scroll_y")
+            ),
+            timeout=30.0,
+            message="the preview never landed",
+        )
+        await wait_stable(
+            pilot,
+            lambda: (pane.scroll_y, app._preview_scroll.is_settling),
+            rounds=6,
+            message="the landing never held still",
+        )
+        here = int(pane.scroll_y)
+        assert here > 0, "the landing must leave room to glide towards the top"
+        pane.scroll_to(y=0, animate=True, duration=0.3, immediate=True)
+        assert app.animator.is_being_animated(pane, "scroll_y")
+
+        if site == "landing":
+            app._preview_scroll_structural._scroll_pane_to_match_region(
+                pane, Region(0, here, 1, 1), 0, animate=True
+            )
+        else:
+            app._match_nav._scroll_to_stop(pane, here, pane.scrollable_content_region.height)
+
+        await wait_until(
+            pilot,
+            lambda: not app.animator.is_being_animated(pane, "scroll_y"),
+            timeout=5.0,
+            message="the glide never ended",
+        )
+        assert int(pane.scroll_y) == here
 
 
 @pytest.fixture

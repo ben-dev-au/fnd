@@ -850,6 +850,8 @@ class StructuralScrollStrategy:
             region = Region(
                 region.x, max(0, region.y - margin), region.width, region.height + margin
             )
+        if isinstance(pane, MatchAwareScroll):
+            pane.halt_glide()
         start = int(pane.scroll_offset.y)
         delta = pane.scroll_to_region(region, top=True, animate=animate, immediate=not animate)
         self._host.diag_log(f"scroll site=match region_y={region.y} animate={animate}")
