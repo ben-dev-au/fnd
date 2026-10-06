@@ -156,7 +156,7 @@ def _match_rows(block: Widget, spec: MatchSpec | None) -> list[int]:
     offsets = _match_offsets(block, plain, spec)
     if not offsets:
         return []
-    # Cached per block: ``enumerate_stop_regions`` asks every mounted match block
+    # Cached per block: ``enumerate_stop_rows`` asks every mounted match block
     # on every n/b press — 56 wrapped 4,000-char paragraphs cost 13.8ms cold and
     # 0.03ms after. Geometry is in the key, so a re-wrap recomputes.
     key = (content.width, content.height, len(plain), tuple(offsets))

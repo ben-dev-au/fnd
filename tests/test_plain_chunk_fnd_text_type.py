@@ -3,7 +3,7 @@
 ``_mount_plain_chunk`` renders each body line to a rich ``Text`` (for display)
 and stashed that same ``Text`` on ``line.fnd_text``. Match counting
 (``MatchNavigator._count_stops``) and stop-region scanning
-(``enumerate_stop_regions``) then feed ``fnd_text`` to ``text_has_any_match``,
+(``enumerate_stop_rows``) then feed ``fnd_text`` to ``text_has_any_match``,
 which runs ``DOC_WORD_RE.finditer`` over it — ``re`` needs a ``str``, so a
 rich ``Text`` raised ``TypeError: expected string or bytes-like object, got
 'Text'`` and crashed the query (e.g. a wine PDF's "SPAIN" line while
@@ -23,7 +23,7 @@ from fnd.index import build_index
 from fnd.matching import MatchSpec
 from fnd.query import FileChunk
 from fnd.tui import FNDApp
-from fnd.tui.preview_scroll import enumerate_stop_regions
+from fnd.tui.preview_scroll import enumerate_stop_rows
 
 
 def _plain_chunk() -> FileChunk:
@@ -78,5 +78,4 @@ async def test_plain_chunk_lines_carry_str_fnd_text(min_app: FNDApp) -> None:
             assert isinstance(txt, str), f"fnd_text must be str, got {type(txt).__name__}"
 
         # The exact crash site: scanning stops over fnd_text must not raise.
-        regions = enumerate_stop_regions(pane, app._effective_match_spec)
-        assert len(regions) >= 1
+        assert enumerate_stop_rows(pane, app._effective_match_spec)

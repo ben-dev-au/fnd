@@ -1,4 +1,4 @@
-"""enumerate_stop_regions finds every match stop across mounted chunks,
+"""enumerate_stop_rows finds every match stop across mounted chunks,
 including cells far below the fold of a table taller than the viewport."""
 
 from __future__ import annotations
@@ -8,7 +8,8 @@ from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 
 from fnd.matching import MatchSpec
-from fnd.tui.preview_scroll import enumerate_stop_regions
+from fnd.tui.preview.match_row import layout_offset
+from fnd.tui.preview_scroll import enumerate_stop_rows
 from fnd.tui.widgets.markdown import FNDMarkdown
 
 # A table ~4x the viewport height with CRC in row 32's answer and row 47's
@@ -44,11 +45,10 @@ async def test_two_stops_at_distinct_y() -> None:
         await md.build_done.wait()
         await pilot.pause()
         pane = pilot.app.query_one("#preview_pane", VerticalScroll)
-        regions = enumerate_stop_regions(pane, MatchSpec.from_query("CRC"))
-        ys = [r.y for r in regions]
+        rows = enumerate_stop_rows(pane, MatchSpec.from_query("CRC"))
         # both CRC cells enumerated, card 32 above card 47, distinct positions
-        assert len(regions) == 2, ys
-        assert ys[0] < ys[1]
+        assert len(rows) == 2, rows
+        assert rows[0] < rows[1]
 
 
 # One source line wrapping over several screenfuls, its match late in it — a PDF
@@ -87,11 +87,12 @@ async def test_a_wrapped_block_stops_on_the_row_its_match_paints_on() -> None:
         assert painted, "the match never painted"
 
         pane = pilot.app.query_one("#preview_pane", VerticalScroll)
-        regions = enumerate_stop_regions(pane, MatchSpec.from_query("quartzfin"))
-        assert len(regions) == 1, [r.y for r in regions]
-        assert regions[0].y == block.region.y + painted[0], (
-            f"stop at y={regions[0].y} is the block's top ({block.region.y}), not the "
-            f"row its match paints on ({block.region.y + painted[0]})"
+        rows = enumerate_stop_rows(pane, MatchSpec.from_query("quartzfin"))
+        top = layout_offset(block, pane, into_ancestor=False)
+        assert top is not None
+        assert rows == [top + painted[0]], (
+            f"stops {rows} are not the row its match paints on ({top + painted[0]}); "
+            f"the block's top is {top}"
         )
 
 
@@ -140,8 +141,10 @@ async def test_a_long_fence_stops_on_every_match_it_paints() -> None:
         assert len(painted) == 2, f"the fixture painted {len(painted)} matches"
 
         pane = pilot.app.query_one("#preview_pane", VerticalScroll)
-        regions = enumerate_stop_regions(pane, MatchSpec.from_query("quartzfin"))
-        assert [r.y - block.region.y for r in regions] == painted
+        rows = enumerate_stop_rows(pane, MatchSpec.from_query("quartzfin"))
+        top = layout_offset(block, pane, into_ancestor=False)
+        assert top is not None
+        assert [row - top for row in rows] == painted
 
 
 # A tab-indented fence: every line fits the pane as written, and every line
@@ -194,5 +197,7 @@ async def test_a_tab_indented_fence_stops_on_every_match_it_paints() -> None:
         assert len(painted) == 2, f"the fixture painted {len(painted)} matches"
 
         pane = pilot.app.query_one("#preview_pane", VerticalScroll)
-        regions = enumerate_stop_regions(pane, MatchSpec.from_query("quartzfin"))
-        assert [r.y - block.region.y for r in regions] == painted
+        rows = enumerate_stop_rows(pane, MatchSpec.from_query("quartzfin"))
+        top = layout_offset(block, pane, into_ancestor=False)
+        assert top is not None
+        assert [row - top for row in rows] == painted

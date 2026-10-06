@@ -130,7 +130,7 @@ def offscreen_views(anchors: list[int], stops: list[int], top: int, vh: int) -> 
 # prove only that two samples matched, and this cache has already been wrong
 # that way twice.
 #
-# The read is `enumerate_stop_regions` over the pane subtree, so it scales with
+# The read is `enumerate_stop_rows` over the pane subtree, so it scales with
 # the mounted STOPS, not just the chunks: 1.2ms warm at 13 chunks / 36 stops,
 # 2.6ms at 102 chunks / 882 stops (the densest in this corpus) and 3.5ms at 1592
 # stops on a synthetic shape denser than anything in it, against a
@@ -155,10 +155,10 @@ class MatchNavigator:
       nav scroll-settle window (region reads did — measured to stall the
       landing). It is cached; the footer reads the cache, so a focus change
       never re-walks the preview subtree (a perf contract the pane keeps).
-    * **Navigation** (``next``/``prev``) enumerates the match REGIONS fresh on
+    * **Navigation** (``next``/``prev``) enumerates the match stops fresh on
       the keypress — a snapshot goes stale as the lazy-mounted preview reflows
       (the reported bug: n did nothing because the snapshot was captured empty
-      before a deep table laid out). Region reads here are fine: they happen on
+      before a deep table laid out). Layout reads here are fine: they happen on
       a deliberate keypress, never during a cold-nav settle.
     * **The ▲a/▼b view arrows** answer the original awareness question — "does
       the result I'm on have matches I can't see?" Users navigate *between*
@@ -166,7 +166,7 @@ class MatchNavigator:
       lower down in the *same* chunk; the arrows count how many screenfuls
       ("views") of the CURRENT result hold an off-screen match, above and below.
       Everything here is scoped to the current chunk (``anchor.focus_chunk_seq``
-      and its widget extent) — never the whole file. The counts ARE region-
+      and its widget extent) — never the whole file. The counts ARE layout-
       derived, but the read is deferred to settle-safe moments only (after the
       mount settles, on a nav keypress, on a user scroll) and cached, so the
       border refresh stays layout-free.
@@ -246,10 +246,10 @@ class MatchNavigator:
         layout is forced: one per matching table cell, one per non-table match
         block, one per matching plain line.
 
-        Deliberately per BLOCK where ``enumerate_stop_regions`` is per row: the
+        Deliberately per BLOCK where ``enumerate_stop_rows`` is per row: the
         rows need layout, and this runs on paths that must not force it. They go
         to zero together on a laid-out subtree only: a mounted block with no
-        geometry counts here and yields no region, so the hint can lead the keys
+        geometry counts here and yields no row, so the hint can lead the keys
         while a fill is hiding chunks.
 
         Shared by the preview-wide count and the current-chunk check so the two
@@ -299,17 +299,12 @@ class MatchNavigator:
         """Stops across the whole mounted preview — the footer-hint cache."""
         return self._stops_within(pane, self._app._effective_match_spec)
 
-    def _region_stops(self, pane: VerticalScroll) -> list[int]:
-        """Match stops as content-space tops (reads regions — call only on a
+    def _content_stops(self, pane: VerticalScroll) -> list[int]:
+        """Match stops as content rows (forces layout, so call only on a
         deliberate navigation keypress, never during a cold-nav settle)."""
-        from fnd.tui.preview_scroll import enumerate_stop_regions
+        from fnd.tui.preview_scroll import enumerate_stop_rows
 
-        spec = self._app._effective_match_spec
-        if spec.is_empty:
-            return []
-        base = pane.scrollable_content_region.offset.y
-        oy = pane.scroll_offset.y
-        return sorted(r.y - base + oy for r in enumerate_stop_regions(pane, spec))
+        return enumerate_stop_rows(pane, self._app._effective_match_spec)
 
     def _current_chunk_extent(self, pane: VerticalScroll) -> tuple[int, int] | None:
         """Content-space ``[top, bottom)`` of the CURRENT result's chunk — the
@@ -330,20 +325,15 @@ class MatchNavigator:
         cur = widgets.get(seq)
         if cur is None:
             return None
-        base = pane.scrollable_content_region.offset.y
-        oy = pane.scroll_offset.y
 
         def ctop(w: object) -> int | None:
-            region = getattr(w, "region", None)
-            if region is None or region.height <= 0:
-                return None
-            return region.y - base + oy
+            return self._chunk_top(pane, w)
 
         top = ctop(cur)
         if top is None:
             return 0, 0  # EMPTY, not None: None unscopes the caller (see docstring)
         # Bound on the next chunk that HAS laid out: a zero-height one leaks no
-        # stop (every arm of ``enumerate_stop_regions`` drops one), and for a
+        # stop (every arm of ``enumerate_stop_rows`` drops one), and for a
         # plain chunk ``chunk_widgets`` holds only its first LINE.
         laters = [
             y for s2, w in widgets.items() if s2 > seq and (y := ctop(w)) is not None and y > top
@@ -351,11 +341,22 @@ class MatchNavigator:
         bottom = min(laters) if laters else max(top + 1, pane.virtual_size.height)
         return top, bottom
 
+    @staticmethod
+    def _chunk_top(pane: VerticalScroll, widget: object) -> int | None:
+        """``widget``'s content row, or ``None`` while it is not laid out."""
+        from textual.widget import Widget
+
+        from fnd.tui.preview.match_row import layout_offset
+
+        if not isinstance(widget, Widget):
+            return None
+        return layout_offset(widget, pane, into_ancestor=False)
+
     def _chunk_stops(self, pane: VerticalScroll) -> list[int]:
         """The current result's match stops (content-space tops). An unknown
         extent (flat preview) falls back to every mounted stop — which on that
         substrate is none, so the keys are inert rather than unscoped."""
-        stops = self._region_stops(pane)
+        stops = self._content_stops(pane)
         extent = self._current_chunk_extent(pane)
         if extent is None:
             return stops
@@ -365,12 +366,12 @@ class MatchNavigator:
     def _offscreen_views(self, pane: VerticalScroll) -> tuple[int, int]:
         """Matching views above / below the viewport, scoped to the current
         result. ``(0, 0)`` when the chunk extent is unknown (no false signal on
-        flat previews). Reads regions — settle-safe callers only."""
+        flat previews). Forces layout: settle-safe callers only."""
         extent = self._current_chunk_extent(pane)
         if extent is None:
             return 0, 0
         lo, hi = extent
-        stops = [y for y in self._region_stops(pane) if lo <= y < hi]
+        stops = [y for y in self._content_stops(pane) if lo <= y < hi]
         vh = pane.scrollable_content_region.height
         # Not pinned here: a landing may still be committing. _go pins it.
         home = self._home(lo)
@@ -649,7 +650,7 @@ class MatchNavigator:
 
     def _measure_offscreen(self) -> None:
         """Re-derive the cached ▲/▼ view counts (current result, above/below the
-        viewport) and refresh the border only when they changed. Reads regions —
+        viewport) and refresh the border only when they changed. Forces layout:
         call only when the scroll is settled (post-settle, a deliberate nav, or a
         user scroll)."""
         pane = self._pane()

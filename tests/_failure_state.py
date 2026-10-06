@@ -149,7 +149,7 @@ def _match_nav_state(app: Any) -> str:
             # from these against the viewport, so a disagreement between where
             # the scroll landed and where the stops are is only readable here.
             ("chunk_stops", lambda: nav._chunk_stops(nav._pane())),
-            ("all_stops", lambda: nav._region_stops(nav._pane())),
+            ("all_stops", lambda: nav._content_stops(nav._pane())),
             ("chunk_extent", lambda: nav._current_chunk_extent(nav._pane())),
             ("viewport", lambda: _viewport(nav._pane())),
         ],

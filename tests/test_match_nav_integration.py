@@ -298,7 +298,7 @@ async def test_n_never_scrolls_a_neighbours_match_under_the_current_result(
         # asserting it straight away tested how fast the runner mounts.
         await wait_until(
             pilot,
-            lambda: len(nav._region_stops(pane)) > len(nav._chunk_stops(pane)),
+            lambda: len(nav._content_stops(pane)) > len(nav._chunk_stops(pane)),
             timeout=30.0,
             message="the neighbouring result's match never mounted, so scope excludes nothing",
         )
@@ -548,6 +548,64 @@ async def test_a_hand_over_onto_the_row_the_cursor_already_holds_still_lands(
                 f"focus={_focus_seq(app)} cursor={_cursor_section_seq(app)}"
             ),
         )
+
+
+@pytest.fixture
+def three_section_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """A long middle section, so the last section's final stop sits on the
+    content's bottom row and a scroll can push a misread one past it."""
+    body = (
+        "# Intro\n\nThe CRC intro.\n\n## Middle\n\nOne CRC in the middle.\n\n"
+        + "".join(f"filler paragraph line {i}.\n\n" for i in range(30))
+        + "## End\n\nCRC CRC CRC checksum CRC.\n\nMore text.\n\nTrailing CRC line.\n"
+    )
+    _write(tmp_path / "notes" / "Doc.md", body)
+    build_index(roots=[tmp_path / "notes"], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["unrendered", "visible_map"])
+async def test_stops_hold_their_rows_while_a_scroll_awaits_its_render(
+    cfg: Config, three_section_index: Path, state: str
+) -> None:
+    """The current chunk's stops are the same content rows mid-scroll as settled."""
+    app = FNDApp(index_dir=three_section_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        nav = app._match_nav
+        await wait_until(
+            pilot,
+            lambda: (
+                nav._current_chunk_extent(pane) not in (None, (0, 0))
+                and bool(nav._chunk_stops(pane))
+                and not app._preview_scroll.is_settling
+            ),
+            timeout=30.0,
+            message="the preview never landed on a section with stops",
+        )
+        settled = nav._chunk_stops(pane)
+        bottom = pane.max_scroll_y
+        assert settled[-1] + 4 >= pane.virtual_size.height, (
+            f"stops {settled} of {pane.virtual_size.height} rows: a 4-row misread must "
+            "cross the content bottom for this to discriminate"
+        )
+        start, end = (bottom - 4, bottom) if state == "unrendered" else (bottom, bottom - 4)
+        pane.scroll_to(y=start, animate=False, immediate=True)
+        await wait_until(
+            pilot,
+            lambda: pane.scroll_offset.y == start and nav._chunk_stops(pane) == settled,
+            timeout=10.0,
+            message=f"the stops never read as settled at y={start}",
+        )
+        if state == "visible_map":
+            # The render Textual makes after a scroll: visible widgets only.
+            app.screen._refresh_layout(scroll=True)
+            assert app.screen._compositor._visible_map is not None
+
+        pane.scroll_to(y=end, animate=False, immediate=True)
+
+        assert nav._chunk_stops(pane) == settled
 
 
 @pytest.mark.asyncio

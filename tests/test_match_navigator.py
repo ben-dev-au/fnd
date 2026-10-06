@@ -72,7 +72,7 @@ def _nav(stops: list[int], vh: int = 20, virtual_height: int = 10**6) -> MatchNa
     # wide chunk extent so scoping keeps every stop (the app derives this from
     # the current result's widget; here the injected stops ARE the chunk).
     nav._pane = lambda: pane  # type: ignore[assignment]
-    nav._region_stops = lambda _p: stops  # type: ignore[assignment]
+    nav._content_stops = lambda _p: stops  # type: ignore[assignment]
     # Extent from 0, so the offsets the navigator stores (measured from the
     # chunk's top) read as absolute content y in these tests.
     nav._current_chunk_extent = lambda _p: (0, 10**9)  # type: ignore[assignment]
@@ -177,7 +177,7 @@ def test_a_frozen_focused_chunk_still_reports_its_stops() -> None:
     """The footer hint must follow what ``n``/``b`` can actually reach.
 
     Serving a capture replaces the chunk's widget tree with a ``FrozenChunkView``
-    and pops its match target. ``enumerate_stop_regions`` handles that view, so
+    and pops its match target. ``enumerate_stop_rows`` handles that view, so
     ``n``/``b`` keep working — but without a matching branch here the plain-chunk
     fallback reads the popped target, returns False, and the app hides the
     ``n/b Matches`` hint on a chunk where both keys work.
@@ -269,6 +269,7 @@ def _extent_nav(widgets: dict[int, _StubWidget], seq: int, virtual_height: int =
     nav = MatchNavigator(FakeApp())  # type: ignore[arg-type]
     pane = FakePane(40, virtual_height)
     nav._pane = lambda: pane  # type: ignore[assignment]
+    nav._chunk_top = lambda _p, w: w.region.y if w.region.height > 0 else None  # type: ignore[assignment]
     nav._app = SimpleNamespace(  # type: ignore[assignment]
         _preview_scroll=SimpleNamespace(anchor=SimpleNamespace(focus_chunk_seq=seq)),
         _preview=SimpleNamespace(chunk_widgets=widgets),
@@ -284,7 +285,7 @@ def test_an_unlaid_chunk_scopes_to_nothing_not_to_everything() -> None:
 
     assert nav._current_chunk_extent(pane) == (0, 0)  # type: ignore[arg-type]
 
-    nav._region_stops = lambda _p: [10, 200, 300]  # type: ignore[assignment]
+    nav._content_stops = lambda _p: [10, 200, 300]  # type: ignore[assignment]
     assert nav._chunk_stops(pane) == [], "an unlaid chunk handed back the whole preview"  # type: ignore[arg-type]
 
 
@@ -356,7 +357,7 @@ def test_a_reflow_under_the_walk_does_not_strand_the_landing() -> None:
 
     # Everything above the chunk grew by 5: the chunk and its stops move down.
     shifted = [y + 5 for y in stops]
-    nav._region_stops = lambda _p: shifted  # type: ignore[assignment]
+    nav._content_stops = lambda _p: shifted  # type: ignore[assignment]
     nav._current_chunk_extent = lambda _p: (5, 10**9)  # type: ignore[assignment]
     nav._pane().scroll_offset = Offset(0, 59)  # type: ignore[attr-defined]
 
