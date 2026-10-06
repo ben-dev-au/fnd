@@ -190,3 +190,36 @@ def test_a_legacy_flat_collection_without_excludes_inherits_the_master(tmp_path:
         }
     )
     assert cfg.collections["notes"].sources[0].excludes == ["a/**"]
+
+
+def test_a_folder_glob_covers_its_folder_only() -> None:
+    """`skip/**` excludes everything under skip; `skip/*.md` only some of it."""
+    from fnd.globs import GlobSet
+
+    assert GlobSet.parse(["skip/**"]).covers_dir("skip")
+    assert GlobSet.parse(["**/node_modules/**"]).covers_dir("a/node_modules")
+    assert not GlobSet.parse(["skip/*.md"]).covers_dir("skip")
+    assert not GlobSet.parse(["skip/**"]).covers_dir("skipped")
+
+
+def test_an_excluded_folder_is_never_opened(tmp_path: Path, monkeypatch: Any) -> None:
+    """The walk prunes it at descent instead of reading every file below."""
+    import os
+
+    import fnd.walk
+
+    root = _tree(tmp_path)
+    opened: list[str] = []
+    real = os.scandir
+
+    def spy(path: Any) -> Any:
+        opened.append(Path(path).name)
+        return real(path)
+
+    monkeypatch.setattr(fnd.walk.os, "scandir", spy)
+    cfg = Config(
+        defaults=Defaults(filters=DefaultFilters(excludes=["skip/**"])),
+        collections={"notes": CollectionConfig(sources=[SourceConfig(path=root)])},
+    )
+    assert _walked(cfg) == {"keep.md"}
+    assert "skip" not in opened

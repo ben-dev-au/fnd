@@ -363,10 +363,10 @@ Index filters** edits the defaults; a source's **Index filters** row edits it.
 
 | Filter | What it does |
 | --- | --- |
-| *(always on)* | Hidden files and folders (`.foo`) are skipped, whatever the filters say. Only an `includes` glob naming a dot-prefixed component (`.obsidian/**`) admits one, and then only the paths that glob itself matches. |
+| *(always on)* | Hidden files and folders (`.foo`) are skipped, whatever the filters say. Only an `includes` glob naming a dot-prefixed component (`.obsidian/**`) admits one, and then only the paths that glob itself matches. A file whose own name starts with `.` still meets the default `**/.*` exclude: to index one, give the source its own `excludes` without that glob. |
 | `respect_gitignore` | Honours every `.gitignore` down the tree, with git's rules: negation, directory patterns, nearest file wins. Not `.git/info/exclude` and not `core.excludesFile`: neither is in the tree, so honouring them would make one corpus index differently on two machines. Use `.fndignore` for a rule that is yours alone. **On by default.** |
 | `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd: how to hide something from search without hiding it from git. **On by default.** |
-| `excludes` | Path globs never read; a matched folder is pruned unopened. Settings shows them as **Excluded paths** (presets such as Node modules) plus **Excluded globs** you type. Set once in the defaults for every source; a source's own list replaces it. **System files by default**: `**/.*`, `.DS_Store`, `Thumbs.db`, `desktop.ini` and `.git`. |
+| `excludes` | Path globs never indexed; a folder a `name/**` glob covers is pruned unopened. Settings shows them as **Excluded paths** (presets such as Node modules) plus **Excluded globs** you type. Set once in the defaults for every source; a source's own list replaces it. **System files by default**: `**/.*`, `.DS_Store`, `Thumbs.db`, `desktop.ini` and `.git`. |
 | `include_tags` | Index only files carrying one of these tags; the tag rows' `●`. Empty means the tag is not consulted. |
 | `exclude_tags` | Tags that keep a file out; the tag rows' `⊘`. From any source fnd reads: macOS Finder tags and a note's YAML `tags:`. Defaults to `["no_index"]`, so tagging a file `no_index` either way keeps it out. |
 | `kinds` | Restrict to given file types. Empty means every supported type. A source's `includes` folds into this when it names every suffix of a type (`["**/*.md", "**/*.markdown"]`, not `["**/*.md"]` alone). Anything else stays a glob. |

@@ -259,6 +259,8 @@ def _scandir_walk(
                 child = Path(entry.path)
                 if scope and scope.ignored(child, is_dir=True):
                     continue
+                if exc and exc.covers_dir(child.relative_to(root).as_posix()):
+                    continue
                 stack.append((child, scope))
                 continue
 

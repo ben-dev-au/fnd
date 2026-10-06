@@ -270,8 +270,8 @@ class DefaultFilters(_ConfigModel):
     alone, so they exclude something from search without excluding it from git."""
 
     excludes: list[str] = Field(default_factory=lambda: list(EXCLUDES_PRESETS["hidden"]["globs"]))
-    """Glob patterns whose files and folders are never read; a matched folder is
-    pruned unopened. Every source inherits these unless it sets its own."""
+    """Glob patterns whose files are never indexed; a folder a `name/**` glob
+    covers is pruned unopened. Every source inherits these unless it sets its own."""
 
     include_tags: list[str] | dict[str, list[str]] = Field(default_factory=list)
     """Index only files carrying one of these tags. Empty means no tag is needed."""
