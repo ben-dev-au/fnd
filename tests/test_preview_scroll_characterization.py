@@ -282,12 +282,12 @@ def _coldnav_match_region(
             return None
         # A frozen chunk has no child widgets to walk — that is what freezing
         # is — so its match resolves from the row recorded at capture time, the
-        # way ``enumerate_stop_regions`` resolves one. Walking children only
+        # way ``enumerate_stop_rows`` resolves one. Walking children only
         # made this probe answer None for good once the sweep reached the focus
         # chunk, and every wait gated on it then ran out its whole budget.
         if isinstance(chunk, FrozenChunkView):
             row = chunk.frozen.first_match_row
-            # Same bounds check as ``enumerate_stop_regions``: a clipped view
+            # Same bounds check as ``enumerate_stop_rows``: a clipped view
             # resolves nothing there, and a probe that answers anyway is
             # claiming a parity it does not have.
             if row is None or not (0 <= row < chunk.region.height):

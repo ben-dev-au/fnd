@@ -519,6 +519,17 @@ def test_structural_locate_ignores_culled_chunks() -> None:
     assert strat.locate() == ViewportLocation("structural", chunk_seq=2, offset=3)
 
 
+def test_structural_locate_reads_layout_not_a_region_awaiting_its_render() -> None:
+    """A region lags a scroll, so it would place the viewport where it last rendered."""
+    stale = _FakeWidget(Region(0, 0, 80, 10), virtual_region=Region(0, 10, 80, 10))
+    pane = _FakePane(height=40)
+    pane.scroll_offset = Offset(0, 13)
+    host = _FakeHost(pane, chunk_widgets={2: stale}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    assert strat.locate() == ViewportLocation("structural", chunk_seq=2, offset=3)
+
+
 def test_structural_scroll_to_location_scrolls_to_chunk_plus_offset() -> None:
     # virtual_region.y (content-space top) = 200; restore scrolls to top + the
     # captured 6-row in-chunk offset.

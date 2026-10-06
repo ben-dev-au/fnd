@@ -131,7 +131,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     cell_rows: dict[tuple[int, int, int], int] = {}
     if isinstance(chunk, FNDMarkdown):
         inner = chunk.first_match_block
-        # The chunk's own spec, so this asks exactly what enumerate_stop_regions
+        # The chunk's own spec, so this asks exactly what enumerate_stop_rows
         # asks of the live blocks — a block whose spans were cleared after it
         # registered would otherwise get a scanned row live and row 0 frozen.
         spec = chunk.match_spec
