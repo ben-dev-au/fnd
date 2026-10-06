@@ -599,8 +599,10 @@ async def test_stops_hold_their_rows_while_a_scroll_awaits_its_render(
             message=f"the stops never read as settled at y={start}",
         )
         if state == "visible_map":
-            # The render Textual makes after a scroll: visible widgets only.
-            app.screen._refresh_layout(scroll=True)
+            # Textual's post-scroll fast path, called directly: the screen takes
+            # it only while no widget has a layout pending, which a slow runner
+            # does not guarantee.
+            app.screen._compositor.reflow_visible(app.screen, app.screen.outer_size)
             assert app.screen._compositor._visible_map is not None
 
         pane.scroll_to(y=end, animate=False, immediate=True)
