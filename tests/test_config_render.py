@@ -632,7 +632,8 @@ class TestMigration:
         path = tmp_path / "config.toml"
         current = render_config(_sample())
         assert '"~/Notes"' in current
-        path.write_text(current.replace('"~/Notes"', f'"{Path.home()}/Notes"'), encoding="utf-8")
+        absolute = f"'{Path.home() / 'Notes'}'"  # a literal string, so Windows backslashes parse
+        path.write_text(current.replace('"~/Notes"', absolute), encoding="utf-8")
         assert conf.ensure_current(path) == ["Adopt the canonical layout"]
         assert path.read_text(encoding="utf-8") == current
 
