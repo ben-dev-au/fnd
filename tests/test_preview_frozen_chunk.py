@@ -17,6 +17,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.geometry import Size
+from textual.widget import Widget
 from textual.widgets import DataTable
 
 from fnd.matching import MatchSpec
@@ -68,6 +69,16 @@ async def _built(pilot) -> FNDMarkdown:  # type: ignore[no-untyped-def]
         message="the chunk never reached a capturable state",
     )
     return md
+
+
+def _rows_below(pane: VerticalScroll, chunk: Widget, spec: MatchSpec) -> list[int]:
+    """The pane's stop rows measured from ``chunk``'s top."""
+    from fnd.tui.preview.match_row import layout_offset
+    from fnd.tui.preview_scroll import enumerate_stop_rows
+
+    top = layout_offset(chunk, pane, into_ancestor=False)
+    assert top is not None, "the chunk is not laid out"
+    return [row - top for row in enumerate_stop_rows(pane, spec)]
 
 
 @pytest.mark.asyncio
@@ -289,12 +300,11 @@ async def test_a_chunk_that_scrolls_inside_itself_is_refused() -> None:
 async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
     """Freezing must not make matches unreachable.
 
-    ``enumerate_stop_regions`` walks ``FNDMarkdown`` blocks, and a frozen chunk
+    ``enumerate_stop_rows`` walks ``FNDMarkdown`` blocks, and a frozen chunk
     is not one — so without explicit handling it contributes nothing and its
     matches drop out of n/b navigation and the off-screen markers. Nothing
     raises; the matches simply stop existing, which is why this is pinned.
     """
-    from fnd.tui.preview_scroll import enumerate_stop_regions
 
     app = _Host()
     async with app.run_test(size=(90, 24)) as pilot:
@@ -305,7 +315,7 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
         # ROWS, not just a count: a count cannot see a stop sitting on a block's
         # top row instead of on its match, which is what sends n/b and the ▲▼
         # markers to a row with nothing on it.
-        live_rows = sorted(r.y - md.region.y for r in enumerate_stop_regions(pane, spec))
+        live_rows = _rows_below(pane, md, spec)
         assert live_rows, "fixture should have match stops while live"
 
         frozen = freeze(md, chunk_seq=7)
@@ -320,7 +330,7 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
             message="the live chunk never went away",
         )
 
-        frozen_rows = sorted(r.y - view.region.y for r in enumerate_stop_regions(pane, spec))
+        frozen_rows = _rows_below(pane, view, spec)
         assert frozen_rows == live_rows, (
             f"stops at rows {live_rows} live but {frozen_rows} once frozen — "
             "n/b and the markers move when a chunk is captured"
@@ -408,7 +418,6 @@ async def test_a_wrapped_chunk_keeps_its_stop_rows_through_a_capture() -> None:
     """The stop rows of ``_Host``'s chunk all sit on their blocks' first row, so
     that fixture cannot tell a block-top stop from a match-row one. This one
     wraps, which is where the two diverge."""
-    from fnd.tui.preview_scroll import enumerate_stop_regions
 
     spec = MatchSpec.from_query("quartzfin")
     app = _WrappedHost()
@@ -423,7 +432,7 @@ async def test_a_wrapped_chunk_keeps_its_stop_rows_through_a_capture() -> None:
             message="the chunk never laid out",
         )
         pane = app.query_one("#pane", VerticalScroll)
-        live_rows = sorted(r.y - md.region.y for r in enumerate_stop_regions(pane, spec))
+        live_rows = _rows_below(pane, md, spec)
         assert live_rows, "no match stops while live"
         assert len(live_rows) == 2, (
             f"stops at {live_rows}: expected one stop per match. Either the live "
@@ -447,7 +456,7 @@ async def test_a_wrapped_chunk_keeps_its_stop_rows_through_a_capture() -> None:
             message="the live chunk never went away",
         )
 
-        frozen_rows = sorted(r.y - view.region.y for r in enumerate_stop_regions(pane, spec))
+        frozen_rows = _rows_below(pane, view, spec)
         assert frozen_rows == live_rows, (
             f"stops at rows {live_rows} live but {frozen_rows} once frozen"
         )

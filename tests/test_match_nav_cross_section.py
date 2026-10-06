@@ -119,7 +119,7 @@ def _nav_pressing(sections: list[int], *, chunk_has_stop: bool, stops: list[int]
     )
     taken: list[bool] = []
     nav._pane = lambda: pane  # type: ignore[assignment]
-    nav._region_stops = lambda _p: stops  # type: ignore[assignment]
+    nav._content_stops = lambda _p: stops  # type: ignore[assignment]
     nav._current_chunk_extent = lambda _p: (0, 100)  # type: ignore[assignment]
     nav._select_section_row = lambda seq: (taken.append(seq), True)[1]  # type: ignore[assignment]
     return nav, taken

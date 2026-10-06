@@ -1210,33 +1210,35 @@ class StructuralScrollStrategy:
             done()
 
 
-def stop_region_for_cell(table: DataTable[Any], coord: Any) -> Region | None:
-    """Screen-space region of a DataTable cell, or ``None`` if unresolved
-    (rows unmounted / not sized). Mirrors ``StructuralScrollStrategy.
-    _anchor_region``: the full-height table has no internal scroll, but honour
-    its offset defensively."""
+def stop_row_in_table(table: DataTable[Any], coord: Any) -> int | None:
+    """A DataTable cell's row below the table's top, or ``None`` while its rows
+    are unsized. The full-height table has no internal scroll, but its offset is
+    honoured defensively, as ``StructuralScrollStrategy._anchor_region`` does."""
     try:
         cell = table._get_cell_region(coord)  # pyright: ignore[reportAttributeAccessIssue]
     except Exception:
         return None
     if cell.height == 0:
         return None
-    return cell.translate(table.region.offset - table.scroll_offset)
+    return cell.y - int(table.scroll_offset.y)
 
 
-def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region]:
-    """Every match stop's screen-space region across the pane's mounted
-    chunks, sorted by content-space y. Tables expand to one region per matching
-    cell (``_fnd_match_coords``); other ``FNDMarkdown`` blocks contribute one
-    per row they paint a match on; plain (pdf/txt) chunks contribute one per
-    matching body line.
+def enumerate_stop_rows(pane: VerticalScroll, spec: MatchSpec) -> list[int]:
+    """Every match stop's content row across the pane's mounted chunks, sorted.
+    Tables expand to one stop per matching cell (``_fnd_match_coords``); other
+    ``FNDMarkdown`` blocks contribute one per row they paint a match on; plain
+    (pdf/txt) chunks contribute one per matching body line.
 
-    Off-screen cells of a mounted table resolve fine — the table is one
-    full-height widget — so a big flashcards/glossary table is fully covered
+    Read from layout positions, never ``region``: a region lags a scroll until
+    the next render, and reading one off screen rebuilds the map at the live
+    offset, so regions in one pass need not share a frame.
+
+    Off-screen cells of a mounted table resolve fine (the table is one
+    full-height widget), so a big flashcards or glossary table is fully covered
     once its chunk is mounted. Queries descendants (chunks live inside a
     ``PreviewContainer``), not just the pane's direct children.
 
-    A FROZEN chunk has no blocks to walk — that is the point of freezing — so its
+    A FROZEN chunk has no blocks to walk (that is the point of freezing), so its
     stops come from the rows recorded at capture time. Without this a frozen
     chunk contributes nothing, and its matches become unreachable by ``n``/``b``
     and invisible to the off-screen markers: the failure is silent, which is
@@ -1245,7 +1247,7 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
 
     from fnd.render import text_has_any_match
     from fnd.tui.preview.frozen import FrozenChunkView
-    from fnd.tui.preview.match_row import region_at_row, rows_to_matches
+    from fnd.tui.preview.match_row import layout_offset, rows_to_matches
     from fnd.tui.widgets.markdown import (
         FNDMarkdown,
         FNDMarkdownTableDT,
@@ -1253,49 +1255,53 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
         FNDMarkdownTH,
     )
 
-    regions: list[Region] = []
+    rows: list[int] = []
     if spec.is_empty:
-        return regions
+        return rows
     for md in pane.query(FNDMarkdown):
+        md_top = layout_offset(md, pane, into_ancestor=False)
+        if md_top is None:
+            continue
         # Tables: query the DataTable directly for every matching cell. (The
         # table's TH/TD cells also self-register in match_blocks as phantom,
-        # never-mounted blocks — skip them below; the table owns their cells.)
+        # never-mounted blocks; skip them below, the table owns their cells.)
         for dt in md.query(DataTable):
+            dt_top = layout_offset(dt, md, into_ancestor=True)
+            if dt_top is None:
+                continue
             for coord in getattr(dt, "_fnd_match_coords", []):
-                r = stop_region_for_cell(dt, coord)
-                if r is not None:
-                    regions.append(r)
+                cell = stop_row_in_table(dt, coord)
+                if cell is not None:
+                    rows.append(md_top + dt_top + cell)
         # Non-table match blocks, on every row a match PAINTS on: a stop on the
         # block's top row sends n/b, and the ▲▼ markers that read this, to a row
         # with no match on it.
         for block in md.match_blocks:
             if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
                 continue
-            if block.region.height > 0:
-                regions.extend(
-                    region_at_row(block.region, row) for row in rows_to_matches(block, spec)
-                )
+            top = layout_offset(block, md, into_ancestor=True)
+            if top is not None:
+                rows.extend(md_top + top + row for row in rows_to_matches(block, spec))
     # Frozen chunks: the stops were recorded as rows while the blocks still
     # existed, so they resolve by offset from the view's own top. A table cell's
     # row came from the same capture, which is why they need no special case
-    # here — unlike the live path above, where a cell has to be resolved against
+    # here, unlike the live path above, where a cell has to be resolved against
     # a DataTable that may not have laid its rows out yet.
     for view in pane.query(FrozenChunkView):
-        base = view.region
-        if base.height == 0:
+        top = layout_offset(view, pane, into_ancestor=False)
+        if top is None:
             continue
-        for row in view.frozen.stop_rows:
-            if 0 <= row < base.height:
-                regions.append(Region(base.x, base.y + row, base.width, 1))
+        height = view.virtual_region.height
+        rows.extend(top + row for row in view.frozen.stop_rows if 0 <= row < height)
     # Plain (pdf/txt) chunks render one Static per body line; a matching line
     # is a stop.
     for line in pane.query("Static.chunk-line"):
         txt = getattr(line, "fnd_text", None)
-        if txt and text_has_any_match(txt, spec) and line.region.height > 0:
-            regions.append(line.region)
-    # Content-space y so the order is stable regardless of the live scroll.
-    regions.sort(key=lambda r: r.y + pane.scroll_offset.y)
-    return regions
+        if txt and text_has_any_match(txt, spec):
+            top = layout_offset(line, pane, into_ancestor=False)
+            if top is not None:
+                rows.append(top)
+    return sorted(rows)
 
 
 class FlatHost(Protocol):
