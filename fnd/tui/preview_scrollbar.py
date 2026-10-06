@@ -415,6 +415,15 @@ class MatchAwareScroll(VerticalScroll):
             return
         super().action_scroll_up()
 
+    def halt_glide(self) -> None:
+        """Stop a scroll animation where it is. A scroll that finds the pane in
+        place issues nothing, so a glide to an earlier target would carry on;
+        animating to the current value drops it without ``force_stop``'s jump."""
+        if not self.app.animator.is_being_animated(self, "scroll_y"):
+            return
+        self.animate("scroll_y", self.scroll_y, duration=0)
+        self.scroll_target_y = self.scroll_y
+
     #: ``(widget, virtual_y)`` for a chunk just below content being revealed
     #: ABOVE the viewport. Every layout that pushes that widget further down is
     #: the prepend landing, and the pane scrolls by exactly that so the document
