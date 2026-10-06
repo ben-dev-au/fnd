@@ -195,3 +195,21 @@ def test_no_message_points_at_a_command_that_does_not_exist() -> None:
 
     assert "status --errors" not in inspect.getsource(walk)
     assert CliRunner().invoke(app, ["status", "--errors"]).exit_code != 0
+
+
+def test_collection_add_writes_excludes_into_the_sources_filters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The CLI writes the current place, so no later migration has to move it."""
+    import tomllib
+
+    runner, cfg_path = _runner_with_config(monkeypatch, tmp_path)
+    notes = tmp_path / "n"
+    notes.mkdir()
+    result = runner.invoke(
+        app, ["collection", "add", "c", "--source", str(notes), "--exclude", "**/.trash/**"]
+    )
+    assert result.exit_code == 0, result.output
+    source = tomllib.loads(cfg_path.read_text(encoding="utf-8"))["collections"]["c"]["sources"][0]
+    assert "excludes" not in source
+    assert source["filters"]["excludes"] == ["**/.trash/**"]

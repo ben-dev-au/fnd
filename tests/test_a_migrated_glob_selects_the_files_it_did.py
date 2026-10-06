@@ -138,7 +138,8 @@ def _legacy_selects(includes: list[str], excludes: list[str], rel: str) -> bool:
 def _migrated(includes: list[str], excludes: list[str]) -> tuple[list[str], list[str]]:
     source: dict[str, Any] = {"path": "~/x", "includes": list(includes), "excludes": excludes}
     migrate({"collections": {"c": {"sources": [source]}}})
-    return source["includes"], source["excludes"]
+    # v3 moves a source's excludes into its filters, after v2 respelled them.
+    return source["includes"], source.get("filters", {}).get("excludes", [])
 
 
 def _mismatches(glob: str) -> list[str]:

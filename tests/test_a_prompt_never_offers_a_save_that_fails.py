@@ -163,7 +163,7 @@ async def test_a_buried_form_can_be_saved_from_the_prompt(
             await pilot.pause()
         form = app.screen
         assert isinstance(form, SourceFormScreen)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         app.push_screen(AddCollectionWizard())
         for _ in range(20):
             await pilot.pause()

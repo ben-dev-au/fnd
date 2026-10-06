@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import dataclasses
 import textwrap
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
@@ -325,31 +326,6 @@ def _display_path(raw: str) -> str:
     return under_home(Path(raw).expanduser())
 
 
-def _discard_custom_globs(screen: Any, field_key: str) -> None:
-    """Clear a custom-glob field, keeping the text on offer for the visit.
-
-    The tick is derived from the text, so the value cannot simply stay; but
-    dropping it outright would lose typed globs to one keypress, with no undo.
-    """
-    text = str(screen._fields.get(field_key) or "").strip()
-    if not text:
-        return
-    screen._discarded_globs[field_key] = text
-    screen._fields[field_key] = ""
-    screen.app.notify(f"Custom globs cleared. Tick again to restore: {text}")
-
-
-def _custom_seed(screen: Any, field_key: str) -> str:
-    """What the glob prompt opens with: the current value, else the one the
-    last untick cleared."""
-    current = str(screen._fields.get(field_key) or "")
-    return current or screen._discarded_globs.get(field_key, "")
-
-
-# Textual selectors are type selectors and a widget's own CSS is scoped to it,
-# so neither `CSS = OtherScreen.CSS` nor a shared class selector matches the
-# borrowing screen, which then renders with no background, border or docked footer.
-# One definition, stamped with each screen's own name.
 _PROMPT_CSS = """
 {cls} {{ background: $surface; }}
 {cls} > #settings_box {{
@@ -1891,9 +1867,7 @@ class SettingsScreen(Screen[None]):
             self._refresh_hint_bar()
             return
         if item.kind == KIND_PICKER:
-            self.app.push_screen(
-                TreePickerScreen(item) if item.groups_provider is not None else PickerScreen(item)
-            )
+            self.app.push_screen(PickerScreen(item))
             return
         if item.kind == KIND_EXTERNAL:
             if item.external is not None:
@@ -2185,7 +2159,6 @@ def open_source_filter_browser(
     root: Any,
     on_change: Callable[[], None],
     globs: list[str] | None = None,
-    excludes: list[str] | None = None,
 ) -> None:
     """The source's *effective* filters, edited as branches.
 
@@ -2225,8 +2198,8 @@ def open_source_filter_browser(
             root,
             budget_s=0.8,
             ignore_names=names,
-            # The pane names these in its own footer as paths it is skipping.
-            excludes=list(excludes or ()),
+            # The excludes the screen is showing, so a tick changes the counts at once.
+            excludes=list(gating.excludes),
             gate=build_gate(dataclasses.replace(gating, kinds=())),
         )
 
@@ -2254,7 +2227,6 @@ def open_source_filter_browser(
             sample_provider=_sample,
             no_tags_note="no tags found in this source",
             globs=list(globs or ()),
-            excludes=list(excludes or ()),
             inherited=(
                 _spec_from_filters(defaults),
                 defaults.respect_gitignore,
@@ -2263,14 +2235,6 @@ def open_source_filter_browser(
             on_commit=_save,
         )
     )
-
-
-def _default_filters(app: Any) -> Any:
-    """The global default filters, or the shipped ones when no config."""
-    from fnd.config import DefaultFilters
-
-    cfg = getattr(app, "_config", None)
-    return getattr(getattr(cfg, "defaults", None), "filters", None) or DefaultFilters()
 
 
 def _default_frontmatter(app: Any) -> str:
@@ -2344,32 +2308,6 @@ def _source_filters_or_none(raw: dict[str, Any] | None) -> Any:
     return SourceFilters.model_validate(cleaned) if cleaned else None
 
 
-def _exclude_globs(fields: dict[str, Any]) -> list[str]:
-    """Every exclude glob in force, presets expanded."""
-    from fnd.config import EXCLUDES_PRESETS
-
-    out: list[str] = []
-    for key in fields.get("excludes_presets") or ():
-        if key in EXCLUDES_PRESETS:
-            out.extend(EXCLUDES_PRESETS[key]["globs"])
-    out += [g.strip() for g in str(fields.get("excludes_custom") or "").split(",") if g.strip()]
-    return out
-
-
-def _excludes_summary(fields: dict[str, Any]) -> str:
-    """The presets and globs by name: a count would show the globs nowhere in
-    the UI."""
-    from fnd.config import EXCLUDES_PRESETS
-
-    named = [
-        str(EXCLUDES_PRESETS[key]["label"])
-        for key in fields.get("excludes_presets") or ()
-        if key in EXCLUDES_PRESETS
-    ]
-    named += [g.strip() for g in str(fields.get("excludes_custom") or "").split(",") if g.strip()]
-    return ", ".join(named) if named else "(none)"
-
-
 def _overridden_fields(overrides: dict[str, Any] | None) -> list[str]:
     """The settings a source overrides, one name each.
 
@@ -2381,94 +2319,8 @@ def _overridden_fields(overrides: dict[str, Any] | None) -> list[str]:
     return sorted(names)
 
 
-def _includes_groups() -> list[ToggleGroup]:
-    """Category → kind model for the Includes nested picker (all registry
-    kinds, since a source can index any supported type)."""
-    from fnd.kinds import CATEGORIES, KIND_BY_ID, KINDS_IN_CATEGORY
-
-    groups: list[ToggleGroup] = []
-    for cat in CATEGORIES:
-        items = tuple(
-            ToggleItem(k, f"{KIND_BY_ID[k].label} ({'/'.join(KIND_BY_ID[k].suffixes)})")
-            for k in KINDS_IN_CATEGORY[cat.id]
-        )
-        if items:
-            groups.append(ToggleGroup(cat.id, cat.label, items))
-    return groups
-
-
-class TreePickerScreen(Screen[None]):
-    """Nested category→item multi-select for a picker item that supplies a
-    ``groups_provider``. Reuses the shared :class:`ToggleTree`, so it toggles,
-    cascades, and repaints exactly like the file-type filter. Changes apply as
-    they are toggled, so leaving is all there is to do."""
-
-    ROLE: ClassVar[Role] = Role.SETTING
-
-    BINDINGS = [  # noqa: RUF012
-        Binding("escape,left", "back", "Back", show=False),
-    ]
-
-    CSS = """
-    TreePickerScreen { background: $surface; }
-    TreePickerScreen > #settings_box {
-        height: 1fr; border: round $primary 50%; padding: 0 1;
-    }
-    TreePickerScreen > #settings_box:focus-within { border: round $accent; }
-    TreePickerScreen > #footer_hints {
-        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
-    }
-    """
-
-    def __init__(self, item: MenuItem) -> None:
-        super().__init__()
-        self._item = item
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="settings_box") as box:
-            box.border_title = self._item.label
-            yield ToggleTree(id="tree_picker")
-        yield Static("", id="footer_hints")
-
-    def on_mount(self) -> None:
-        app: FNDApp = self.app  # type: ignore[assignment]
-        groups = list(self._item.groups_provider(app)) if self._item.groups_provider else []
-        current = self._item.picker_getter(app) if self._item.picker_getter else []
-        selected = set(current) if isinstance(current, list | tuple | set) else set()
-        tree = self.query_one("#tree_picker", ToggleTree)
-        tree.set_model(groups, selected, expanded={g.id for g in groups})
-        tree.focus()
-        self.query_one("#footer_hints", Static).update(
-            _hint_bar(
-                app,
-                (("⏎", "Toggle"), ("←/→", "Collapse/Expand"), leave_hint()),
-            )
-        )
-
-    @on(ToggleTree.SelectionChanged)
-    def _on_changed(self, ev: ToggleTree.SelectionChanged) -> None:
-        # Commit live so the row summary updates as the user toggles.
-        self._commit(ev.selected)
-
-    @on(ToggleTree.NavigatedOut)
-    def _on_navigated_out(self, _ev: ToggleTree.NavigatedOut) -> None:
-        """← at the outermost level leaves, as it does everywhere else in
-        Settings. The tree's own binding would otherwise swallow it."""
-        self.action_back()
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-    def _commit(self, values: frozenset[str]) -> None:
-        if self._item.picker_setter is None:
-            return
-        try:
-            self._item.picker_setter(self.app, sorted(values))  # type: ignore[arg-type]
-        except Exception as e:
-            self.notify(_summarise(e), severity="error", title="Save failed")
-
-
-# ── Collection-form screens (rebuilt from CollectionsScreen) ────────
+#: One title wherever the frontmatter rule is edited.
+_FRONTMATTER_RULE_TITLE = "Frontmatter rule · files with frontmatter"
 
 
 def _repopulate_keeping_cursor(lst: SettingsList, items: list[MenuItem]) -> None:
@@ -2478,44 +2330,165 @@ def _repopulate_keeping_cursor(lst: SettingsList, items: list[MenuItem]) -> None
     lst.set_items(items, cursor_id=here)
 
 
-def _kinds_to_include_globs(kind_ids: list[str]) -> list[str]:
-    """Expand selected kind ids to include globs for all their suffixes."""
-    from fnd.kinds import KIND_BY_ID
+class _SourceFields(Screen[None]):
+    """What a source's fields do, wherever a source is edited: the source form and
+    Add collection share one implementation, so the two cannot drift.
 
-    globs: list[str] = []
-    for kid in kind_ids:
-        spec = KIND_BY_ID.get(kid)
-        if spec is not None:
-            globs.extend(f"**/*{sfx}" for sfx in spec.suffixes)
-    return globs
+    The host is a Screen holding ``_fields`` with ``path``, ``includes_custom``
+    and ``filters``, and the sample-tester widgets."""
+
+    _fields: dict[str, Any]
+
+    def _populate_fields(self) -> None:
+        raise NotImplementedError
+
+    def _render_footer(self) -> None:
+        raise NotImplementedError
+
+    def _frontmatter_text(self) -> str:
+        """This source's frontmatter rule.
+
+        Only the overrides: a legacy ``frontmatter_filter`` is folded into
+        them at load, so falling back to it here would resurrect a rule the
+        user has just cleared in the browser.
+        """
+        return str(self._fields["filters"].get("frontmatter") or "")
+
+    def _effective_frontmatter(self) -> tuple[str, bool]:
+        """The rule that actually applies, and whether it came from the
+        defaults. A source with no override of its own still has files dropped
+        by `[defaults.filters].frontmatter`, and testing a sample against
+        nothing told the user the opposite."""
+        own = self._frontmatter_text().strip()
+        if own:
+            return own, False
+        cfg = getattr(self.app, "_config", None)
+        inherited = getattr(getattr(cfg, "defaults", None), "filters", None)
+        return str(getattr(inherited, "frontmatter", None) or "").strip(), True
+
+    def _frontmatter_into_filters(self, text: str) -> dict[str, Any]:
+        """The frontmatter rule as part of this source's filter overrides.
+
+        As a separate field beside the filters, the browser and the row could
+        disagree about the same rule with neither showing the other's value.
+        """
+        return _merge_frontmatter(
+            dict(self._fields["filters"]),
+            text,
+            _default_frontmatter(self.app),
+            had_override=self._fields["filters"].get("frontmatter") is not None,
+        )
+
+    def _open_filters(self) -> None:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        raw_path = str(self._fields.get("path") or "").strip()
+        root = Path(raw_path).expanduser() if raw_path else None
+        globs = [
+            g.strip()
+            for g in str(self._fields.get("includes_custom") or "").split(",")
+            if g.strip()
+        ]
+        open_source_filter_browser(
+            app,
+            self._fields["filters"],
+            root,
+            self._populate_fields,
+            globs,
+        )
+
+    def _filters_summary(self) -> str:
+        count = len(_overridden_fields(self._fields.get("filters")))
+        return f"{count} overridden" if count else "inherited"
+
+    def _refresh_sample_tester(self) -> None:
+        """The tester only appears once there is a rule for it to test.
+
+        It cost a third of the form on every source, and named a rule that
+        lives two screens away without saying which.
+        """
+        rule, inherited = self._effective_frontmatter()
+        for wid in ("#form_sample_sep", "#frontmatter_sample", "#match_status"):
+            self.query_one(wid).display = bool(rule)
+        self._render_footer()
+        if not rule:
+            return
+        source = " (inherited)" if inherited else ""
+        shown = sanitise_display_text(rule)
+        width = max(20, self.size.width - 12)
+        if len(shown) > width:
+            shown = shown[: width - 1] + "…"
+        self.query_one("#form_sample_sep", Static).update(
+            f"─── Paste frontmatter to test:  {shown}{source} ───"
+        )
+
+    def _refresh_match_status(self) -> None:
+        sample = self.query_one("#frontmatter_sample", TextArea).text
+        filter_text, inherited = self._effective_frontmatter()
+        status = self.query_one("#match_status", Static)
+        status.remove_class("-match")
+        status.remove_class("-no-match")
+        if not sample.strip():
+            status.update("(no sample)")
+            return
+        from fnd.filter_dsl import parse_or_error
+        from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_text
+
+        try:
+            fm: dict[str, object] = read_frontmatter_from_text(sample) or {}
+        except FrontmatterParseError as e:
+            status.update(f"✗ frontmatter parse error: {e}")
+            status.add_class("-no-match")
+            return
+        if not filter_text:
+            status.update("(no rule, here or in the defaults)")
+            return
+        source = " (inherited from the defaults)" if inherited else ""
+        pred, err = parse_or_error(filter_text)
+        if err is not None or pred is None:
+            status.update(f"✗ filter syntax: col {err.column}" if err else "✗ syntax error")
+            status.add_class("-no-match")
+            return
+        if pred(fm):
+            status.update(f"✓ sample matches the rule{source}")
+            status.add_class("-match")
+        else:
+            status.update(f"✗ sample does not match the rule{source}")
+            status.add_class("-no-match")
+
+    def _edit_frontmatter(self) -> None:
+        """The frontmatter rule in the same editor Index filters uses, on the same value."""
+
+        def _save(text: str) -> None:
+            self._fields["filters"] = self._frontmatter_into_filters(text)
+            self._populate_fields()  # type: ignore[attr-defined]
+
+        self.app.push_screen(  # type: ignore[attr-defined]
+            RuleTextScreen(
+                title=_FRONTMATTER_RULE_TITLE,
+                value=self._frontmatter_text(),
+                note_scoped=True,
+                on_save=_save,
+            )
+        )
+
+    def _frontmatter_with_status(self) -> str:
+        """The rule with a live parse mark, or the inherited one, or (none)."""
+        own = self._frontmatter_text().strip()
+        if not own:
+            inherited = _default_frontmatter(self.app).strip()  # type: ignore[attr-defined]
+            return f"{inherited} (inherited)" if inherited else "(none)"
+        from fnd.filter_dsl import parse_or_error
+
+        _pred, err = parse_or_error(own)
+        return f"{own}   ✓" if err is None else f"{own}   ✗ col {err.column}"
 
 
-def _split_excludes_globs(globs: list[str]) -> tuple[list[str], str]:
-    """Map excludes globs back to ``(preset_keys, custom_blob)``.
-
-    A preset is considered selected iff every glob it ships is present.
-    Once a preset's globs are consumed they are removed from the remaining
-    pool; whatever's left becomes the comma-joined custom blob.
-    """
-    from fnd.config import EXCLUDES_PRESETS
-
-    remaining = list(globs)
-    preset_keys: list[str] = []
-    for key, preset in EXCLUDES_PRESETS.items():
-        preset_globs = preset["globs"]
-        if all(g in remaining for g in preset_globs):
-            preset_keys.append(key)
-            for g in preset_globs:
-                remaining.remove(g)
-    return preset_keys, ", ".join(remaining)
-
-
-class SourceFormScreen(DocumentScreen):
+class SourceFormScreen(_SourceFields, DocumentScreen):
     """Per-source editor: a document (see :mod:`fnd.tui.editing`).
 
-    Multi-field form (Path, Includes, Excludes, Filter, Follow symlinks)
-    plus a TextArea below for the pasted-frontmatter sample tester. Same
-    chrome as the other Settings screens.
+    Multi-field form (Path, Follow symlinks, Index filters, Restrict to these
+    paths, Opening) plus a TextArea below for the pasted-frontmatter sample
+    tester. Same chrome as the other Settings screens.
     """
 
     SUBJECT = "this source"
@@ -2554,13 +2527,9 @@ class SourceFormScreen(DocumentScreen):
         super().__init__()
         self._collection_name = collection_name
         self._source_index = source_index  # None = adding new
-        # Globs an untick cleared, so re-ticking can offer them back.
-        self._discarded_globs: dict[str, str] = {}
         self._fields: dict[str, Any] = {
             "path": "",
             "includes_custom": "",  # comma-separated free-form globs
-            "excludes_presets": [],  # list[str] of EXCLUDES_PRESETS keys
-            "excludes_custom": "",  # comma-separated free-form globs
             "filter": "",
             "follow_symlinks": False,
             # Per-source app override + Obsidian vault.
@@ -2641,12 +2610,9 @@ class SourceFormScreen(DocumentScreen):
         # Every include glob, type globs too: the model folds those into
         # `kinds` only when nothing else is listed, so one still here is an
         # ORed path glob like its neighbours, not a file type.
-        preset_keys, excludes_custom = _split_excludes_globs(list(s.excludes))
         self._fields = {
             "path": str(s.path),
             "includes_custom": ", ".join(s.includes),
-            "excludes_presets": preset_keys,
-            "excludes_custom": excludes_custom,
             "filter": _source_frontmatter(s),
             "follow_symlinks": bool(s.follow_symlinks),
             "app": s.app or "",
@@ -2657,62 +2623,6 @@ class SourceFormScreen(DocumentScreen):
         # never equals the fields, so every save would force a rebuild.
         self._snapshot = copy.deepcopy(self._fields)
 
-    def _frontmatter_text(self) -> str:
-        """This source's frontmatter rule.
-
-        Only the overrides: a legacy ``frontmatter_filter`` is folded into
-        them at load, so falling back to it here would resurrect a rule the
-        user has just cleared in the browser.
-        """
-        return str(self._fields["filters"].get("frontmatter") or "")
-
-    def _effective_frontmatter(self) -> tuple[str, bool]:
-        """The rule that actually applies, and whether it came from the
-        defaults. A source with no override of its own still has files dropped
-        by `[defaults.filters].frontmatter`, and testing a sample against
-        nothing told the user the opposite."""
-        own = self._frontmatter_text().strip()
-        if own:
-            return own, False
-        cfg = getattr(self.app, "_config", None)
-        inherited = getattr(getattr(cfg, "defaults", None), "filters", None)
-        return str(getattr(inherited, "frontmatter", None) or "").strip(), True
-
-    def _frontmatter_into_filters(self, text: str) -> dict[str, Any]:
-        """The frontmatter rule as part of this source's filter overrides.
-
-        As a separate field beside the filters, the browser and the row could
-        disagree about the same rule with neither showing the other's value.
-        """
-        return _merge_frontmatter(
-            dict(self._fields["filters"]),
-            text,
-            _default_frontmatter(self.app),
-            had_override=self._fields["filters"].get("frontmatter") is not None,
-        )
-
-    def _open_filters(self) -> None:
-        app: FNDApp = self.app  # type: ignore[assignment]
-        raw_path = str(self._fields.get("path") or "").strip()
-        root = Path(raw_path).expanduser() if raw_path else None
-        globs = [
-            g.strip()
-            for g in str(self._fields.get("includes_custom") or "").split(",")
-            if g.strip()
-        ]
-        open_source_filter_browser(
-            app,
-            self._fields["filters"],
-            root,
-            self._populate_fields,
-            globs,
-            _exclude_globs(self._fields),
-        )
-
-    def _filters_summary(self) -> str:
-        count = len(_overridden_fields(self._fields.get("filters")))
-        return f"{count} overridden" if count else "inherited"
-
     def _populate_fields(self) -> None:
         _repopulate_keeping_cursor(self.query_one(SettingsList), self._build_field_items())
         self._refresh_sample_tester()
@@ -2720,29 +2630,7 @@ class SourceFormScreen(DocumentScreen):
         # very field it named, so "Name is required." sat above a filled name.
         self._clear_error()
 
-    def _refresh_sample_tester(self) -> None:
-        """The tester only appears once there is a rule for it to test.
-
-        It cost a third of the form on every source, and named a rule that
-        lives two screens away without saying which.
-        """
-        rule, inherited = self._effective_frontmatter()
-        for wid in ("#form_sample_sep", "#frontmatter_sample", "#match_status"):
-            self.query_one(wid).display = bool(rule)
-        self._render_footer()
-        if not rule:
-            return
-        source = " (inherited)" if inherited else ""
-        shown = sanitise_display_text(rule)
-        width = max(20, self.size.width - 12)
-        if len(shown) > width:
-            shown = shown[: width - 1] + "…"
-        self.query_one("#form_sample_sep", Static).update(
-            f"─── Paste frontmatter to test:  {shown}{source} ───"
-        )
-
     def _build_field_items(self) -> list[MenuItem]:
-        from fnd.config import EXCLUDES_PRESETS
 
         return [
             header("Source", level=2),
@@ -2793,35 +2681,6 @@ class SourceFormScreen(DocumentScreen):
                     "'**/*.md, .obsidian/**'. File types belong in Index "
                     "filters."
                 ),
-            ),
-            MenuItem(
-                id="form.excludes",
-                label="Excludes",
-                value_getter=lambda _app: _excludes_summary(self._fields),
-                description=(
-                    "Paths to skip, as ready-made presets or your own globs. "
-                    "Applied before any filter, so an excluded folder is never "
-                    "read at all."
-                ),
-                kind=KIND_PICKER,
-                multi=True,
-                choices_provider=lambda _app: [
-                    *(
-                        ChoiceOption(
-                            value=key,
-                            label=preset["label"],
-                            description=", ".join(preset["globs"]),
-                        )
-                        for key, preset in EXCLUDES_PRESETS.items()
-                    ),
-                    ChoiceOption(
-                        value="__custom__",
-                        label="Custom glob…",
-                        description="Add a free-form glob pattern (comma-separated).",
-                    ),
-                ],
-                picker_getter=lambda _app: self._excludes_picker_state(),
-                picker_setter=lambda _app, vs: self._set_excludes(vs),
             ),
             header("Opening", level=2),
             MenuItem(
@@ -2911,40 +2770,6 @@ class SourceFormScreen(DocumentScreen):
                     self._fields["app_params_vault"] = detected
         self.query_one(SettingsList).refresh_values()
 
-    def _excludes_picker_state(self) -> list[str]:
-        state = list(self._fields["excludes_presets"])
-        if str(self._fields.get("excludes_custom") or "").strip():
-            state.append("__custom__")
-        return state
-
-    def _set_excludes(self, values: list[str]) -> None:
-        picked = list(values)
-        wants_custom = "__custom__" in picked
-        self._fields["excludes_presets"] = [v for v in picked if v != "__custom__"]
-        if wants_custom and not str(self._fields.get("excludes_custom") or "").strip():
-            self._prompt_custom("excludes_custom", "Excludes custom globs (comma-separated)")
-        elif not wants_custom:
-            self._discard_custom("excludes_custom")
-        self.query_one(SettingsList).refresh_values()
-
-    def _discard_custom(self, field_key: str) -> None:
-        """Untick clears the globs, but keeps them for the visit.
-
-        The tick is derived from the text, so leaving it set would re-tick the
-        row; dropping it outright would lose typed globs to one keypress.
-        """
-        _discard_custom_globs(self, field_key)
-
-    def _prompt_custom(self, field_key: str, label: str) -> None:
-        item = MenuItem(
-            id=f"form.{field_key}",
-            label=label,
-            hint=_GLOB_HINT,
-            kind=KIND_SCALAR,
-            value_getter=lambda _app, key=field_key: str(self._fields.get(key) or ""),
-        )
-        self.query_one(EditBar).open(item, _custom_seed(self, field_key))
-
     def _field_item(self, key: str, label: str, *, hint: str, description: str = "") -> MenuItem:
         def _get(_app: Any) -> str:
             v = self._fields[key]
@@ -2976,9 +2801,7 @@ class SourceFormScreen(DocumentScreen):
     def _on_field_activated(self, ev: SettingsList.Activated) -> None:
         item = ev.item
         if item.kind == KIND_PICKER:
-            self.app.push_screen(
-                TreePickerScreen(item) if item.groups_provider is not None else PickerScreen(item)
-            )
+            self.app.push_screen(PickerScreen(item))
         elif item.kind == KIND_SCALAR:
             current = self._fields.get(item.id.split(".", 1)[-1], "")
             self.query_one(EditBar).open(item, str(current or ""))
@@ -3014,40 +2837,6 @@ class SourceFormScreen(DocumentScreen):
     @on(TextArea.Changed, "#frontmatter_sample")
     def _on_sample_changed(self, _ev: TextArea.Changed) -> None:
         self._refresh_match_status()
-
-    def _refresh_match_status(self) -> None:
-        sample = self.query_one("#frontmatter_sample", TextArea).text
-        filter_text, inherited = self._effective_frontmatter()
-        status = self.query_one("#match_status", Static)
-        status.remove_class("-match")
-        status.remove_class("-no-match")
-        if not sample.strip():
-            status.update("(no sample)")
-            return
-        from fnd.filter_dsl import parse_or_error
-        from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_text
-
-        try:
-            fm: dict[str, object] = read_frontmatter_from_text(sample) or {}
-        except FrontmatterParseError as e:
-            status.update(f"✗ frontmatter parse error: {e}")
-            status.add_class("-no-match")
-            return
-        if not filter_text:
-            status.update("(no rule, here or in the defaults)")
-            return
-        source = " (inherited from the defaults)" if inherited else ""
-        pred, err = parse_or_error(filter_text)
-        if err is not None or pred is None:
-            status.update(f"✗ filter syntax: col {err.column}" if err else "✗ syntax error")
-            status.add_class("-no-match")
-            return
-        if pred(fm):
-            status.update(f"✓ sample matches the rule{source}")
-            status.add_class("-match")
-        else:
-            status.update(f"✗ sample does not match the rule{source}")
-            status.add_class("-no-match")
 
     def _parse_status(self, filter_text: str) -> str:
         from fnd.filter_dsl import parse_or_error
@@ -3127,7 +2916,6 @@ class SourceFormScreen(DocumentScreen):
         from pathlib import Path
 
         from fnd.config import (
-            EXCLUDES_PRESETS,
             CollectionConfig,
             SourceConfig,
             default_config_path,
@@ -3144,13 +2932,6 @@ class SourceFormScreen(DocumentScreen):
             g = g.strip()
             if g:
                 includes_globs.append(g)
-        excludes_globs: list[str] = []
-        for preset_id in self._fields["excludes_presets"]:
-            excludes_globs.extend(EXCLUDES_PRESETS[preset_id]["globs"])
-        for g in str(self._fields.get("excludes_custom") or "").split(","):
-            g = g.strip()
-            if g:
-                excludes_globs.append(g)
         app: FNDApp = self.app  # type: ignore[assignment]
         # Read the file, not the launch snapshot: `write_collection` replaces the
         # collection table wholesale, so a stale model deletes sources added by
@@ -3192,7 +2973,6 @@ class SourceFormScreen(DocumentScreen):
         values.update(
             path=Path(path),
             includes=includes_globs,
-            excludes=excludes_globs,
             follow_symlinks=bool(self._fields["follow_symlinks"]),
             frontmatter_filter=None,
             filters=_source_filters_or_none(
@@ -3285,7 +3065,7 @@ class SourceFormScreen(DocumentScreen):
         target.focus()
 
 
-class AddCollectionWizard(DocumentScreen):
+class AddCollectionWizard(_SourceFields, DocumentScreen):
     """Single-screen form for creating a new collection + its first source.
 
     Field rows live in a SettingsList; the frontmatter sample tester docks
@@ -3331,21 +3111,13 @@ class AddCollectionWizard(DocumentScreen):
 
     def __init__(self) -> None:
         super().__init__()
-        from fnd.config import EXCLUDES_PRESETS
-
-        # Globs an untick cleared, so re-ticking can offer them back.
-        self._discarded_globs: dict[str, str] = {}
+        # The same field names the source form uses, so the shared methods serve both.
         self._fields: dict[str, Any] = {
             "name": "",
             "path": "",
-            "includes": [],
-            "includes_custom": "",
-            "excludes_presets": [
-                key for key, preset in EXCLUDES_PRESETS.items() if preset["default"]
-            ],
-            "excludes_custom": "",
-            "filter": "",
             "follow_symlinks": False,
+            "includes_custom": "",
+            "filters": {},
         }
 
     def compose(self) -> ComposeResult:
@@ -3407,21 +3179,9 @@ class AddCollectionWizard(DocumentScreen):
         # very field it named, so "Name is required." sat above a filled name.
         self._clear_error()
 
-    def _refresh_sample_tester(self) -> None:
-        """As on the source form: nothing to test without a rule."""
-        rule = str(self._fields.get("filter") or "").strip()
-        for wid in ("#form_sample_sep", "#frontmatter_sample", "#match_status"):
-            self.query_one(wid).display = bool(rule)
-        if rule:
-            self.query_one("#form_sample_sep", Static).update(
-                f"─── Paste frontmatter to test:  {sanitise_display_text(rule)} ───"
-            )
-        self._render_footer()
-
     def _build_field_items(self) -> list[MenuItem]:
-        from fnd.config import EXCLUDES_PRESETS
-
-        return [
+        """The collection's own name, then a Source box holding everything that is the source's."""
+        collection = [
             MenuItem(
                 id="wiz.name",
                 label="Name",
@@ -3429,66 +3189,19 @@ class AddCollectionWizard(DocumentScreen):
                 kind=KIND_SCALAR,
                 value_getter=lambda _app: self._fields["name"] or "(required)",
             ),
+        ]
+        source = [
             MenuItem(
                 id="wiz.path",
-                label="Source path",
-                description="The folder to index. Add more sources to it afterwards.",
+                label="Path",
+                description=(
+                    "The folder to index. ~ expands; the path must exist. Add more "
+                    "sources to the collection afterwards."
+                ),
                 kind=KIND_SCALAR,
+                hint="path or ~/path",
                 value_getter=lambda _app: self._fields["path"] or "(required)",
                 elide="head",
-            ),
-            MenuItem(
-                id="wiz.includes",
-                label="File types",
-                value_getter=lambda _app: self._summarise_includes(),
-                description=(
-                    "Which types to index. Tick none for every supported type, "
-                    "which also picks up ones added in later versions."
-                ),
-                kind=KIND_PICKER,
-                multi=True,
-                groups_provider=lambda _app: _includes_groups(),
-                picker_getter=lambda _app: self._includes_picker_state(),
-                picker_setter=lambda _app, vs: self._set_includes(vs),
-            ),
-            MenuItem(
-                id="wiz.excludes",
-                label="Excludes",
-                value_getter=lambda _app: self._summarise_excludes(),
-                description=(
-                    "Paths to skip, as presets or your own globs. Applied "
-                    "before any filter, so an excluded folder is never read."
-                ),
-                kind=KIND_PICKER,
-                multi=True,
-                choices_provider=lambda _app: [
-                    *(
-                        ChoiceOption(
-                            value=key,
-                            label=preset["label"],
-                            description=", ".join(preset["globs"]),
-                        )
-                        for key, preset in EXCLUDES_PRESETS.items()
-                    ),
-                    ChoiceOption(
-                        value="__custom__",
-                        label="Custom glob…",
-                        description="Add a free-form glob pattern (comma-separated).",
-                    ),
-                ],
-                picker_getter=lambda _app: self._excludes_picker_state(),
-                picker_setter=lambda _app, vs: self._set_excludes_presets(vs),
-            ),
-            MenuItem(
-                id="wiz.filter",
-                label="Frontmatter rule",
-                description=(
-                    "Index only notes whose YAML frontmatter matches, e.g. "
-                    "status == 'done'. Files without frontmatter are unaffected."
-                ),
-                kind=KIND_SCALAR,
-                hint="frontmatter DSL",
-                value_getter=lambda _app: self._filter_with_status(),
             ),
             MenuItem(
                 id="wiz.follow_symlinks",
@@ -3498,104 +3211,55 @@ class AddCollectionWizard(DocumentScreen):
                 toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
                 toggle_setter=lambda _app, v: self._set_follow(v),
             ),
+            header("What gets indexed", level=2),
+            MenuItem(
+                id="wiz.filters",
+                label="Index filters",
+                description=(
+                    "File types, excluded paths, skipped tags, size and dates for this "
+                    "source. Each inherits the global default until you change it here."
+                ),
+                kind=KIND_EXTERNAL,
+                external=lambda _app: self._open_filters(),
+                value_getter=lambda _app: self._filters_summary(),
+            ),
+            MenuItem(
+                id="wiz.frontmatter",
+                label="Frontmatter rule",
+                description=(
+                    "Index only notes whose YAML frontmatter matches, e.g. "
+                    "status == 'done'. The same rule as Index filters › Rules you type."
+                ),
+                kind=KIND_EXTERNAL,
+                external=lambda _app: self._edit_frontmatter(),
+                value_getter=lambda _app: self._frontmatter_with_status(),
+            ),
+            MenuItem(
+                id="wiz.includes_custom",
+                label="Restrict to these paths",
+                description=(
+                    "Leave empty to index the whole folder. Set it and ONLY matching "
+                    "paths are indexed. File types belong in Index filters."
+                ),
+                kind=KIND_SCALAR,
+                hint="glob patterns, comma-separated",
+                value_getter=lambda _app: self._fields["includes_custom"] or "(unset)",
+            ),
         ]
-
-    def _summarise_includes(self) -> str:
-        """What the new collection will actually index.
-
-        Setting nothing here does not mean "every type": the source inherits
-        `defaults.filters`, so with a default of `kinds = ["md"]` "every type"
-        would be false while the collection indexes 3 files of 12.
-        """
-        from fnd.kinds import ALL_KIND_IDS
-
-        n = len(self._fields["includes"])
-        if n == len(ALL_KIND_IDS):
-            return "every type"
-        if n:
-            return f"{n} of {len(ALL_KIND_IDS)} types"
-        inherited = list(_default_filters(self.app).kinds)
-        if inherited:
-            return f"{', '.join(inherited)} (inherited)"
-        return "every type"
-
-    def _summarise_excludes(self) -> str:
-        return _excludes_summary(self._fields)
+        return [
+            header("Collection", level=2),
+            *collection,
+            *(dataclasses.replace(item, subsection="Source") for item in source),
+        ]
 
     def _set_follow(self, value: bool) -> None:
         self._fields["follow_symlinks"] = bool(value)
 
-    def _filter_with_status(self) -> str:
-        """Trailing column for the Frontmatter filter row — shows the
-        DSL string plus a live ``✓`` / ``✗ col N`` parse indicator so
-        syntax mistakes surface without leaving the form."""
-        text = str(self._fields.get("filter") or "").strip()
-        if not text:
-            # Same reason as `_summarise_includes`: an unset rule here means
-            # the default's rule applies, not that nothing does.
-            inherited = _default_frontmatter(self.app).strip()
-            return f"{inherited} (inherited)" if inherited else "(none)"
-        from fnd.filter_dsl import parse_or_error
-
-        _pred, err = parse_or_error(text)
-        if err is None:
-            return f"{text}   ✓"
-        return f"{text}   ✗ col {err.column}"
-
-    def _includes_picker_state(self) -> list[str]:
-        """Nested tree picker seed: current kinds, or ALL kinds when empty so a
-        new source opens with every type selected (empty includes = index all)."""
-        from fnd.kinds import ALL_KIND_IDS
-
-        inc = list(self._fields["includes"])
-        return inc if inc else list(ALL_KIND_IDS)
-
-    def _excludes_picker_state(self) -> list[str]:
-        state = list(self._fields["excludes_presets"])
-        if str(self._fields.get("excludes_custom") or "").strip():
-            state.append("__custom__")
-        return state
-
-    def _set_includes(self, values: list[str]) -> None:
-        """Tree picker commit: store selected kind ids. All selected → store
-        empty (= index every supported type, future-proof). Preserves any
-        existing custom-glob value untouched."""
-        from fnd.kinds import ALL_KIND_IDS
-
-        picked = [v for v in values if v in set(ALL_KIND_IDS)]
-        self._fields["includes"] = [] if set(picked) >= set(ALL_KIND_IDS) else picked
-        self.query_one(SettingsList).refresh_values()
-
-    def _set_excludes_presets(self, values: list[str]) -> None:
-        picked = list(values)
-        wants_custom = "__custom__" in picked
-        presets = [v for v in picked if v != "__custom__"]
-        self._fields["excludes_presets"] = presets
-        if wants_custom and not str(self._fields.get("excludes_custom") or "").strip():
-            self._prompt_custom("excludes_custom", "Excludes custom globs (comma-separated)")
-        elif not wants_custom:
-            _discard_custom_globs(self, "excludes_custom")
-        self.query_one(SettingsList).refresh_values()
-
-    def _prompt_custom(self, field_key: str, label: str) -> None:
-        """Open the wizard's EditBar to capture a custom glob value and
-        store it in ``self._fields[field_key]`` on submit."""
-        item = MenuItem(
-            id=f"wiz.{field_key}",
-            label=label,
-            hint=_GLOB_HINT,
-            kind=KIND_SCALAR,
-            value_getter=lambda _app, key=field_key: str(self._fields.get(key) or ""),
-        )
-        self.query_one(EditBar).open(item, _custom_seed(self, field_key))
-
     @on(SettingsList.Activated)
     def _on_field_activated(self, ev: SettingsList.Activated) -> None:
         item = ev.item
-        if item.kind == KIND_PICKER:
-            self.app.push_screen(
-                TreePickerScreen(item) if item.groups_provider is not None else PickerScreen(item)
-            )
+        if item.kind == KIND_EXTERNAL and item.external is not None:
+            item.external(self.app)  # type: ignore[arg-type]
         elif item.kind == KIND_SCALAR:
             field_key = item.id.split(".", 1)[-1]
             current = self._fields.get(field_key, "")
@@ -3625,51 +3289,9 @@ class AddCollectionWizard(DocumentScreen):
         actually functional, not just visually present."""
         self._refresh_match_status()
 
-    def _refresh_match_status(self) -> None:
-        sample = self.query_one("#frontmatter_sample", TextArea).text
-        filter_text = str(self._fields.get("filter") or "").strip()
-        status = self.query_one("#match_status", Static)
-        status.remove_class("-match")
-        status.remove_class("-no-match")
-        if not sample.strip():
-            status.update("(no sample)")
-            return
-        from fnd.filter_dsl import parse_or_error
-        from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_text
-
-        try:
-            fm: dict[str, object] = read_frontmatter_from_text(sample) or {}
-        except FrontmatterParseError as e:
-            status.update(f"✗ frontmatter parse error: {e}")
-            status.add_class("-no-match")
-            return
-        if not filter_text:
-            status.update("(no filter)")
-            return
-        pred, err = parse_or_error(filter_text)
-        if err is not None or pred is None:
-            status.update(f"✗ filter syntax: col {err.column}" if err else "✗ syntax error")
-            status.add_class("-no-match")
-            return
-        if pred(fm):
-            status.update("✓ sample matches filter")
-            status.add_class("-match")
-        else:
-            status.update("✗ sample does not match filter")
-            status.add_class("-no-match")
-
     @on(EditBar.EditCommitted)
     def _on_edit_committed(self, ev: EditBar.EditCommitted) -> None:
         field_key = ev.item.id.split(".", 1)[-1]
-        if field_key == "filter":
-            text = str(ev.value or "").strip()
-            if text:
-                from fnd.filter_dsl import parse_or_error
-
-                _pred, err = parse_or_error(text)
-                if err is not None:
-                    self.query_one(EditBar).show_error(f"col {err.column}: {err.message}")
-                    return
         self._fields[field_key] = ev.value
         self.query_one(EditBar).close()
         self.query_one(SettingsList).refresh_values()
@@ -3729,7 +3351,6 @@ class AddCollectionWizard(DocumentScreen):
         from pathlib import Path
 
         from fnd.config import (
-            EXCLUDES_PRESETS,
             CollectionConfig,
             InvalidCollectionNameError,
             SourceConfig,
@@ -3744,21 +3365,11 @@ class AddCollectionWizard(DocumentScreen):
         path = str(self._fields["path"]).strip().strip("'\"")
         p = Path(path).expanduser()
 
-        includes_globs: list[str] = _kinds_to_include_globs(list(self._fields["includes"]))
-        includes_custom = str(self._fields.get("includes_custom") or "")
-        for g in includes_custom.split(","):
-            g = g.strip()
-            if g:
-                includes_globs.append(g)
-
-        excludes_globs: list[str] = []
-        for preset_id in self._fields["excludes_presets"]:
-            excludes_globs.extend(EXCLUDES_PRESETS[preset_id]["globs"])
-        custom = str(self._fields["excludes_custom"] or "")
-        for g in custom.split(","):
-            g = g.strip()
-            if g:
-                excludes_globs.append(g)
+        includes_globs = [
+            g.strip()
+            for g in str(self._fields.get("includes_custom") or "").split(",")
+            if g.strip()
+        ]
 
         app: FNDApp = self.app  # type: ignore[assignment]
 
@@ -3769,17 +3380,8 @@ class AddCollectionWizard(DocumentScreen):
             source = SourceConfig(
                 path=p,
                 includes=includes_globs,
-                excludes=excludes_globs,
                 follow_symlinks=bool(self._fields["follow_symlinks"]),
-                frontmatter_filter=None,
-                filters=_source_filters_or_none(
-                    _merge_frontmatter(
-                        dict(self._fields.get("filters", {})),
-                        str(self._fields["filter"]),
-                        _default_frontmatter(self.app),
-                        had_override=self._fields.get("filters", {}).get("frontmatter") is not None,
-                    )
-                ),
+                filters=_source_filters_or_none(self._fields["filters"]),
             )
         except ValueError as e:
             # pydantic's ValidationError is a ValueError; `_summarise` renders
@@ -5891,6 +5493,7 @@ _SPEC_FIELDS = (
     "modified_before",
     "frontmatter",
     "expression",
+    "excludes",
 )
 
 
@@ -6094,6 +5697,73 @@ class RuleTextScreen(PartScreen):
         return ""
 
 
+class GlobTextScreen(PartScreen):
+    """Exclude globs typed by hand, comma-separated: a part of the browser.
+
+    The presets are rows to tick; this holds whatever else the walk should skip.
+    """
+
+    CSS = RuleTextScreen.CSS.replace("RuleTextScreen", "GlobTextScreen").replace("rule_", "glob_")
+
+    def __init__(
+        self, *, title: str, value: Sequence[str], on_save: Callable[[tuple[str, ...]], None]
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._value = tuple(value)
+        self._on_save = on_save
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield TextArea(", ".join(self._value), id="glob_text")
+            yield Static("", id="glob_status")
+            yield Static(_GLOB_HINT, id="glob_help")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#glob_text", TextArea).focus()
+        self._refresh_status()
+        self.on_refused()
+
+    def on_refused(self) -> None:
+        esc = ("Esc", CANCEL) if self.refused else leave_hint(with_left=False)
+        self.query_one("#footer_hints", Static).update(_editor_hint_bar((esc,)))
+
+    @on(TextArea.Changed, "#glob_text")
+    def _on_changed(self, _ev: TextArea.Changed) -> None:
+        self.edited()
+        self._refresh_status()
+
+    def _globs(self) -> tuple[str, ...]:
+        text = self.query_one("#glob_text", TextArea).text
+        return tuple(g.strip() for g in text.replace("\n", ",").split(",") if g.strip())
+
+    def _problem(self) -> str:
+        from fnd.filters.excludes import invalid_glob
+
+        bad = [g for g in self._globs() if invalid_glob(g)]
+        return f"{bad[0]!r} is not a valid glob" if bad else ""
+
+    def _refresh_status(self) -> None:
+        status = self.query_one("#glob_status", Static)
+        status.remove_class("-ok", "-bad")
+        problem = self._problem()
+        status.add_class("-bad" if problem else "-ok")
+        count = len(self._globs())
+        status.update(f"✗ {problem}" if problem else f"✓ {count} glob{'s' if count != 1 else ''}")
+
+    def hand_back(self) -> str:
+        globs = self._globs()
+        if globs == self._value:
+            return ""
+        if problem := self._problem():
+            return problem
+        self._on_save(globs)
+        self._value = globs
+        return ""
+
+
 #: Spec fields as the screens name them, so a message reads like the UI. Two
 #: fields sharing a name collapse to one entry.
 _FIELD_WORDS: dict[str, str] = {
@@ -6108,6 +5778,7 @@ _FIELD_WORDS: dict[str, str] = {
     "modified_before": "modified dates",
     "frontmatter": "the frontmatter rule",
     "expression": "the custom rule",
+    "excludes": "excluded paths",
 }
 
 
@@ -6122,7 +5793,7 @@ def _cleared_note(before: Any, after: Any) -> str:
         dict.fromkeys(
             _FIELD_WORDS[name]
             for name in _SPEC_FIELDS
-            if getattr(before, name) and not getattr(after, name)
+            if getattr(before, name) != getattr(after, name)
         )
     )
     if not dropped:
@@ -6203,7 +5874,6 @@ class FilterBrowserScreen(Screen[None]):
         fndignore: bool,
         sample_provider: Callable[[Any], Any] | None = None,
         globs: list[str] | None = None,
-        excludes: list[str] | None = None,
         inherited: tuple[Any, bool, bool] | None = None,
         no_tags_note: str = "",
         unindexed_note: str = "",
@@ -6222,9 +5892,6 @@ class FilterBrowserScreen(Screen[None]):
         # as ticked kinds: saving them back as kinds would widen a glob that
         # names one suffix of a multi-suffix type. Say so instead.
         self._globs = list(globs or ())
-        # Excludes drop files before any filter runs, so a summary that names
-        # only the includes is silent about half of what is skipped.
-        self._excludes = list(excludes or ())
         self._title = title
         self._spec = spec
         self._gitignore = gitignore
@@ -6278,9 +5945,12 @@ class FilterBrowserScreen(Screen[None]):
             # editor that can rather than being a dead end.
             self.action_edit_text()
             return
+        if ev.item_id == "rule:excludes":
+            self._edit_typed_excludes()
+            return
         field_name = ev.item_id.removeprefix("rule:")
         titles = {
-            "frontmatter": "Frontmatter rule · files with frontmatter",
+            "frontmatter": _FRONTMATTER_RULE_TITLE,
             "expression": "Custom rule · any file",
         }
         if field_name not in titles:
@@ -6618,8 +6288,9 @@ class FilterBrowserScreen(Screen[None]):
         head.append("skipping hidden files")
         if self._globs:
             head.append("restricted to paths: " + ", ".join(self._globs))
-        if self._excludes:
-            head.append("skipping paths: " + ", ".join(self._excludes))
+        # Excludes drop files before any filter runs, so they are named here too.
+        if self._spec.excludes:
+            head.append("skipping paths: " + ", ".join(self._spec.excludes))
         for clash in self._spec.impossible_bounds():
             # Decidable without a corpus, and the outcome is an empty index.
             head.append(f"nothing can match: {clash}")
@@ -6686,12 +6357,26 @@ class FilterBrowserScreen(Screen[None]):
         # a tag exclusion, which is a protection rather than a preference.
         self.notify(_cleared_note(before, self._spec))
 
+    def _edit_typed_excludes(self) -> None:
+        from dataclasses import replace as _replace
+
+        from fnd.filters.excludes import retype, split_presets
+
+        _presets, typed = split_presets(self._spec.excludes)
+
+        def _save(globs: tuple[str, ...]) -> None:
+            self._spec = _replace(self._spec, excludes=retype(self._spec.excludes, globs))
+            self._rebuild()
+
+        self.app.push_screen(GlobTextScreen(title="Excluded globs", value=typed, on_save=_save))
+
     def action_edit_text(self) -> None:
         def _save(spec: Any) -> None:
             # Named when it lands, not only while typing: the text screen's
             # warning is gone by the time the tree is back.
             dropped = _protection_dropped(self._spec, spec)
-            self._spec = spec
+            # The text form cannot say excludes, so it never carries them: keep them.
+            self._spec = dataclasses.replace(spec, excludes=self._spec.excludes)
             self._rebuild()
             if dropped:
                 self.app.notify(f"{dropped} files are no longer excluded", severity="warning")

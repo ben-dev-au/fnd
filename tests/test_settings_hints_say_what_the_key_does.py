@@ -144,19 +144,20 @@ async def test_a_source_form_names_the_edit_bar_keys_while_it_is_open(
 async def test_the_wizard_names_tab_once_a_rule_gives_it_a_sample_to_test(
     built_index: Path, one_source: None
 ) -> None:
-    from textual.widgets import Input
+    from textual.widgets import TextArea
 
-    from fnd.tui.settings_screen import AddCollectionWizard, EditBar
+    from fnd.tui.settings_screen import AddCollectionWizard
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test(size=(140, 45)) as pilot:
         wizard = await _open_form(pilot, app, AddCollectionWizard())
         assert "Test a sample" not in _footer(wizard)
-        _put_cursor_on(wizard, "wiz.filter")
+        _put_cursor_on(wizard, "wiz.frontmatter")
         await pilot.press("enter")
-        await wait_until(pilot, lambda: _shows(wizard, "⏎", "Set"))
-        wizard.query_one(EditBar).query_one(Input).value = "draft == true"
-        await pilot.press("enter")
+        await wait_until(pilot, lambda: app.screen is not wizard)
+        app.screen.query_one("#rule_text", TextArea).text = "draft == true"
+        await pilot.press("escape")
+        await wait_until(pilot, lambda: app.screen is wizard)
         await wait_until(pilot, lambda: _shows(wizard, "Tab", "Test a sample"))
         await pilot.press("tab")
         await wait_until(pilot, lambda: _shows(wizard, "Tab", "Fields"))

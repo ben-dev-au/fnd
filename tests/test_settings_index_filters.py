@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from fnd.config import SourceFilters
 from fnd.tui import FNDApp
 from fnd.tui.settings_screen import DefaultFiltersScreen, UnsavedChangesScreen
 from fnd.tui.widgets import COMMIT_KEY
@@ -665,27 +666,6 @@ async def test_the_sample_tester_appears_only_with_a_rule_to_test(built_index: P
     assert "status == 'done'" in text, text
 
 
-@pytest.mark.asyncio
-async def test_unticking_custom_globs_keeps_them_on_offer(built_index: Path) -> None:
-    """Untick discarded typed globs to one keypress, with no undo."""
-    from fnd.config import CollectionConfig, Config, SourceConfig
-    from fnd.tui.settings_screen import SourceFormScreen, _custom_seed
-
-    config = Config(collections={"c": CollectionConfig(sources=[SourceConfig(path=Path("~/x"))])})
-    app = FNDApp(index_dir=built_index, config=config)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.push_screen(SourceFormScreen(collection_name="c", source_index=0))
-        for _ in range(20):
-            await pilot.pause()
-        form = app.screen
-        assert isinstance(form, SourceFormScreen)
-        form._fields["excludes_custom"] = "build/**, dist/**"
-        form._set_excludes([])
-        assert form._fields["excludes_custom"] == "", "untick must stop applying them"
-        assert _custom_seed(form, "excludes_custom") == "build/**, dist/**"
-
-
 def test_every_settings_screen_styles_itself() -> None:
     """Textual selectors are type selectors and a widget's own CSS is scoped
     to it, so a screen borrowing another's CSS rendered with no chrome."""
@@ -772,7 +752,9 @@ async def test_the_wizard_refuses_an_invalid_rule_instead_of_crashing(built_inde
             await pilot.pause()
         wizard = app.screen
         assert isinstance(wizard, AddCollectionWizard)
-        wizard._fields.update({"name": "probe", "path": "~", "filter": "status =="})
+        wizard._fields.update(
+            {"name": "probe", "path": "~", "filters": {"frontmatter": "status =="}}
+        )
         wizard.action_save()
         for _ in range(8):
             await pilot.pause()
@@ -877,18 +859,6 @@ def test_a_radio_group_keeps_one_option_selected() -> None:
         tree._selected.add(pressed)
         assert tree._selected, f"pressing {pressed} emptied the group"
     assert tree._selected == {"size:1mb"}
-
-
-def test_the_pickers_name_what_they_hold() -> None:
-    """ "40 selected" is the ABSENCE of a type restriction, and a count never
-    showed the exclude globs anywhere in the UI."""
-    from fnd.kinds import ALL_KIND_IDS
-    from fnd.tui.settings_screen import _excludes_summary
-
-    assert _excludes_summary({}) == "(none)"
-    assert _excludes_summary({"excludes_custom": "build/**, dist/**"}) == "build/**, dist/**"
-    assert "**/*.csv" in _excludes_summary({"excludes_custom": "**/*.csv"})
-    assert len(ALL_KIND_IDS) > 1, "the wizard summary below depends on there being many"
 
 
 @pytest.mark.asyncio
@@ -1176,7 +1146,11 @@ async def test_the_summary_names_the_excludes_too(built_index: Path) -> None:
         collections={
             "c": CollectionConfig(
                 sources=[
-                    SourceConfig(path=Path("~/x"), includes=["notes/**"], excludes=["**/*.csv"])
+                    SourceConfig(
+                        path=Path("~/x"),
+                        includes=["notes/**"],
+                        filters=SourceFilters(excludes=["**/*.csv"]),
+                    )
                 ]
             )
         }
@@ -1716,7 +1690,7 @@ class TestTabIsOfferedOnlyWhenItGoesSomewhere:
             await pilot.pause()
             assert type(app.focused).__name__ != "TextArea", "focus entered a hidden pane"
 
-            wizard._fields["filter"] = "status == 'done'"
+            wizard._fields["filters"] = {"frontmatter": "status == 'done'"}
             wizard._populate_fields()
             for _ in range(8):
                 await pilot.pause()

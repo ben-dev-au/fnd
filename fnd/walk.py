@@ -61,7 +61,7 @@ def resolve_skip_dirs(defaults: object | None = None) -> frozenset[str]:
     overrides (disable, extend) take effect. ``None`` resolves to the
     built-in :data:`fnd.config.DEFAULT_JUNK_DIRS`. An empty frozenset
     disables the prune (the rest of the walk still applies the existing
-    hidden-file and per-source ``excludes`` rules).
+    hidden-file and ``excludes`` filter rules).
     """
     from fnd.config import DEFAULT_JUNK_DIRS
 

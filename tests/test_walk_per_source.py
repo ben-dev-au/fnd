@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fnd.config import SourceConfig
+from fnd.config import SourceConfig, SourceFilters
 from fnd.walk import walk_sources
 
 
@@ -77,7 +77,7 @@ def test_excludes_still_apply_under_filter(tmp_path: Path) -> None:
         SourceConfig(
             path=root,
             includes=["**/*.md"],
-            excludes=["**/.trash/**"],
+            filters=SourceFilters(excludes=["**/.trash/**"]),
             frontmatter_filter="Course == 'DPwC'",
         )
     ]

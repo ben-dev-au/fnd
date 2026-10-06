@@ -685,7 +685,7 @@ class TestSourceRowMatchesTheWalk:
 
         cfg = Config.model_validate(
             {
-                "defaults": {"filters": {"exclude_tags": []}},
+                "defaults": {"filters": {"exclude_tags": [], "excludes": []}},
                 "collections": {"c": {"sources": [{"path": str(tmp_path), "includes": includes}]}},
             }
         )
@@ -722,7 +722,7 @@ class TestARowNamesAGlobThatCannotReachAFolder:
 
         cfg = Config.model_validate(
             {
-                "defaults": {"filters": {"exclude_tags": []}},
+                "defaults": {"filters": {"exclude_tags": [], "excludes": []}},
                 "collections": {"c": {"sources": [{"path": str(tmp_path), **source}]}},
             }
         )
@@ -765,11 +765,10 @@ class TestTheCustomGlobPromptSaysWhatAGlobDoes:
     """The rule box one screen over teaches this exact rule; the field that
     takes globs had no hint, no example and no validation."""
 
-    def test_both_prompts_carry_the_hint(self) -> None:
+    def test_the_glob_editor_carries_the_hint(self) -> None:
         import inspect
 
-        from fnd.tui.settings_screen import _GLOB_HINT, AddCollectionWizard, SourceFormScreen
+        from fnd.tui.settings_screen import _GLOB_HINT, GlobTextScreen
 
         assert "/**" in _GLOB_HINT
-        for screen in (SourceFormScreen, AddCollectionWizard):
-            assert "_GLOB_HINT" in inspect.getsource(screen._prompt_custom), screen.__name__
+        assert "_GLOB_HINT" in inspect.getsource(GlobTextScreen.compose)

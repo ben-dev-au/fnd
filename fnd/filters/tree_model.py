@@ -15,6 +15,7 @@ import datetime as dt
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
+from fnd.filters.excludes import retick, split_presets
 from fnd.filters.model import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.kinds import ALL_KIND_IDS, CATEGORIES, KIND_BY_ID, KINDS_IN_CATEGORY
@@ -66,6 +67,10 @@ LEGEND = "⊘  never index these   ●  index ONLY these   ◐  some of these   
 #: what the shared line claims. A branch names its own meaning or inherits.
 IGNORE_LEGEND = "●  obey this file   ○  ignore it   (obeying one indexes fewer files)"
 RULES_LEGEND = "⏎  opens a branch, then the editor for a rule in it"
+#: On the excludes branch ● means "skip", the reverse of "index ONLY these".
+EXCLUDES_LEGEND = (
+    "●  never read   ◐  some of these   ○  read as usual   (typed globs: Rules you type)"
+)
 #: `kinds` is an include-only list in the model, so `⊘` is unreachable here. The
 #: shared line would send a user looking for an exclude state that does not exist,
 #: and allow-listing everything else instead drops every file type added later.
@@ -317,6 +322,7 @@ def spec_branches(
             legend=IGNORE_LEGEND,
         )
     )
+    branches.append(_excludes_branch())
     # Rows stay ordered by the bound they set, so a custom one lands among the
     # presets rather than ahead of them.
     sized = [(-1 if v is None else v, f"size:{i}", lbl) for i, lbl, v in _SIZES]
@@ -388,8 +394,9 @@ def spec_branches(
         for i, text in enumerate(spec.raw)
         if (text or "").strip()
     )
+    _on, typed = split_presets(spec.excludes)
     set_rules = sum(1 for v in (spec.frontmatter, spec.expression) if (v or "").strip())
-    set_rules += len(raw_rows)
+    set_rules += len(raw_rows) + (1 if typed else 0)
     branches.append(
         Branch(
             "rules",
@@ -398,12 +405,31 @@ def spec_branches(
             (
                 ("rule:frontmatter", _rule_label("Frontmatter rule", spec.frontmatter)),
                 ("rule:expression", _rule_label("Custom rule", spec.expression)),
+                ("rule:excludes", _rule_label("Excluded globs", ", ".join(typed))),
                 *raw_rows,
             ),
             legend=RULES_LEGEND,
         )
     )
     return branches
+
+
+def _excludes_branch() -> Branch:
+    """The exclude presets, ticked when every glob they ship is excluded."""
+    from fnd.config import EXCLUDES_PRESETS
+
+    return Branch(
+        "excludes",
+        "Excluded paths",
+        "multi",
+        tuple(
+            (f"exclude:{key}", f"{p['label']}   {', '.join(p['globs'])}", p["label"].split(" (")[0])
+            for key, p in EXCLUDES_PRESETS.items()
+        ),
+        empty_label="none",
+        noun="presets",
+        legend=EXCLUDES_LEGEND,
+    )
 
 
 def selection_for(
@@ -427,6 +453,7 @@ def selection_for(
         selected.add("ignore:git")
     if fndignore:
         selected.add("ignore:fnd")
+    selected |= {f"exclude:{key}" for key in split_presets(spec.excludes)[0]}
     selected.add(f"size:{_size_id(spec.max_size)}")
     selected.add(f"modified:{_window_id(spec.modified_after)}")
     selected.add(f"created:{_window_id(spec.created_after)}")
@@ -529,7 +556,7 @@ def apply_selection(
     picked = {i.removeprefix("kind:") for i in selected if i.startswith("kind:")}
     # Every box ticked means "every type", not today's list, which would never
     # index a PDF added tomorrow while an untouched branch does, both reading
-    # "all types". `AddCollectionWizard._set_includes` collapses the same way.
+    # "all types".
     shown = {i.removeprefix("kind:") for i in offered if i.startswith("kind:")} if offered else None
     # Only when the tree offered EVERY type does ticking them all mean "no
     # restriction": on a homogeneous folder a genuine `kinds = ["md"]` is already
@@ -561,8 +588,10 @@ def apply_selection(
         )
         bounds[f"{field_name}_after"] = today - dt.timedelta(days=days) if days else None
 
+    presets = [i.removeprefix("exclude:") for i in selected if i.startswith("exclude:")]
     updated = replace(
         spec,
+        excludes=retick(spec.excludes, presets),
         kinds=kinds,
         include_tags=keep,
         exclude_tags=tags,

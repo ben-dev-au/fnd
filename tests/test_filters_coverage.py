@@ -37,10 +37,11 @@ VALUES: dict[str, tuple[Any, Any]] = {
     "modified_before": (dt.date(2030, 6, 1), dt.date(2031, 6, 1)),
     "frontmatter": ("Course == 'A'", "Course == 'B'"),
     "expression": ("file.size > 1", "file.size > 2"),
+    "excludes": (["a/**"], ["b/**"]),
 }
 
 #: Fields whose empty value means "override to nothing", not "unset".
-EMPTIABLE = ("include_tags", "exclude_tags", "kinds")
+EMPTIABLE = ("include_tags", "exclude_tags", "kinds", "excludes")
 
 
 class TestEveryFieldResolves:
@@ -144,6 +145,7 @@ REMOVES: dict[str, tuple[Any, str | None]] = {
     "created_before": (dt.date(2100, 1, 1), None),
     "frontmatter": ("Course == 'A'", "other.md"),
     "expression": ("file.name != 'other.md'", "other.md"),
+    "excludes": (["**/other.md"], "other.md"),
 }
 
 
@@ -269,6 +271,7 @@ _OPT_OUT: dict[str, Any] = {
     "modified_after": dt.date(1990, 1, 1),
     "frontmatter": "",
     "expression": "",
+    "excludes": [],
 }
 
 
@@ -398,7 +401,7 @@ class TestClearDropsOverridesNotProtections:
         from fnd.filters import FilterSpec
 
         self._corpus(tmp_path)
-        defaults = DefaultFilters(exclude_tags=["no_index"])
+        defaults = DefaultFilters(exclude_tags=["no_index"], excludes=[])
         recorded = self._recorded(FilterSpec(), defaults)
         assert recorded == {"exclude_tags": []}
         assert "private.md" in _walked(tmp_path, defaults, _source_filters_or_none(recorded))

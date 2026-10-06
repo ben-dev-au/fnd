@@ -39,9 +39,8 @@ def _source(root: Path) -> SourceConfig:
     return SourceConfig(
         path=root,
         includes=["notes/**"],
-        excludes=["**/scratch/**"],
         follow_symlinks=True,
-        filters=SourceFilters(kinds=["md"], min_size=10),
+        filters=SourceFilters(excludes=["**/scratch/**"], kinds=["md"], min_size=10),
         app="vscode",
         app_for={"md": "obsidian", "pdf": "preview"},
         app_params={"vault": "MyVault", "profile": "work"},

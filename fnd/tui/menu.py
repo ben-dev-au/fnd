@@ -165,8 +165,6 @@ class MenuItem:
     # PICKER
     multi: bool = False
     choices_provider: Callable[[FNDApp], list[ChoiceOption]] | None = None
-    # TREE_PICKER: category→item model for the nested ToggleTree picker.
-    groups_provider: Callable[[FNDApp], list[Any]] | None = None
     picker_getter: Callable[[FNDApp], Any] | None = None
     picker_setter: Callable[[FNDApp, Any], None] | None = None
 
@@ -516,7 +514,8 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
             "Edit as text",
             "",
             "Open the whole filter set as its expression, for anything the "
-            "pickers cannot say. Esc carries it back into this screen.",
+            "pickers cannot say. Esc carries it back into this screen. Excluded "
+            "paths are not in it: they skip folders before any file is read.",
         ),
         (
             "y",
@@ -1679,8 +1678,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             id=f"col.{name}.sources",
             label="Sources",
             description=(
-                "The folders this collection indexes, and each one's filters, "
-                "excludes and opening app."
+                "The folders this collection indexes, and each one's index filters and opening app."
             ),
             kind=KIND_EXTERNAL,
             external=_make_open_sources_screen(name),
@@ -1870,6 +1868,8 @@ _DATE_BOUNDS = ("created_after", "created_before", "modified_after", "modified_b
 def _narrowing_dimensions(f: Any) -> list[str]:
     """Which dimensions of a filter set narrow anything."""
     named = []
+    if f.excludes:
+        named.append("excludes")
     if f.include_tags or f.exclude_tags:
         named.append("tags")
     if f.min_size is not None or f.max_size is not None:
@@ -1891,10 +1891,6 @@ def _other_filters(src: Any) -> list[str]:
     """
     own = src.filters
     named = []
-    # Excludes drop files before any other rule runs, and are the source's own
-    # field, never inherited.
-    if getattr(src, "excludes", None):
-        named.append("excludes")
     if own is not None:
         named.extend(_narrowing_dimensions(own))
     inherited = set(_narrowing_dimensions(src.effective_filters)) - set(named)
@@ -2544,6 +2540,8 @@ def _summary_index_filters(app: FNDApp) -> str:
         bits.append("size")
     if any((f.created_after, f.created_before, f.modified_after, f.modified_before)):
         bits.append("dates")
+    if f.excludes:
+        bits.append("excluded paths")
     if f.frontmatter or f.expression:
         bits.append("custom")
     return " · ".join(bits) if bits else "off"
@@ -2556,8 +2554,8 @@ def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="filters.browse",
             label="Index filters",
             description=(
-                "Which files enter the index: file types, tags, size, dates "
-                "and ignore files, as branches you tick, or as one expression "
+                "Which files enter the index: file types, tags, size, dates, "
+                "ignore files and excluded paths, as branches you tick, or as one expression "
                 "if you prefer. Applies at the next Update index: files that "
                 "now match are added, files that no longer match are dropped."
             ),
@@ -3211,7 +3209,7 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Filters",
             description=(
                 "What enters the index, and what a search returns from it: "
-                "file types, tags, size, dates and ignore files."
+                "file types, tags, size, dates, ignore files and excluded paths."
             ),
             kind=KIND_EXTERNAL,
             external=_open_section(SECTION_FILTERS),

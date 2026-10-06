@@ -32,7 +32,6 @@ _ADOPTED = "__adopted__"
 _SOURCE_FIELDS: dict[str, str] = {
     "path": "Path",
     "includes": "Restrict to these paths",
-    "excludes": "Excludes",
     "follow_symlinks": "Follow symlinks",
     "filters": "Index filters",
 }
@@ -78,10 +77,11 @@ def indexed_with(collection: CollectionConfig, defaults: Defaults) -> dict[str, 
         {
             "path": str(s.path),
             "includes": list(s.includes),
-            "excludes": list(s.excludes),
             "follow_symlinks": bool(s.follow_symlinks),
             "filters": {
                 **s.effective_filters.model_dump(mode="json"),
+                # Order never changes what the walk prunes.
+                "excludes": sorted(set(s.effective_filters.excludes)),
                 "legacy_frontmatter": s.legacy_frontmatter or "",
             },
         }
@@ -121,9 +121,18 @@ def _extraction_reasons(now: dict[str, Any], then: dict[str, Any]) -> tuple[str,
     return tuple(reasons)
 
 
+def _as_today(source: dict[str, Any]) -> dict[str, Any]:
+    """A recorded source in today's shape: excludes were a source field before
+    they were a filter, so an upgrade alone must not read as a change."""
+    filters = dict(source.get("filters") or {})
+    filters.setdefault("excludes", source.get("excludes") or [])
+    filters["excludes"] = sorted(set(filters["excludes"]))
+    return {**{k: v for k, v in source.items() if k != "excludes"}, "filters": filters}
+
+
 def _selection_reasons(now: dict[str, Any], then: dict[str, Any]) -> tuple[str, ...]:
     reasons: dict[str, None] = {}
-    old = then.get("sources") or []
+    old = [_as_today(s) for s in then.get("sources") or []]
     if len(now["sources"]) != len(old):
         reasons["Sources"] = None
     for new_source, old_source in zip(now["sources"], old, strict=False):

@@ -270,8 +270,8 @@ async def test_a_multi_picker_applies_each_toggle(
 
 def test_no_picker_binds_a_save() -> None:
     """A ^s on a picker would say Esc does not keep the choice."""
-    from fnd.tui.settings_screen import PickerScreen, TreePickerScreen
+    from fnd.tui.settings_screen import PickerScreen
 
-    for cls in (PickerScreen, TreePickerScreen):
+    for cls in (PickerScreen,):
         keys = {k for b in cls.BINDINGS for k in str(getattr(b, "key", "")).split(",")}
         assert "ctrl+s" not in keys, cls.__name__

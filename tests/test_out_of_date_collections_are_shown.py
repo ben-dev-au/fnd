@@ -225,7 +225,7 @@ async def test_the_update_row_is_labelled_needed_with_its_reason(
         await _settle(pilot)
         row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.reindex")
     assert row.label == "Update index"
-    assert row.description.startswith("Outdated: Excludes changed since the last index. ")
+    assert row.description.startswith("Outdated: Index filters changed since the last index. ")
     from fnd.tui.freshness_view import BADGE_STYLE
     from fnd.tui.settings_screen import _trailing_segments
 

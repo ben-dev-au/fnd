@@ -39,6 +39,27 @@ def test_a_source_with_its_own_rule_names_it(tmp_path: Path) -> None:
 def test_two_sources_that_differ_read_differently(tmp_path: Path) -> None:
     """The point of the row: it has to tell them apart."""
     bare = _other_filters(SourceConfig(path=tmp_path))
-    own = _other_filters(SourceConfig(path=tmp_path, excludes=["build/**"]))
+    own = _other_filters(SourceConfig(path=tmp_path, filters=SourceFilters(excludes=["build/**"])))
 
     assert bare != own, (bare, own)
+
+
+def test_master_excludes_read_as_inherited(tmp_path: Path) -> None:
+    """Excludes now inherit like every filter, so the master list is not the source's own."""
+    from fnd.config import CollectionConfig, Config, DefaultFilters, Defaults
+
+    cfg = Config(
+        defaults=Defaults(filters=DefaultFilters(excludes=["a/**"])),
+        collections={"notes": CollectionConfig(sources=[SourceConfig(path=tmp_path)])},
+    )
+    named = _other_filters(cfg.collections["notes"].sources[0])
+
+    assert "excludes" not in named, named
+    assert "inherited" in named, named
+
+
+def test_own_excludes_are_named(tmp_path: Path) -> None:
+    """A source's own list is its own dimension."""
+    own = _other_filters(SourceConfig(path=tmp_path, filters=SourceFilters(excludes=["b/**"])))
+
+    assert "excludes" in own, own

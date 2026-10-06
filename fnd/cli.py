@@ -669,7 +669,7 @@ def collection_add(
     exclude: list[str] = typer.Option(
         [],
         "--exclude",
-        help="Glob to exclude. Repeatable.",
+        help="Glob to exclude. Repeatable. Replaces the app-wide excludes (System files by default).",
     ),
     filter: str | None = typer.Option(
         None,
@@ -712,14 +712,14 @@ def collection_add(
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     from fnd.config import SourceFilters
 
+    # The current shape, not a source-level `excludes` or `frontmatter_filter`:
+    # a new write should not create something the next migration has to move.
+    own = SourceFilters(frontmatter=filter or None, excludes=list(exclude) or None)
     new_source = SourceConfig(
         path=source[0],
         includes=list(include),
-        excludes=list(exclude),
         follow_symlinks=follow_symlinks,
-        # The current shape, not the deprecated `frontmatter_filter`: a new
-        # write should not create something the next migration has to move.
-        filters=SourceFilters(frontmatter=filter) if filter else None,
+        filters=own if filter or exclude else None,
     )
     # Read before the write: the sibling set is what the new source is being
     # compared against, and after the write it contains the new source itself.

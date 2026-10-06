@@ -81,7 +81,7 @@ async def test_saving_a_source_starts_no_run(
     async with app.run_test(size=(110, 30)) as pilot:
         await _settle(pilot, 5)
         form = await _open_form(app, pilot)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         await pilot.press("ctrl+s")
         await _settle(pilot, 8)
         left = not isinstance(app.screen, SourceFormScreen)
@@ -100,7 +100,7 @@ async def test_the_save_toast_names_the_update_and_the_key(
         await _settle(pilot, 5)
         seen = _notices(app, monkeypatch)
         form = await _open_form(app, pilot)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         await pilot.press("ctrl+s")
         await _settle(pilot, 8)
     assert any("is outdated" in m and "press u" in m for m in seen), seen
@@ -156,7 +156,7 @@ async def test_deleting_over_unsaved_edits_says_they_go_too(
     async with app.run_test(size=(110, 30)) as pilot:
         await _settle(pilot, 5)
         form = await _open_form(app, pilot)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         await pilot.press("ctrl+d")
         await _settle(pilot, 8)
         painted = "\n".join(

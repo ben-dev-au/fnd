@@ -42,7 +42,7 @@ async def test_a_dirty_form_asks_instead_of_discarding(tmp_path: Path) -> None:
             await pilot.pause()
         form = app.screen
         assert isinstance(form, SourceFormScreen)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         await pilot.press("escape")
         await pilot.pause()
         asked = isinstance(app.screen, UnsavedChangesScreen)
@@ -76,13 +76,13 @@ async def test_keep_editing_returns_to_the_form(tmp_path: Path) -> None:
             await pilot.pause()
         form = app.screen
         assert isinstance(form, SourceFormScreen)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         await pilot.press("escape")
         await pilot.pause()
         await pilot.press("escape")  # Esc on the prompt = keep editing
         await pilot.pause()
         back_on_form = app.screen is form
-        kept = form._fields["excludes_custom"]
+        kept = form._fields["includes_custom"]
 
     assert back_on_form, "Esc on the prompt must return to the form"
     assert kept == "build/**", "and must not have discarded the edit"
@@ -98,7 +98,7 @@ async def test_discard_leaves_and_drops_the_edit(tmp_path: Path) -> None:
             await pilot.pause()
         form = app.screen
         assert isinstance(form, SourceFormScreen)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         await pilot.press("escape")
         await pilot.pause()
         # Reach Discard from wherever the prompt lands, and say so: it lands on
