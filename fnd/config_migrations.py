@@ -25,7 +25,7 @@ from typing import Any, Final
 from fnd.globs import names_hidden
 
 #: What this build writes. Bump when adding a migration.
-CONFIG_VERSION: Final = 2
+CONFIG_VERSION: Final = 3
 
 VERSION_KEY: Final = "config_version"
 
@@ -82,6 +82,42 @@ def _to_v2(raw: MutableMapping[str, Any]) -> list[str]:
         f"wildcards could span folders took over {_MAX_SPELLINGS} globs"
         for glob in dict.fromkeys(narrowed)
     ]
+
+
+#: What the pre-v3 Add collection pre-ticked, frozen: the master list's default now.
+V2_WIZARD_EXCLUDES: Final = frozenset(
+    {"**/.*", "**/.DS_Store", "**/Thumbs.db", "**/desktop.ini", "**/.git/**"}
+)
+
+
+def legacy_excludes_override(globs: Any) -> list[str] | None:
+    """A pre-v3 excludes list as a source override; ``None`` inherits the master.
+
+    Empty was never a choice to exclude nothing, and the old wizard's default is
+    the master's now, in either spelling (a released config is respelled by v2)."""
+    listed = [globs] if isinstance(globs, str) else [str(g) for g in globs or ()]
+    wizard = list(V2_WIZARD_EXCLUDES)
+    spellings = {V2_WIZARD_EXCLUDES, frozenset(_respelled(wizard, include=False, narrowed=[]))}
+    if not listed or frozenset(listed) in spellings:
+        return None
+    return listed
+
+
+def _to_v3(raw: MutableMapping[str, Any]) -> None:
+    """Move each source's ``excludes`` into its ``filters``, where a master list
+    in ``[defaults.filters]`` can be inherited and overridden like every filter."""
+    for collection in (raw.get("collections") or {}).values():
+        if not isinstance(collection, dict):
+            continue
+        for source in collection.get("sources") or ():
+            if not isinstance(source, dict) or "excludes" not in source:
+                continue
+            legacy = legacy_excludes_override(source.pop("excludes"))
+            if legacy is None:
+                continue
+            filters = source.setdefault("filters", {})
+            if isinstance(filters, dict):
+                filters.setdefault("excludes", legacy)
 
 
 _MAX_SPELLINGS: Final = 16
@@ -322,6 +358,7 @@ def _collapse_globstars(glob: str) -> str:
 MIGRATIONS: Final[tuple[tuple[int, str, Transform], ...]] = (
     (1, "Adopt the canonical layout and record a config version", _to_v1),
     (2, "Respell globs so they still select the files they did", _to_v2),
+    (3, "Move each source's excludes into its index filters", _to_v3),
 )
 
 

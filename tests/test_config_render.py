@@ -56,10 +56,11 @@ def _sample() -> conf.Config:
                 sources=[
                     conf.SourceConfig(
                         path=Path("~/Notes"),
-                        excludes=["**/.git/**"],
                         app="obsidian",
                         app_params={"vault": "Main"},
-                        filters=conf.SourceFilters(kinds=["md"], max_size=50_000_000),
+                        filters=conf.SourceFilters(
+                            excludes=["**/.git/**"], kinds=["md"], max_size=50_000_000
+                        ),
                     )
                 ]
             ),
@@ -87,6 +88,7 @@ def _maximal() -> conf.Config:
     filters: dict[str, Any] = {
         "respect_gitignore": False,
         "respect_fndignore": False,
+        "excludes": ["**/node_modules/**"],
         "include_tags": ["keep"],
         "exclude_tags": ["drop"],
         "kinds": ["md"],
@@ -133,7 +135,6 @@ def _maximal() -> conf.Config:
                     conf.SourceConfig(
                         path=Path("~/Notes"),
                         includes=["**/*.md"],
-                        excludes=["**/.git/**"],
                         follow_symlinks=True,
                         # `clears` exists only on a source, so the shared
                         # `filters` dict cannot carry it.

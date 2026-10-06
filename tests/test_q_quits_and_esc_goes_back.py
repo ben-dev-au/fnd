@@ -88,7 +88,7 @@ async def test_q_on_a_dirty_form_asks_first(tmp_path: Path) -> None:
             await pilot.pause()
         form = app.screen
         assert isinstance(form, SourceFormScreen)
-        form._fields["excludes_custom"] = "build/**"
+        form._fields["includes_custom"] = "build/**"
         await pilot.press("q")
         await pilot.pause()
         asked = isinstance(app.screen, UnsavedChangesScreen)

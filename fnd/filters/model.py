@@ -119,6 +119,7 @@ def spec_from_resolved(resolved: object) -> FilterSpec:
         modified_before=resolved.modified_before,  # type: ignore[attr-defined]
         expression=resolved.expression or "",  # type: ignore[attr-defined]
         frontmatter=resolved.frontmatter or "",  # type: ignore[attr-defined]
+        excludes=tuple(getattr(resolved, "excludes", None) or ()),
     )
 
 
@@ -146,6 +147,8 @@ class FilterSpec:
     modified_before: dt.date | None = None
     frontmatter: str = ""
     expression: str = ""
+    # Pruned by the walk before any file is read, so the text form never shows them.
+    excludes: tuple[str, ...] = ()
     raw: tuple[str, ...] = ()
 
     @property

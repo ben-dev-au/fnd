@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from fnd.config import SourceConfig, load
+from fnd.config import DefaultFilters, SourceConfig, load
 
 
 def _write_config(path: Path, text: str) -> Path:
@@ -108,7 +108,7 @@ def test_paths_tilde_expanded(tmp_path: Path) -> None:
     assert "~" not in str(s.path)
 
 
-def test_default_includes_excludes_empty_when_omitted(tmp_path: Path) -> None:
+def test_omitted_includes_are_empty_and_excludes_inherit(tmp_path: Path) -> None:
     p = _write_config(
         tmp_path / "c.toml",
         """
@@ -118,5 +118,5 @@ def test_default_includes_excludes_empty_when_omitted(tmp_path: Path) -> None:
     )
     s = load(p).collection("x").sources[0]
     assert s.includes == []
-    assert s.excludes == []
+    assert s.excludes == DefaultFilters().excludes
     assert s.follow_symlinks is False

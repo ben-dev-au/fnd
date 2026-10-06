@@ -188,3 +188,12 @@ class GlobSet:
 
     def matches(self, rel: str) -> bool:
         return any(g.matches(rel) for g in self.globs)
+
+    def covers_dir(self, rel: str) -> bool:
+        """Whether every path under folder ``rel`` matches: a ``prefix/**`` glob whose prefix does."""
+        return any(
+            g.pattern.endswith("/**")
+            and len(g.pattern) > 3
+            and PathGlob(g.pattern[:-3]).matches(rel)
+            for g in self.globs
+        )

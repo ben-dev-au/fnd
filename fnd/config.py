@@ -55,7 +55,7 @@ def default_config_path() -> Path:
 # any directory anywhere in the tree with one of these names is skipped
 # entirely (no scandir into it). Comprehensive because the typical user
 # is a developer with many code trees on disk and indexing build/cache
-# output is never useful. Per-source ``excludes`` still apply on top;
+# output is never useful. The ``excludes`` filter still applies on top;
 # users can disable this list with ``defaults.skip_junk_dirs = false``
 # or extend it via ``defaults.extra_junk_dirs``.
 DEFAULT_JUNK_DIRS: frozenset[str] = frozenset(
@@ -162,9 +162,8 @@ INDEXER_FILETYPES: dict[str, str] = {
     spec.id: f"{spec.label} ({'/'.join(spec.suffixes)})" for spec in KIND_SPECS
 }
 
-# Exclude presets for the Add Collection wizard's Excludes multi-select. Each
-# preset defines a set of globs and a default toggle state. Presets marked
-# default=True are pre-ticked in the UI.
+# The presets Index filters › Excluded paths offers to tick; each is a set of
+# globs a preset counts as on for when all are in a source's excludes.
 EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
     # Hidden names are pruned by the walk whatever this says, so the label
     # promised something unticking it cannot give back. What it uniquely adds
@@ -172,27 +171,22 @@ EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
     "hidden": {
         "label": "System files (hidden are always skipped)",
         "globs": ["**/.*", "**/.DS_Store", "**/Thumbs.db", "**/desktop.ini", "**/.git/**"],
-        "default": True,
     },
     "node_modules": {
         "label": "Node modules",
         "globs": ["**/node_modules/**"],
-        "default": False,
     },
     "python_caches": {
         "label": "Python caches",
         "globs": ["**/__pycache__/**", "**/*.pyc"],
-        "default": False,
     },
     "build_artefacts": {
         "label": "Build artefacts",
         "globs": ["**/dist/**", "**/build/**"],
-        "default": False,
     },
     "obsidian_meta": {
         "label": "Obsidian metadata",
         "globs": ["**/.obsidian/**"],
-        "default": False,
     },
 }
 
@@ -275,6 +269,10 @@ class DefaultFilters(_ConfigModel):
     """Honour .fndignore files. Same syntax as .gitignore, but they apply to fnd
     alone, so they exclude something from search without excluding it from git."""
 
+    excludes: list[str] = Field(default_factory=lambda: list(EXCLUDES_PRESETS["hidden"]["globs"]))
+    """Glob patterns whose files are never indexed; a folder a `name/**` glob
+    covers is pruned unopened. Every source inherits these unless it sets its own."""
+
     include_tags: list[str] | dict[str, list[str]] = Field(default_factory=list)
     """Index only files carrying one of these tags. Empty means no tag is needed."""
 
@@ -342,6 +340,7 @@ class SourceFilters(_ConfigModel):
 
     respect_gitignore: bool | None = None
     respect_fndignore: bool | None = None
+    excludes: list[str] | None = None
     include_tags: list[str] | dict[str, list[str]] | None = None
     exclude_tags: list[str] | dict[str, list[str]] | None = None
     kinds: list[str] | None = None
@@ -430,9 +429,6 @@ class SourceConfig(_ConfigModel):
     """Glob patterns a file must match to be indexed. Empty means every
     supported type. Matched against the path relative to this source root."""
 
-    excludes: list[str] = Field(default_factory=list)
-    """Glob patterns that keep a file out, even when it matched an include."""
-
     follow_symlinks: bool = False
     """Follow symlinks in this source, and allow the root to be one. Off by
     default."""
@@ -460,6 +456,32 @@ class SourceConfig(_ConfigModel):
     _resolved_filters: DefaultFilters | None = PrivateAttr(default=None)
     """Populated by :class:`Config` once the defaults are known. Private so it
     never reaches the TOML writer, which must emit only what the user set."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_excludes(cls, data: Any) -> Any:
+        """A source-level `excludes` list is the filters' `excludes`, said in the old place."""
+        from fnd.config_migrations import legacy_excludes_override
+
+        if not isinstance(data, dict) or "excludes" not in data:
+            return data
+        data = dict(data)
+        legacy = legacy_excludes_override(data.pop("excludes"))
+        if legacy is not None:
+            filters = data.get("filters")
+            filters = (
+                dict(filters)
+                if isinstance(filters, dict)
+                else (filters.model_dump(exclude_none=True) if filters is not None else {})
+            )
+            filters.setdefault("excludes", list(legacy))
+            data["filters"] = filters
+        return data
+
+    @property
+    def excludes(self) -> list[str]:
+        """The excludes this source walks with: its own, or the inherited ones."""
+        return list(self.effective_filters.excludes)
 
     @model_validator(mode="after")
     def _absorb_type_globs(self) -> SourceConfig:
@@ -569,7 +591,7 @@ class CollectionConfig(_ConfigModel):
     A collection can be configured in two equivalent shapes:
 
     * **New (recommended):** ``[[collections.X.sources]]``. One TOML table
-      per source, each with its own includes/excludes/frontmatter_filter.
+      per source, each with its own includes and filters.
     * **Legacy:** flat ``roots = [...]``, ``includes = [...]``,
       ``excludes = [...]`` on the collection. Loader normalises this into
       a single implicit source so downstream code only sees the new shape.
@@ -627,7 +649,7 @@ class CollectionConfig(_ConfigModel):
                 SourceConfig(
                     path=root,
                     includes=list(self.includes),
-                    excludes=list(self.excludes),
+                    filters=_legacy_filters(self.excludes),
                     follow_symlinks=self.follow_symlinks,
                 )
                 for root in self.roots
@@ -636,6 +658,13 @@ class CollectionConfig(_ConfigModel):
             # Clear roots so this model is idempotent across re-validation.
             object.__setattr__(self, "roots", [])
         return self
+
+
+def _legacy_filters(excludes: list[str]) -> SourceFilters | None:
+    from fnd.config_migrations import legacy_excludes_override
+
+    override = legacy_excludes_override(excludes)
+    return SourceFilters(excludes=override) if override is not None else None
 
 
 class RankingProfileConfig(_ConfigModel):

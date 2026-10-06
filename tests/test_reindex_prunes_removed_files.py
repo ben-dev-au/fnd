@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from fnd.config import CollectionConfig, SourceConfig
+from fnd.config import CollectionConfig, SourceConfig, SourceFilters
 from fnd.index import build_index_from_config
 from fnd.index_runner import run_indexer
 from fnd.query import Searcher
@@ -61,7 +61,11 @@ def test_reindex_drops_file_newly_excluded(tmp_path: Path, tmp_index_dir: Path) 
     assert "wip.md" in _names(tmp_index_dir, "penguin", "notes")
 
     after = CollectionConfig(
-        sources=[SourceConfig(path=notes, includes=["**/*.md"], excludes=["drafts/**"])]
+        sources=[
+            SourceConfig(
+                path=notes, includes=["**/*.md"], filters=SourceFilters(excludes=["drafts/**"])
+            )
+        ]
     )
     build_index_from_config(config=after, collection="notes", index_dir=tmp_index_dir)
 
@@ -166,7 +170,11 @@ def test_prune_from_one_collection_leaves_shared_file_in_the_other(
 
     # Drop it from alpha only, by narrowing alpha's globs.
     narrowed = CollectionConfig(
-        sources=[SourceConfig(path=notes, includes=["**/*.md"], excludes=["shared.md"])]
+        sources=[
+            SourceConfig(
+                path=notes, includes=["**/*.md"], filters=SourceFilters(excludes=["shared.md"])
+            )
+        ]
     )
     build_index_from_config(config=narrowed, collection="alpha", index_dir=tmp_index_dir)
 
@@ -192,7 +200,11 @@ def test_pruned_pdf_keeps_texture_cache_entry_when_another_collection_holds_it(
     sha = sha256_file(pdf)
 
     alpha_narrowed = CollectionConfig(
-        sources=[SourceConfig(path=src, includes=["**/*.pdf"], excludes=["paper.pdf"])]
+        sources=[
+            SourceConfig(
+                path=src, includes=["**/*.pdf"], filters=SourceFilters(excludes=["paper.pdf"])
+            )
+        ]
     )
     beta = CollectionConfig(sources=[SourceConfig(path=src, includes=["**/*.pdf"])])
     cfg = Config(collections={"alpha": alpha_narrowed, "beta": beta})

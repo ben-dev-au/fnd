@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fnd.config import SourceConfig
+from fnd.config import SourceConfig, SourceFilters
 from fnd.tui.menu import _other_filters
 
 
 def test_an_excluding_source_says_so(tmp_path: Path) -> None:
-    src = SourceConfig(path=tmp_path, excludes=["build/**"])
+    src = SourceConfig(path=tmp_path, filters=SourceFilters(excludes=["build/**"]))
 
     assert "excludes" in _other_filters(src)
 
@@ -35,8 +35,7 @@ def test_it_sits_beside_the_others(tmp_path: Path) -> None:
 
     src = SourceConfig(
         path=tmp_path,
-        excludes=["build/**"],
-        filters=SourceFilters(max_size=1000),
+        filters=SourceFilters(excludes=["build/**"], max_size=1000),
     )
 
     named = _other_filters(src)

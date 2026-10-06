@@ -1,4 +1,4 @@
-"""The custom-glob editor's label must not wrap over its own field.
+"""A glob field's editor label must not wrap over its own field.
 
 Measured at 100 cols: the label Static rendered 4 rows inside a 2-row bar, so
 the input was clipped and the typed value painted at the end of the wrapped
@@ -39,8 +39,16 @@ async def _open_glob_editor(app: FNDApp, pilot: Any) -> SourceFormScreen:
     await screen_ready(pilot, app, SourceFormScreen)
     screen = app.screen
     assert isinstance(screen, SourceFormScreen)
-    screen._set_excludes(["__custom__"])
+    from fnd.tui.settings_screen import SettingsList
+
+    rows = screen.query_one(SettingsList)
+    rows.cursor_index = next(
+        i for i, it in enumerate(rows._items) if it.id == "form.includes_custom"
+    )
     await pilot.pause()
+    await pilot.press("enter")
+    for _ in range(4):
+        await pilot.pause()
     return screen
 
 

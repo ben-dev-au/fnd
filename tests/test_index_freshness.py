@@ -40,7 +40,8 @@ def test_an_exclude_needs_an_update_and_names_it(tmp_path: Path) -> None:
     before = _now(_config(tmp_path))
     verdict = compare(_now(_config(tmp_path, excludes=["build/**"])), before)
     assert verdict.state is State.NEEDS_UPDATE
-    assert verdict.reasons == ("Excludes",)
+    # Excludes are an index filter, so that is the setting named.
+    assert verdict.reasons == ("Index filters",)
 
 
 def test_an_index_filter_needs_an_update(tmp_path: Path) -> None:
@@ -116,7 +117,7 @@ def test_a_summary_names_the_state_and_the_reasons(tmp_path: Path) -> None:
     before = _now(_config(tmp_path))
     after = _now(_config(tmp_path, excludes=["b/**"], follow_symlinks=True))
     assert compare(after, before).summary == (
-        "Outdated: Excludes and Follow symlinks changed since the last index"
+        "Outdated: Follow symlinks and Index filters changed since the last index"
     )
 
 

@@ -15,7 +15,7 @@ from fnd.tui.editing import DocumentScreen, PartScreen, Role
 
 _ROOT = Path(__file__).resolve().parent.parent / "fnd" / "tui"
 #: A base whose subclasses take the role of what opens them; never pushed itself.
-_BASES = frozenset({"FilterBrowserScreen"})
+_BASES = frozenset({"FilterBrowserScreen", "_SourceFields"})
 
 
 def _screens() -> list[type[Screen[object]]]:

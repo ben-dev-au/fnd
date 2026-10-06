@@ -73,7 +73,6 @@ DEFAULT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _SOURCE_ORDER = (
     "path",
     "includes",
-    "excludes",
     "follow_symlinks",
     "frontmatter_filter",
     "app",

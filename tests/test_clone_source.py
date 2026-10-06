@@ -28,10 +28,10 @@ def _setup_two_collections(tmp_path: Path) -> Path:
     src = SourceConfig(
         path=tmp_path / "notes",
         includes=["**/*.md", "**/*.txt"],
-        excludes=["**/.git/**", "**/drafts/**"],
         follow_symlinks=True,
         frontmatter_filter="type == 'note'",
         filters=SourceFilters(
+            excludes=["**/.git/**", "**/drafts/**"],
             respect_gitignore=False,
             exclude_tags=["no_index", "wip"],
             kinds=["md"],
