@@ -1053,9 +1053,10 @@ def load(path: Path | None = None) -> Config:
 def ensure_current(config_path: Path | None = None) -> list[str]:
     """Rewrite the config in the current shape, keeping a timestamped backup.
 
-    Returns what was applied, empty when the file was already current. Called
-    once at startup so every config converges on one syntax rather than each
-    legacy shape being honoured forever.
+    Returns what was applied, empty when the file already holds the current
+    values: builds that word a hint differently must not rewrite each other's
+    file. Called once at startup so every config converges on one syntax rather
+    than each legacy shape being honoured forever.
     """
     from fnd._perms import secure_write_text
     from fnd.config_migrations import migrate
@@ -1069,7 +1070,7 @@ def ensure_current(config_path: Path | None = None) -> list[str]:
     version, applied = migrate(raw)
     config = Config.model_validate(raw)
     rendered = render_config(config, preserved=extract_preserved(text), version=version)
-    if rendered == text:
+    if rendered == text or tomllib.loads(rendered) == tomllib.loads(text):
         return []
     _refuse_lossy(rendered, config, raw)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")

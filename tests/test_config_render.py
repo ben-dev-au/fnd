@@ -617,6 +617,25 @@ class TestMigration:
         assert conf.ensure_current(path) == []
         assert not list(tmp_path.glob("config.toml.bak-*"))
 
+    def test_reworded_generated_comments_alone_are_not_rewritten(self, tmp_path: Path) -> None:
+        """Builds that word a hint differently otherwise rewrite each other's file on launch."""
+        path = tmp_path / "config.toml"
+        current = render_config(_sample())
+        older = current.replace("# fnd configuration.", "# fnd configuration, older wording.")
+        assert older != current
+        path.write_text(older, encoding="utf-8")
+        assert conf.ensure_current(path) == []
+        assert path.read_text(encoding="utf-8") == older
+        assert not list(tmp_path.glob("config.toml.bak-*"))
+
+    def test_a_value_in_a_non_canonical_form_is_still_rewritten(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.toml"
+        current = render_config(_sample())
+        assert '"~/Notes"' in current
+        path.write_text(current.replace('"~/Notes"', f'"{Path.home()}/Notes"'), encoding="utf-8")
+        assert conf.ensure_current(path) == ["Adopt the canonical layout"]
+        assert path.read_text(encoding="utf-8") == current
+
 
 class TestWritersStayCanonical:
     @pytest.mark.parametrize(
