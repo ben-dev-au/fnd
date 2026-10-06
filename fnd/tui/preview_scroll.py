@@ -1070,15 +1070,16 @@ class StructuralScrollStrategy:
 
     def locate(self) -> ViewportLocation | None:
         """The chunk whose top is nearest the viewport top, and the signed rows
-        between them. Only the boundary survives a re-wrap, so the nearest one
-        bounds the error: 13 rows out to 0, 60 rows into a 62-row chunk."""
+        between them, in the layout frame ``scroll_to_location`` restores in.
+        Only the boundary survives a re-wrap, so the nearest one bounds the
+        error: 13 rows out to 0, 60 rows into a 62-row chunk."""
         pane = self._host.preview_pane()
-        top = pane.scrollable_content_region.y
+        top = int(pane.scroll_offset.y)
         nearest: tuple[int, int] | None = None
         for seq, w in self._host.chunk_widgets.items():
-            r = w.region
+            r = w.virtual_region
             if r.height <= 0:
-                continue  # culled: NULL_REGION reads as y=0, not as a position
+                continue  # culled: an empty region reads as y=0, not as a position
             offset = top - r.y
             if nearest is None or abs(offset) < abs(nearest[0]):
                 nearest = (offset, seq)
