@@ -59,13 +59,20 @@ jobs:
   homebrew:
     name: Homebrew install (bottle)
     needs: expected
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       # Left on @main, unlike every other action here: a branch has no
       # version for Dependabot to track, so a SHA pin would freeze it
       # permanently. This job holds no secrets worth that trade.
       - uses: Homebrew/actions/setup-homebrew@main
+      # The runner image hand-links the disabled openssl@1.1 over bin/openssl:
+      # a user's Homebrew never has it, `brew unlink` does not own it, and it
+      # fails openssl@3's link step.
+      - name: Remove the runner image's openssl@1.1 link
+        run: |
+          link="$(brew --prefix)/bin/openssl"
+          if [[ "$(readlink "$link" || true)" == *openssl@1.1* ]]; then rm "$link"; fi
       - name: Tap and install exactly as a user does
         env:
           VERSION: ${{ needs.expected.outputs.version }}
