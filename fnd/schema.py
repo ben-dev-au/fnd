@@ -13,20 +13,21 @@ collection        text     raw       yes     yes   multi-valued: collections a f
 source_path       text     raw       yes     yes   multi-valued: source roots reaching the file
 membership        text     raw       yes     no    multi-valued (collection, source) for source scope
 path              text     raw       yes     no    filesystem path (display + open)
-path_tokens       text     default   no      no    tokenized for path matching
+path_tokens       text     fnd_text  no      no    tokenized for path matching
 mtime             u64      yes       yes     yes   incremental skip + recency boost
 kind              text     raw       yes     yes   fine-grained file-type id (see fnd.kinds.KIND_SPECS)
 page              u64      yes       yes     yes   PDF page index (1-based); 0 = N/A
 page_label        text     raw       yes     no    printed page label (e.g. "292" or "iv"); "" if N/A
 slide             u64      yes       yes     yes   1-based; 0 = N/A
-heading_path      text     default   yes     no    DOCX/MD section path (boosted)
-title             text     default   yes     no    metadata title (boosted)
-author            text     default   yes     no    metadata author
-body              text     en_stem   no      no    full-text ranking
+heading_path      text     fnd_text  yes     no    DOCX/MD section path (boosted)
+title             text     fnd_text  yes     no    metadata title (boosted)
+author            text     fnd_text  yes     no    metadata author
+body              text     fnd_text  no      no    full-text ranking (see fnd.analysis)
 body_struct       bytes    no        yes     no    JSON-encoded blocks for snippet generation
 body_md           bytes    no        yes     no    UTF-8 markdown source for the preview pane
 meta_blob         bytes    no        yes     no    JSON frontmatter for query-time filter
 chunk_seq         u64      yes       yes     yes   ordering within a file
+content_hash      text     raw       yes     no    sha256 of the file's bytes; equal for exact copies
 ================  =======  ========  ======  ====  ============================================
 """
 
@@ -35,6 +36,8 @@ from __future__ import annotations
 from typing import Final
 
 from tantivy import Schema, SchemaBuilder
+
+from fnd.analysis import TEXT_ANALYSER
 
 # Bump on any field-shape change; indexer refuses to open a stale index.
 # v7 (2026-05-19): added F_LINE for MD / TXT line-locator deep links via
@@ -49,7 +52,9 @@ from tantivy import Schema, SchemaBuilder
 # not once per collection: F_COLLECTION is multi-valued (the set a file belongs
 # to) and F_MEMBERSHIP carries compound (collection, source) tokens for exact
 # source scope. The bump forces the one reindex that collapses divergent copies.
-SCHEMA_VERSION: Final[int] = 10
+# v11 (2026-10-08): body, heading, title, author and path tokens use the folded, stemmed
+# ``fnd_text`` analyser (fnd.analysis); F_CONTENT_HASH marks exact copies.
+SCHEMA_VERSION: Final[int] = 11
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
@@ -86,6 +91,7 @@ F_HEADING_PATH: Final = "heading_path"
 F_TITLE: Final = "title"
 F_AUTHOR: Final = "author"
 F_BODY: Final = "body"
+F_CONTENT_HASH: Final = "content_hash"
 F_BODY_STRUCT: Final = "body_struct"
 F_BODY_MD: Final = "body_md"
 F_META_BLOB: Final = "meta_blob"
@@ -143,14 +149,13 @@ def build_schema() -> Schema:
     # Display-only path; raw tokenizer keeps it stored without weird tokenization.
     sb.add_text_field(F_PATH, stored=True, tokenizer_name="raw")
 
-    # Tokenized fields — default tokenizer (lowercase + simple).
-    sb.add_text_field(F_PATH_TOKENS, stored=False, tokenizer_name="default")
-    sb.add_text_field(F_HEADING_PATH, stored=True, tokenizer_name="default")
-    sb.add_text_field(F_TITLE, stored=True, tokenizer_name="default")
-    sb.add_text_field(F_AUTHOR, stored=True, tokenizer_name="default")
-
-    # Body uses Snowball English stemmer for query-stemming.
-    sb.add_text_field(F_BODY, stored=False, tokenizer_name="en_stem")
+    # Searched text shares one analyser so a query term means the same in each.
+    sb.add_text_field(F_PATH_TOKENS, stored=False, tokenizer_name=TEXT_ANALYSER)
+    sb.add_text_field(F_HEADING_PATH, stored=True, tokenizer_name=TEXT_ANALYSER)
+    sb.add_text_field(F_TITLE, stored=True, tokenizer_name=TEXT_ANALYSER)
+    sb.add_text_field(F_AUTHOR, stored=True, tokenizer_name=TEXT_ANALYSER)
+    sb.add_text_field(F_BODY, stored=False, tokenizer_name=TEXT_ANALYSER)
+    sb.add_text_field(F_CONTENT_HASH, stored=True, tokenizer_name="raw")
 
     # Tags: raw tokenizer so "project/alpha" and "two words" stay single
     # exact terms. fast=True powers the Tags pane's terms aggregation.

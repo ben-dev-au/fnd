@@ -86,3 +86,16 @@ async def test_a_query_that_matches_exactly_is_not_widened(cfg: Config, tagged_i
     values = {entry.value for entry in tags["frontmatter"]}
     assert "lecture" in values, values
     assert "seminar" not in values, "the other file's tag reached a branch it does not describe"
+
+
+@pytest.mark.asyncio
+async def test_a_respelt_word_finds_the_tags_of_its_files(cfg: Config, tagged_index: Path) -> None:
+    """A suffix typo the stem-level fuzzy widening cannot reach, only the respelling."""
+    app = FNDApp(index_dir=tagged_index, config=cfg)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        rows, tags = await _tags_after(app, pilot, "entanglemetn")
+
+    assert rows, "the premise: the respelling finds the file"
+    values = {getattr(n, "value", n) for n in tags["frontmatter"]}
+    assert values, "files with tags are on screen and the branch says none are indexed"

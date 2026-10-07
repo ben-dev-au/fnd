@@ -1153,6 +1153,20 @@ class ScopeController:
             if not lexical:
                 return None
             exact = index.parse_query(lexical, DEFAULT_SEARCH_FIELDS)
+            trace = self._app._search.latest_trace
+            fixes = trace.corrections if trace is not None else {}
+            if fixes:
+                # The results include the respelt words, so the facets must too.
+                import tantivy
+
+                from fnd.typos import respelt
+
+                respelt_query = index.parse_query(
+                    respelt(lexical.split(), fixes), DEFAULT_SEARCH_FIELDS
+                )
+                exact = tantivy.Query.boolean_query(
+                    [(tantivy.Occur.Should, exact), (tantivy.Occur.Should, respelt_query)]
+                )
             return self._widen_to_fuzzy(index, exact, lexical)
         except Exception:
             return None

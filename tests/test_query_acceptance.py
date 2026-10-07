@@ -29,6 +29,7 @@ import pytest
 import tantivy
 
 from fnd import meta_blob, struct
+from fnd.analysis import register
 from fnd.extract.base import Block
 from fnd.layered import search_layered
 from fnd.query import Searcher
@@ -180,7 +181,7 @@ def _frozen_clock(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[r
 def searcher() -> Searcher:
     schema = build_schema()
     d = Path(tempfile.mkdtemp(prefix="fnd-acceptance-"))
-    idx = tantivy.Index(schema, path=str(d))
+    idx = register(tantivy.Index(schema, path=str(d)))
     w = idx.writer()
     for pid, f in _DOCS:
         doc = tantivy.Document()

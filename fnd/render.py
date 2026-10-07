@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import itertools
 import re
-import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-import snowballstemmer
 from rich.text import Text
 
+from fnd.analysis import index_token
 from fnd.extract.base import Block
 from fnd.matching import DOC_WORD_RE
 from fnd.stopwords import STOPWORDS as _HL_STOPWORDS
@@ -27,10 +26,6 @@ if TYPE_CHECKING:
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
-# Stem each query term and each document word so "penfold" highlights for
-# both "penfold" and "penfolds" (Tantivy's en_stem on F_BODY).
-# threading.local: snowballstemmer instances aren't thread-safe.
-_STEMMER_LOCAL = threading.local()
 # Colours are RGB, never ANSI names: Textual's opacity blend skips ANSI colours,
 # so an ANSI foreground shows through a preview hidden at opacity 0.
 HIGHLIGHT_STYLE = "bold #1a1a1a on #ffd866"
@@ -79,16 +74,8 @@ def match_style(color: int, *, dim: bool = False) -> str:
     return palette[color % len(palette)]
 
 
-def _stem(word: str) -> str:
-    s = getattr(_STEMMER_LOCAL, "instance", None)
-    if s is None:
-        s = snowballstemmer.stemmer("english")
-        _STEMMER_LOCAL.instance = s
-    return s.stemWord(word.lower())
-
-
 def _term_stems(terms: list[str]) -> set[str]:
-    return {_stem(t) for t in terms if t}
+    return {index_token(t) for t in terms if t}
 
 
 def text_has_match(text: str, term_stems: set[str]) -> bool:
@@ -101,7 +88,7 @@ def text_has_match(text: str, term_stems: set[str]) -> bool:
     """
     if not term_stems or not text:
         return False
-    return any(_stem(m.group(0)) in term_stems for m in DOC_WORD_RE.finditer(text))
+    return any(index_token(m.group(0)) in term_stems for m in DOC_WORD_RE.finditer(text))
 
 
 def text_has_any_match(text: str, spec: MatchSpec) -> bool:
@@ -148,7 +135,7 @@ def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
     found = False
     plain = rendered.plain
     for m in DOC_WORD_RE.finditer(plain):
-        if _stem(m.group(0)) in term_stems:
+        if index_token(m.group(0)) in term_stems:
             rendered.stylize(HIGHLIGHT_STYLE, m.start(), m.end())
             found = True
     return found
@@ -191,10 +178,10 @@ def _proximity_tiers(
     proximity operator — so plain queries skip stemming entirely."""
     if not spec.proximity_groups:
         return frozenset(), frozenset()
-    from fnd.matching import _stem, proximity_tier_indices
+    from fnd.matching import proximity_tier_indices
 
     return proximity_tier_indices(
-        [_stem(w) for w in words_by_token],
+        [index_token(w) for w in words_by_token],
         spec.proximity_groups,
         spec.unconstrained_terms,
     )
@@ -256,7 +243,7 @@ def _joined_runs(
     joined by ``-``, ``_`` or ``.`` (``drop-down``, ``Track.Name``), or by one
     space with both halves of three letters or more (``last name``, not
     ``may be``). Commas, brackets and operators join nothing."""
-    from fnd.matching import _stem, match_color
+    from fnd.matching import match_color
 
     out: list[list[tuple[int, int, str]]] = [[] for _ in per_segment]
     splits: dict[tuple[str, str], tuple[str, bool]] = {}
@@ -264,7 +251,7 @@ def _joined_runs(
         if len(raw) >= 5 and raw.isalnum():
             for i in range(2, len(raw) - 1):
                 roomy = i >= 3 and len(raw) - i >= 3
-                key = (_stem(raw[:i]), _stem(raw[i:]))
+                key = (index_token(raw[:i]), index_token(raw[i:]))
                 if key not in splits or roomy:
                     splits[key] = (raw, roomy)
     if not splits:
@@ -274,10 +261,10 @@ def _joined_runs(
         for li, (a, b) in enumerate(itertools.pairwise(tokens)):
             if li in matched[si] or li + 1 in matched[si]:
                 continue
-            head = _stem(a.group(0))
+            head = index_token(a.group(0))
             if head not in heads:
                 continue
-            found = splits.get((head, _stem(b.group(0))))
+            found = splits.get((head, index_token(b.group(0))))
             if found is None:
                 continue
             raw, roomy = found
@@ -385,7 +372,6 @@ def word_highlight_runs(
     for a proximity-group word that falls outside a qualifying window.
     """
     from fnd.matching import (
-        _stem,
         align_doc_word,
         closest_raw_term,
         fuzzy_reaches,
@@ -406,7 +392,7 @@ def word_highlight_runs(
     # renders as a clean exact hit rather than having its tail painted as
     # wildcard variance. Only for words that matched THIS way (not regex) —
     # otherwise an unrelated raw term would paint the whole word orange.
-    s = _stem(word)
+    s = index_token(word)
     matched_exact_or_fuzzy = s in spec.exact_stems or any(
         fuzzy_reaches(s, q_stem, d) for q_stem, d in spec.fuzzy_per_stem
     )
@@ -429,7 +415,7 @@ def _highlight(text: str, terms: list[str]) -> str:
     """Wrap each whole-word occurrence of any term in Markdown bold (**…**).
 
     Stem-aware: "penfold" highlights both "penfold" and "penfolds", matching
-    Tantivy's ``en_stem`` tokenizer behaviour. Used by the legacy Markdown
+    the index analyser (fnd.analysis). Used by the legacy Markdown
     render path (kept for export use; the TUI takes the Rich-Text path).
     """
     if not terms:
@@ -440,7 +426,7 @@ def _highlight(text: str, terms: list[str]) -> str:
 
     def _wrap(m: re.Match[str]) -> str:
         word = m.group(0)
-        if _stem(word) in term_stems:
+        if index_token(word) in term_stems:
             return f"**{word}**"
         return word
 
@@ -469,7 +455,7 @@ def _terms_from_query(query: str, *, keep_stopwords: bool = False) -> list[str]:
     # Drop bare AND / OR / NOT.
     q = re.sub(r"\b(AND|OR|NOT)\b", " ", q)
     # Tokenize the same way the highlighter splits doc text (``DOC_WORD_RE``,
-    # which mirrors the en_stem analyzer — splits on underscore too) so a term
+    # which mirrors the index analyser and splits on underscore too) so a term
     # carrying adjacent punctuation ("3." / "Monitoring,") or an underscore
     # ("recursive_directory_iterator") yields the bare sub-words — their stems
     # then match the clean doc-word stems instead of silently failing.

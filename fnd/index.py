@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tantivy import Document, Index, IndexWriter, Query, Schema
 
+from fnd.analysis import register
 from fnd.config import CollectionConfig
 from fnd.extract import Chunk, ExtractError, extract, no_text_reason
 from fnd.fsmeta import path_is_absent
@@ -25,6 +26,7 @@ from fnd.schema import (
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
     F_COLLECTION,
+    F_CONTENT_HASH,
     F_CREATED,
     F_HEADING_PATH,
     F_INODE_CTIME,
@@ -158,7 +160,7 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
         Ledger(index_dir).mark_adopted()
 
     try:
-        return Index(schema, path=str(index_dir))
+        return register(Index(schema, path=str(index_dir)))
     except ValueError as e:
         # Tantivy's "Schema error: ... does not match" — the sidecar said
         # OK but Tantivy disagrees (e.g. recovery from a half-completed
@@ -172,7 +174,7 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
                 f"Rebuild with `fnd collection reindex <name> --rebuild`."
             ) from e
         _wipe_index_dir(index_dir, sidecar)
-        return Index(schema, path=str(index_dir))
+        return register(Index(schema, path=str(index_dir)))
 
 
 def _wipe_index_dir(index_dir: Path, sidecar: Path) -> None:
@@ -195,9 +197,11 @@ def _doc_for_chunk(
     memberships: Iterable[tuple[str, str]],
     meta_blob_bytes: bytes = b"",
     tags: dict[str, frozenset[str]] | None = None,
+    content_hash: str = "",
 ) -> Document:
     doc = Document()
     doc.add_text(F_PARENT_ID, chunk.parent_id)
+    doc.add_text(F_CONTENT_HASH, content_hash)
     # A file is stored once; F_COLLECTION and F_SOURCE_PATH are the distinct
     # collections/sources it belongs to, and F_MEMBERSHIP the exact pairs.
     pairs = sorted(set(memberships))
@@ -249,10 +253,27 @@ def _extract_docs(
     deletes the prior document: an ``ExtractError`` then leaves the existing
     copy, and any sibling collection's membership on it, untouched.
     """
+    content_hash = file_content_hash(path)
     return [
-        _doc_for_chunk(chunk, memberships=memberships, meta_blob_bytes=meta_blob_bytes, tags=tags)
+        _doc_for_chunk(
+            chunk,
+            memberships=memberships,
+            meta_blob_bytes=meta_blob_bytes,
+            tags=tags,
+            content_hash=content_hash,
+        )
         for chunk in extract(path)
     ]
+
+
+def file_content_hash(path: Path) -> str:
+    """sha256 of ``path``'s bytes, the key that marks exact copies; "" if unreadable."""
+    from fnd.cache import sha256_file
+
+    try:
+        return sha256_file(path)
+    except OSError:
+        return ""
 
 
 def read_file_metadata(

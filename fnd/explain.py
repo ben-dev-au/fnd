@@ -29,6 +29,8 @@ class StrongSignalTrace:
     threshold_gap: float
     fired: bool
     disabled_by_intent: bool
+    # A query word was respelt, so the probe scored the query without it.
+    disabled_by_respelling: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -68,6 +70,8 @@ class FusionTrace:
     contributions: list[HitContribution]  # ordered as fusion returned them
     rrf_k: int
     default_weights: dict[str, float] = field(default_factory=dict)
+    # Unindexed query words and the respellings the typo pass searched instead.
+    corrections: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -112,6 +116,11 @@ class SearchTrace:
     files_truncated: bool = False
     sections_truncated: bool = False
 
+    @property
+    def corrections(self) -> dict[str, tuple[str, ...]]:
+        """Query words no document holds, and the respellings searched instead."""
+        return self.fusion.corrections if self.fusion else {}
+
     def to_json(self) -> dict[str, object]:
         return {
             "query": self.query,
@@ -135,6 +144,7 @@ def _strong_signal_to_json(t: StrongSignalTrace) -> dict[str, object]:
         "threshold_gap": t.threshold_gap,
         "fired": t.fired,
         "disabled_by_intent": t.disabled_by_intent,
+        "disabled_by_respelling": t.disabled_by_respelling,
     }
 
 
@@ -142,6 +152,7 @@ def _fusion_to_json(t: FusionTrace) -> dict[str, object]:
     return {
         "query": t.query,
         "rrf_k": t.rrf_k,
+        "corrections": {k: list(v) for k, v in t.corrections.items()},
         "default_weights": t.default_weights,
         "subqueries": [
             {

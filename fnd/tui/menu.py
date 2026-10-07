@@ -1010,8 +1010,8 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pref.fuzzy_enabled",
             label="Auto-fuzzy matching",
             description=(
-                "Widen the cascade fallback to match typo'd query terms. "
-                "Per-term ~N in the query still works when this is off."
+                "Respell query words no file contains, and widen the cascade "
+                "fallback to typo'd terms. Per-term ~N still works when this is off."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=lambda app: (  # type: ignore[arg-type]
@@ -1021,6 +1021,19 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             ),
             toggle_setter=lambda app, v: _setting_writer("defaults.fuzzy_enabled")(app, v),
             keywords=("fuzzy", "typo", "search", "match"),
+        ),
+        MenuItem(
+            id="pref.collapse_copies",
+            label="Collapse exact copies",
+            description="Show byte-identical copies of a file as one result, noting the copies.",
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: (  # type: ignore[arg-type]
+                app._config.defaults.collapse_copies  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else True
+            ),
+            toggle_setter=lambda app, v: _setting_writer("defaults.collapse_copies")(app, v),
+            keywords=("duplicate", "copies", "copy", "collapse", "results"),
         ),
         MenuItem(
             id="pref.fuzzy_min_term_chars",

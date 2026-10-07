@@ -803,8 +803,11 @@ class Defaults(_ConfigModel):
     is instant. 0 disables it."""
 
     fuzzy_enabled: bool = True
-    """Auto-fuzzy matching in the cascade fallback. When False, only per-term
-    ``~N`` modifiers in the query trigger fuzzy expansion."""
+    """Respell query words no file contains, and fuzzy-match in the cascade
+    fallback. When False, only per-term ``~N`` modifiers trigger fuzzy expansion."""
+
+    collapse_copies: bool = True
+    """Show byte-identical copies of a file as one result, noting the copies."""
 
     fuzzy_min_term_chars: int = 3
     """Shortest stem auto-fuzzy applies to. Shorter terms stay exact."""

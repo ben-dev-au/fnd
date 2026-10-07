@@ -24,10 +24,12 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """
     seen: dict[str, Any] = {}
 
-    def fake_search(searcher: object, **kwargs: Any) -> tuple[list[Any], None]:
+    def fake_search(searcher: object, **kwargs: Any) -> tuple[list[Any], Any]:
+        from types import SimpleNamespace
+
         seen.update(kwargs)
         seen["filter_clauses"] = getattr(searcher, "filter_clauses", ())
-        return [], None
+        return [], SimpleNamespace(corrections={})
 
     monkeypatch.setattr("fnd.query.Searcher.__init__", lambda self, **kw: None)
     monkeypatch.setattr("fnd.layered.search_layered", fake_search)

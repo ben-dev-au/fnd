@@ -135,7 +135,7 @@ def test_cascade_falls_back_to_fuzzy_on_misspelling(small_md_corpus: Path) -> No
 def test_cascade_fuzzy_matches_when_indexed_token_is_stemmed(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    """Regression: ``F_BODY`` is indexed with ``en_stem``, so the on-disk
+    """Regression: ``F_BODY`` is indexed with ``fnd_text``, so the on-disk
     token for "Templates" is ``templat``. A typo query like "Templatas"
     lowercases to ``templatas`` (8 chars). Without stemming the query,
     Tantivy's ``fuzzy_term_query`` sees distance 2 from ``templat`` and
@@ -148,13 +148,12 @@ def test_cascade_fuzzy_matches_when_indexed_token_is_stemmed(
     (unlike the ``glimer/glimmer`` and ``penquin/penguin`` pairs the
     other tests use, where the stemmer leaves both forms untouched).
     """
-    import snowballstemmer
+    from fnd.analysis import index_token
 
-    stemmer = snowballstemmer.stemmer("english")
     # Sanity-pin the test on stemmer behaviour: if the stemmer ever stops
     # reshaping these inputs the test stops exercising the bug.
-    assert stemmer.stemWord("templates") == "templat"
-    assert stemmer.stemWord("templatas") == "templata"
+    assert index_token("templates") == "templat"
+    assert index_token("templatas") == "templata"
 
     root = tmp_path / "docs"
     root.mkdir(parents=True)

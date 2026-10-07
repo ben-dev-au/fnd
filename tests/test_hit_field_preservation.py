@@ -58,6 +58,7 @@ def _populated_hit() -> Hit:
         materialised=False,
         stored_struct=b"\x03",
         rank_score=0.25,
+        content_hash="ab" * 32,
     )
 
 

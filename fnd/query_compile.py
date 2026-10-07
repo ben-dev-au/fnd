@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import tantivy
 from tantivy import Occur, Query
 
+from fnd.analysis import index_token
 from fnd.query_ast import (
     And,
     Boosted,
@@ -125,19 +126,18 @@ class _Compiler:
 
     def _wildcard_phrase(self, words: list[str], slop: int) -> Query:
         from fnd.matching import glob_to_regex
-        from fnd.query_resolvers import fuzzy_stem
 
         patterns: list[str | tuple[int, str]] = []
         for w in words:
             if "*" in w or "?" in w:
                 patterns.append(glob_to_regex(w))
             else:
-                # Match the en_stem analyzer: it splits on every non-alphanumeric
+                # Match the index analyser: it splits on every non-alphanumeric
                 # char (hyphen, underscore, …) and stems each token, so a
                 # punctuated word like ``cross-entropy`` occupies one phrase
                 # position per sub-token. ``[\W_]`` splits on punctuation AND
                 # underscore while keeping Unicode letters/digits intact.
-                patterns.extend(re.escape(fuzzy_stem(sw)) for sw in re.split(r"[\W_]+", w) if sw)
+                patterns.extend(re.escape(index_token(sw)) for sw in re.split(r"[\W_]+", w) if sw)
         if not patterns:
             return Query.empty_query()
         try:
@@ -157,15 +157,15 @@ class _Compiler:
 
     def _fuzzy(self, n: Fuzzy) -> Query:
         from fnd.matching import auto_fuzzy_distance
-        from fnd.query_resolvers import fuzzy_stem, fuzzy_variants, term_or_query
+        from fnd.query_resolvers import fuzzy_variants, term_or_query
 
-        stem = fuzzy_stem(n.term)
+        stem = index_token(n.term)
         dist = n.distance if n.distance is not None else auto_fuzzy_distance(stem)
         q = term_or_query(self._schema, fuzzy_variants(self._s, stem, dist))
         return q if q is not None else Query.empty_query()
 
     def _regex(self, pattern: str) -> Query:
-        # F_BODY tokens are lowercased (en_stem), and the pattern is kept verbatim
+        # F_BODY tokens are lowercased and folded (fnd.analysis), and the pattern is kept verbatim
         # (no destructive lowercasing), so match case-insensitively via ``(?i)``.
         try:
             return Query.regex_query(self._schema, F_BODY, f"(?i){pattern}")

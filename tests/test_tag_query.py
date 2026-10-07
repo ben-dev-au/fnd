@@ -6,6 +6,7 @@ from pathlib import Path
 
 import tantivy
 
+from fnd.analysis import register
 from fnd.schema import F_TAGS_FM, F_TAGS_OS, build_schema
 from fnd.tag_query import TagFilter, compile_tag_filter
 
@@ -13,7 +14,7 @@ HOSTILE = 'evil" OR body:classified OR "'
 
 
 def _build(tmp_path: Path) -> tantivy.Index:
-    index = tantivy.Index(build_schema(), path=str(tmp_path))
+    index = register(tantivy.Index(build_schema(), path=str(tmp_path)))
     w = index.writer(15_000_000)
     rows = [
         ("normal.md", "public notes", ["recipe", "project", "project/alpha"], ["red"]),

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import tantivy
 from tantivy import FieldType, Query
 
+from fnd.analysis import analyse
 from fnd.query_fields import FieldSpec, FieldValue, date_token_range, resolve
 
 _BOOL_OPS = frozenset({"AND", "OR", "NOT"})
@@ -29,7 +30,6 @@ _CLAUSE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(.+)$", re.DOTALL)
 _FIELD_NAME_RE = re.compile(r"(?<![\w.])([A-Za-z_][A-Za-z0-9_]*):")
 _RANGE_RE = re.compile(r"^\[\s*(.+?)\s+TO\s+(.+?)\s*\]$", re.IGNORECASE)
 _CMP_RE = re.compile(r"^(>=|<=|>|<)(.+)$")
-_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -182,14 +182,14 @@ def _compile(
                 return terms[0]
             return Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
         return Query.term_query(schema, spec.tantivy_field, _strip_quotes(value).lower())
-    # TEXT (default/stem tokenizer): quoted → phrase, single word → term.
-    raw = _strip_quotes(value)
-    words = [w.lower() for w in _WORD_RE.findall(raw)]
+    # TEXT fields use the index analyser: quoted → phrase, single word → term.
+    words = analyse(_strip_quotes(value))
     if not words:
         return None
     if len(words) == 1:
         return Query.term_query(schema, spec.tantivy_field, words[0])
-    return Query.phrase_query(schema, spec.tantivy_field, words)
+    phrase: list[str | tuple[int, str]] = list(words)
+    return Query.phrase_query(schema, spec.tantivy_field, phrase)
 
 
 def extract_filters(

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from tantivy import Index, Occur, Query, Schema
 
+from fnd.analysis import register
 from fnd.schema import (
     F_COLLECTION,
     F_MEMBERSHIP,
@@ -23,7 +24,7 @@ from fnd.schema import (
 def _index_with_one_shared_doc() -> tuple[Index, Schema]:
     """One document: in C1 via source S1, and in C2 via source S2."""
     schema = build_schema()
-    index = Index(schema)
+    index = register(Index(schema))
     writer = index.writer()
     from tantivy import Document
 

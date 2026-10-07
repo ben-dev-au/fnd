@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from tantivy import Index, Query, Schema
 
+from fnd.analysis import fold, index_token, register
 from fnd.display_text import sanitise_display_text
 from fnd.extract.base import Block
 from fnd.matching import MatchSpec
@@ -49,6 +50,7 @@ from fnd.schema import (
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
     F_COLLECTION,
+    F_CONTENT_HASH,
     F_HEADING_PATH,
     F_KIND,
     F_LINE,
@@ -198,6 +200,8 @@ class Hit:
     body_md: str = ""
     # (collection, source root) pairs the file is indexed under.
     memberships: tuple[tuple[str, str], ...] = ()
+    # sha256 of the file's bytes: equal across exact copies, "" if unknown.
+    content_hash: str = ""
     # A light hit carries its block bytes undecoded, with empty ``snippet`` and
     # ``body_text``, until :func:`materialise`. ``body_md`` is always decoded:
     # the preview mode and progress plan read it for every listed hit.
@@ -264,6 +268,8 @@ class FileGroup:
     top_score: float
     hits: list[Hit]
     memberships: tuple[tuple[str, str], ...] = ()
+    # Paths of byte-identical copies folded into this result.
+    copies: tuple[str, ...] = ()
 
 
 def _open_index(index_dir: Path) -> Index:
@@ -274,7 +280,7 @@ def _open_index(index_dir: Path) -> Index:
         raise RuntimeError(
             f"index at {index_dir} schema version mismatch; rebuild with `fnd index --rebuild`"
         )
-    return Index(build_schema(), path=str(index_dir))
+    return register(Index(build_schema(), path=str(index_dir)))
 
 
 def _first_str(doc: object, field: str) -> str:
@@ -311,13 +317,14 @@ def _snippet_anchors(body_text: str, spec: MatchSpec) -> list[tuple[int, str]]:
     without them first, so a snippet centres on a real occurrence rather than a
     near-miss ("est" for "test") when the chunk holds both.
     """
-    from fnd.matching import _stem, phrase_char_spans
+    from fnd.matching import phrase_char_spans
     from fnd.render import match_word_spans
 
     specs = (dataclasses.replace(spec, fuzzy_per_stem=()), spec) if spec.fuzzy_per_stem else (spec,)
     for candidate in specs:
         anchors = [
-            (a, _stem(body_text[a:b].lower())) for a, b, _ in match_word_spans(body_text, candidate)
+            (a, index_token(body_text[a:b].lower()))
+            for a, b, _ in match_word_spans(body_text, candidate)
         ]
         anchors += [(a, f"\0phrase{a}") for a, _end in phrase_char_spans(body_text, candidate)]
         if anchors:
@@ -535,6 +542,7 @@ def _light_hit(doc: object, score: float) -> Hit:
         meta_blob=meta_blob_bytes or b"",
         body_md=md_bytes.decode("utf-8") if md_bytes else "",
         memberships=_memberships_of(doc),
+        content_hash=_first_str(doc, F_CONTENT_HASH),
         materialised=False,
         stored_struct=struct_bytes or b"",
     )
@@ -666,7 +674,7 @@ class Searcher:
         from fnd.query_ast import parse_query_ast
         from fnd.query_compile import compile_query
 
-        node = parse_query_ast(content)
+        node = parse_query_ast(fold(content))
         if node is None:
             return tantivy.Query.empty_query()
         return compile_query(node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs)
@@ -935,7 +943,7 @@ class Searcher:
         """:func:`fnd.layered.search_layered`'s file groups, materialised."""
         from fnd.layered import search_layered
 
-        groups = search_layered(
+        groups, trace = search_layered(
             self,
             query=query,
             limit=limit,
@@ -948,13 +956,14 @@ class Searcher:
             profile=profile,
             now=now,
             tag_filter=tag_filter,
+            with_trace=True,
         )
         spec = (
             _snippet_spec(query)
             if synonyms is None
             else MatchSpec.from_query(query, synonyms=synonyms)
         )
-        return materialise_groups(groups, spec, intent=intent)
+        return materialise_groups(groups, spec.with_corrections(trace.corrections), intent=intent)
 
 
 class FilteredSearcher:
@@ -974,12 +983,18 @@ class FilteredSearcher:
         return getattr(self._inner, name)
 
 
+def file_key(hit: Hit, *, collapse_copies: bool) -> str:
+    """What makes two hits the same result: the content hash when copies collapse."""
+    return hit.content_hash if collapse_copies and hit.content_hash else hit.parent_id
+
+
 def group_by_file(
     hits: list[Hit],
     *,
     limit: int,
     sections_per_file: int = 5,
     score_threshold: float = 0.0,
+    collapse_copies: bool = False,
 ) -> list[FileGroup]:
     """Bucket a flat ranked Hit list into per-file groups.
 
@@ -987,16 +1002,25 @@ def group_by_file(
     by :attr:`Hit.rank_key`, document position breaking ties, and cut to
     ``sections_per_file``; with ``score_threshold`` above 0, a section is kept
     only when its display ``score`` is at least that share of the top section's.
+    With ``collapse_copies``, a later byte-identical copy of a listed file is
+    folded into it as a path in :attr:`FileGroup.copies`, taking no slot.
     """
     groups: dict[str, list[Hit]] = {}
     order: list[str] = []
+    # Per kept file: each folded copy's path and the collections it is indexed under.
+    copies: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {}
     for h in hits:
         bucket = groups.get(h.parent_id)
-        if bucket is None:
-            groups[h.parent_id] = [h]
-            order.append(h.parent_id)
-        else:
+        if bucket is not None:
             bucket.append(h)
+            continue
+        key = file_key(h, collapse_copies=collapse_copies)
+        if key != h.parent_id and key in copies:
+            copies[key].setdefault(h.path, h.memberships)
+            continue
+        groups[h.parent_id] = [h]
+        order.append(h.parent_id)
+        copies[key] = {}
     out: list[FileGroup] = []
     for pid in order[:limit]:
         # Position is only the tie-break: equal scores come back in segment
@@ -1006,6 +1030,7 @@ def group_by_file(
         if score_threshold > 0.0 and top.score > 0.0:
             min_score = top.score * score_threshold
             ranked = [h for h in ranked if h.score >= min_score]
+        folded = copies[file_key(top, collapse_copies=collapse_copies)]
         out.append(
             FileGroup(
                 parent_id=pid,
@@ -1014,7 +1039,10 @@ def group_by_file(
                 title=top.title,
                 top_score=top.score,
                 hits=ranked[:sections_per_file],
-                memberships=top.memberships,
+                memberships=tuple(
+                    dict.fromkeys([*top.memberships, *(m for ms in folded.values() for m in ms)])
+                ),
+                copies=tuple(folded),
             )
         )
     return out

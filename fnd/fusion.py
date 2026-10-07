@@ -16,7 +16,7 @@ Auto-derived sub-queries:
   when the expansion actually changes the query string.
 
 A ``stem`` sub-query is omitted: the body field is already analysed with
-``en_stem`` (Snowball English), so an explicit stemmed pass would duplicate
+``fnd_text`` (folded Snowball English), so an explicit stemmed pass would duplicate
 the lex pass.
 
 Pass-index attribution: each fused hit is tagged with ``pass_index``
@@ -44,6 +44,7 @@ from fnd.query import CandidatePool, Hit, Searcher, SourceScope, candidate_windo
 from fnd.query_errors import QuerySyntaxError
 from fnd.render import keep_shown
 from fnd.synonyms import SynonymTable, compound_table, expand
+from fnd.typos import corrections, respelt
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -100,6 +101,10 @@ _DEFAULT_WEIGHTS: dict[str, float] = {
     "syn": 0.6,
 }
 
+# The query the user meant: it must outrank the literal pass, which holds a word
+# no document has. At the literal pass's weight the two only swap ranks and tie.
+_TYPO_WEIGHT = 2.0
+
 # Map source name → pass_index used by the TUI glyph table.
 # Keep aligned with cascade: 0 = neutral (lex/exact), 1 = fuzzy,
 # 2 = synonym, 3 = fusion-phrase.
@@ -109,6 +114,7 @@ _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "compound": 1,
     "syn": 2,
     "phrase": 3,
+    "typo": 1,
 }
 
 # Strong-signal bypass thresholds. Operate on a normalised BM25 score
@@ -225,24 +231,12 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # or ``""a b"~N`` — and crash the parser. Also skip when the query carries a
     # field qualifier (``kind:pdf``, ``c:wine``): a phrase over the raw qualifier
     # text is meaningless and quoting it mangles the qualifier.
-    carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q
     carries_field_syntax = bool(_FIELD_SYNTAX_RE.search(q))
     carries_operator_syntax = bool(_OPERATOR_SYNTAX_RE.search(q))
-    if (
-        len(q.split()) >= 2
-        and not carries_phrase_intent
-        and not carries_field_syntax
-        and not carries_operator_syntax
-    ):
+    if len(q.split()) >= 2 and _is_bag_of_words(q):
         subs.append(SubQuery(query=f'"{q}"', weight=_DEFAULT_WEIGHTS["phrase"], source="phrase"))
     subs.append(SubQuery(query=q, weight=_DEFAULT_WEIGHTS["lex"], source="lex"))
-    if (
-        synonyms is not None
-        and synonyms.groups
-        and not carries_phrase_intent
-        and not carries_field_syntax
-        and not carries_operator_syntax
-    ):
+    if synonyms is not None and synonyms.groups and _is_bag_of_words(q):
         expanded = expand(q, synonyms)
         if expanded != q:
             subs.append(SubQuery(query=expanded, weight=_DEFAULT_WEIGHTS["syn"], source="syn"))
@@ -266,6 +260,22 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
                 )
             )
     return subs
+
+
+def _is_bag_of_words(query: str) -> bool:
+    """No phrase, proximity, field qualifier or operator: plain words only."""
+    return not (
+        '"' in query
+        or "{" in query
+        or "NEAR/" in query
+        or _FIELD_SYNTAX_RE.search(query)
+        or _OPERATOR_SYNTAX_RE.search(query)
+    )
+
+
+def query_corrections(searcher: Searcher, query: str) -> dict[str, tuple[str, ...]]:
+    """Respellings for a plain-words query's unindexed words (see :mod:`fnd.typos`)."""
+    return corrections(searcher, query.split()) if _is_bag_of_words(query) else {}
 
 
 def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> MultiInput:
@@ -325,6 +335,7 @@ def fusion_search(
     source_scope: SourceScope | None = ...,
     precomputed_lex: CandidatePool | None = ...,
     tag_filter: TagFilter | None = ...,
+    corrections: dict[str, tuple[str, ...]] | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -342,6 +353,7 @@ def fusion_search(
     source_scope: SourceScope | None = ...,
     precomputed_lex: CandidatePool | None = ...,
     tag_filter: TagFilter | None = ...,
+    corrections: dict[str, tuple[str, ...]] | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], FusionTrace]: ...
 
@@ -358,6 +370,7 @@ def fusion_search(
     source_scope: SourceScope | None = None,
     precomputed_lex: CandidatePool | None = None,
     tag_filter: TagFilter | None = None,
+    corrections: dict[str, tuple[str, ...]] | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], FusionTrace]:
     """Run sub-queries in parallel and RRF-fuse the results.
@@ -394,6 +407,11 @@ def fusion_search(
     ``list[Hit]`` unchanged.
     """
     subs = subqueries if subqueries is not None else auto_subqueries(query, synonyms=synonyms)
+    fixes: dict[str, tuple[str, ...]] = {}
+    if subqueries is None:
+        fixes = query_corrections(searcher, query) if corrections is None else corrections
+        if fixes:
+            subs = [*subs, SubQuery(respelt(query.split(), fixes), _TYPO_WEIGHT, "typo")]
     if not subs:
         if with_trace:
             return [], _empty_fusion_trace(query)
@@ -454,7 +472,7 @@ def fusion_search(
     if not with_trace:
         return out
     trace = _build_fusion_trace(
-        query, subs, rankings, degraded, exhausted, all_files, primary_source, out
+        query, subs, rankings, degraded, exhausted, all_files, primary_source, out, fixes
     )
     return out, trace
 
@@ -468,6 +486,7 @@ def _build_fusion_trace(
     all_files: list[bool],
     primary_source: dict[tuple[str, int], str],
     out: list[Hit],
+    fixes: dict[str, tuple[str, ...]],
 ) -> FusionTrace:
     sub_traces = [
         SubQueryTrace(
@@ -520,6 +539,7 @@ def _build_fusion_trace(
         contributions=contribution_traces,
         rrf_k=_RRF_K_DEFAULT,
         default_weights=dict(_DEFAULT_WEIGHTS),
+        corrections=fixes,
     )
 
 

@@ -1,7 +1,7 @@
 """Term resolvers: turn a single query term into the set of indexed F_BODY
 stems it should match, then a BM25-scored ``term_query`` OR over them.
 
-``F_BODY`` is analyzed with ``en_stem`` (Snowball English), so the on-disk token
+``F_BODY`` is analysed with ``fnd_text`` (folded Snowball English), so the on-disk token
 for "Templates" is ``templat``. Resolvers that bypass ``parse_query`` (the fuzzy
 pass, the wildcard path) must consult the stemmed term dictionary directly and
 emit plain ``term_query`` clauses — so matched docs land on real BM25 scoring,
@@ -14,10 +14,8 @@ path, and the wildcard path share one implementation.
 
 from __future__ import annotations
 
-import threading
 from typing import TYPE_CHECKING
 
-import snowballstemmer
 import tantivy
 
 from fnd.matching import osa_within
@@ -26,22 +24,10 @@ from fnd.schema import F_BODY
 if TYPE_CHECKING:
     from fnd.query import Searcher
 
-# threading.local: snowballstemmer instances aren't thread-safe.
-_STEMMER_LOCAL = threading.local()
-
 # Cap on dictionary entries scanned per character bucket. A typical English
 # corpus has ~20-50k unique stems per leading character; the cap bounds the
 # worst-case scan on huge corpora without losing matches in normal ones.
 _DICT_LIMIT = 50_000
-
-
-def fuzzy_stem(term: str) -> str:
-    """Snowball-stem a query term to the on-disk F_BODY token form."""
-    s = getattr(_STEMMER_LOCAL, "instance", None)
-    if s is None:
-        s = snowballstemmer.stemmer("english")
-        _STEMMER_LOCAL.instance = s
-    return s.stemWord(term.lower())
 
 
 def fuzzy_variants(searcher: Searcher, stem: str, max_dist: int) -> list[str]:

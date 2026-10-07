@@ -153,7 +153,7 @@ def test_phrase_proximity_missing_term_no_bonus() -> None:
 
 
 def test_phrase_proximity_uses_stemming() -> None:
-    """Stems match Tantivy's en_stem so query 'penfold' clusters with body 'penfolds'."""
+    """Stems match the index analyser so query 'penfold' clusters with body 'penfolds'."""
     profile = RankingProfile(phrase_proximity=1.0)
     close = apply_phrase_proximity(
         score=1.0,

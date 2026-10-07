@@ -118,6 +118,7 @@ def _maximal() -> conf.Config:
             preview_prefetch_count=5,
             fuzzy_enabled=False,
             fuzzy_min_term_chars=4,
+            collapse_copies=False,
             indexer_auto_resume=True,
             cache_at_index_time=False,
             cloud_fetch_timeout_s=61,

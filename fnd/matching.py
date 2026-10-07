@@ -23,20 +23,19 @@ Public surface:
 from __future__ import annotations
 
 import re
-import threading
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from itertools import pairwise
 
-import snowballstemmer
-
+from fnd.analysis import fold, index_token
 from fnd.stopwords import STOPWORDS
 from fnd.synonyms import SynonymTable, expand
 
 # Canonical doc-text word scanner — the single source of truth for how every
-# match/highlight surface tokenises document text. ``en_stem`` (the F_BODY
-# analyzer) splits on EVERY non-alphanumeric char, INCLUDING underscore, so an
+# match/highlight surface tokenises document text. ``fnd_text`` (the F_BODY
+# analyser) splits on EVERY non-alphanumeric char, INCLUDING underscore, so an
 # identifier like ``recursive_directory_iterator`` is indexed as three tokens
 # and a search for ``iterator`` finds it. A plain ``\w+`` keeps underscore, so
 # it would see one token that fails to stem-match ``iterator`` — the match is
@@ -84,7 +83,7 @@ def _proximity_members(phrase: str) -> tuple[list[str], list[str]]:
             words.append(raw.lower())
         else:
             found = DOC_WORD_RE.findall(raw)
-            members.extend(_stem(w) for w in found)
+            members.extend(index_token(w) for w in found)
             words.extend(found)
     return members, words
 
@@ -128,27 +127,6 @@ def _phrase_word_lists(query: str) -> list[list[str]]:
 def _strip_quoted_spans(query: str) -> str:
     """Query with quoted-phrase contents removed — leaves only loose terms."""
     return _QUOTED_PHRASE.sub(" ", query)
-
-
-# snowballstemmer holds per-call cursor state; not thread-safe.
-_STEMMER_LOCAL = threading.local()
-
-
-# Cached: proving every listed result has a visible highlight word-matches each
-# hit before the first paint, and every one of those words reached Snowball.
-# Measured on the real corpus, same process, cache live vs `__wrapped__`:
-# 85.5ms -> 10.1ms over 551 hit texts, at 23,156 hits against 1,896 misses.
-#
-# The word is what is cached, not the stemmer: this is a pure function of the
-# word, and the thread-local below only avoids sharing the stemmer OBJECT across
-# threads (snowballstemmer holds per-call cursor state) — never the answers.
-@lru_cache(maxsize=65536)
-def _stem(word: str) -> str:
-    stemmer = getattr(_STEMMER_LOCAL, "instance", None)
-    if stemmer is None:
-        stemmer = snowballstemmer.stemmer("english")
-        _STEMMER_LOCAL.instance = stemmer
-    return stemmer.stemWord(word.lower())
 
 
 #: The most edits automatic fuzzy matching allows, in search and highlighting
@@ -265,7 +243,7 @@ class MatchSpec:
     ``exact_stems`` is the union of:
 
     * The stems of every plain-word query term (``_terms_from_query``
-      output, lowercased and Snowball-stemmed).
+      output, as the index analyses them).
     * Stems of every synonym variant the SynonymTable would expand
       those terms into — so a query for "k8s" highlights "kubernetes"
       in the doc.
@@ -351,6 +329,8 @@ class MatchSpec:
         # ``"…"~N`` form the matcher sees — no drift. A group is a phrase with
         # slop > 0; its words also feed the loose term set below so every
         # occurrence is found (proximity only splits full vs dim at render time).
+        # Globs and regexes match folded index tokens, so fold their accents too.
+        query = fold(query)
         expanded_query = _expand_proximity_aliases(query)
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
@@ -371,7 +351,7 @@ class MatchSpec:
             lambda m: " " if int(m.group(2)) > 0 else m.group(0), expanded_query
         )
         quoted_word_lists = _phrase_word_lists(contiguous_src)
-        phrases = tuple(tuple(_stem(w) for w in words) for words in quoted_word_lists)
+        phrases = tuple(tuple(index_token(w) for w in words) for words in quoted_word_lists)
         # Loose terms come from the EXPANDED query so ``{N}``/``NEAR/N`` aliases
         # are already rewritten to ``"…"~N`` (then stripped as quoted spans, with
         # their words re-supplied via ``prox_words`` below) — identical handling
@@ -467,7 +447,7 @@ class MatchSpec:
                 if is_free:
                     free_words.extend(DOC_WORD_RE.findall(_MODIFIER_RE.sub(" ", key)))
         loose_query = " ".join(plain_tokens)
-        free_keys.update(_stem(w) for w in free_words)
+        free_keys.update(index_token(w) for w in free_words)
         # Modifier-free view for plain terms / colour slots / synonyms; the raw
         # ``loose_query`` (with ``~N``) is reserved for explicit-fuzzy extraction.
         bare_query = _MODIFIER_RE.sub(" ", loose_query)
@@ -484,7 +464,7 @@ class MatchSpec:
         for a, b in pairwise(loose_words):
             a_stop, b_stop = a.lower() in STOPWORDS, b.lower() in STOPWORDS
             if (a_stop or b_stop) and not (a_stop and b_stop):
-                pair_phrases.append((_stem(a), _stem(b)))
+                pair_phrases.append((index_token(a), index_token(b)))
         phrases = phrases + tuple(pair_phrases)
 
         terms = _terms_from_query(bare_query)
@@ -493,10 +473,10 @@ class MatchSpec:
         # Search runs no auto-fuzzy or synonym pass on such a query (fnd.cascade, fnd.fusion).
         widens = not _carries_precision_intent(query)
         raw = {t.lower() for t in terms if t}
-        typed = frozenset(_stem(t) for t in raw)
+        typed = frozenset(index_token(t) for t in raw)
         # A hyphenated word matches its joined form too (fnd.synonyms.compound_table).
         raw.update(m.group(0).replace("-", "").lower() for m in _HYPHENATED.finditer(bare_query))
-        exact = {_stem(t) for t in raw}
+        exact = {index_token(t) for t in raw}
         # Pull synonym variants in: the cascade's synonym pass would
         # have surfaced docs containing them, so the highlighter
         # marks them too.
@@ -507,14 +487,14 @@ class MatchSpec:
                 for t in expanded_terms:
                     if t:
                         raw.add(t.lower())
-                        exact.add(_stem(t))
+                        exact.add(index_token(t))
         # Explicit per-term ~N — always honoured (user opt-in).
         explicit_pairs: dict[str, int] = {}
         for term, dist in _terms_with_fuzzy(loose_query):
             if dist is None or dist <= 0:
                 continue
-            explicit_pairs[_stem(term.lower())] = max(
-                explicit_pairs.get(_stem(term.lower()), 0), dist
+            explicit_pairs[index_token(term.lower())] = max(
+                explicit_pairs.get(index_token(term.lower()), 0), dist
             )
         auto_pairs: dict[str, int] = {}
         if auto_fuzzy and not _fuzzy_stands_down(query):
@@ -547,7 +527,7 @@ class MatchSpec:
                 for w in DOC_WORD_RE.findall(_MODIFIER_RE.sub(" ", key)):
                     if w.lower() in STOPWORDS:
                         continue
-                    st = _stem(w)
+                    st = index_token(w)
                     if ("term", st) in seen:
                         continue
                     seen.add(("term", st))
@@ -565,6 +545,22 @@ class MatchSpec:
             order=tuple(order),
             proximity_groups=tuple(proximity_groups),
             unconstrained_terms=frozenset(free_keys) if proximity_groups else frozenset(),
+        )
+
+    def with_corrections(self, fixes: Mapping[str, tuple[str, ...]]) -> MatchSpec:
+        """This spec plus the typo pass's respellings; the first of each paints in
+        its typed word's colour, since the typed word itself is in no document."""
+        if not fixes:
+            return self
+        firsts = {index_token(word): index_token(options[0]) for word, options in fixes.items()}
+        return replace(
+            self,
+            exact_stems=self.exact_stems
+            | {index_token(o) for options in fixes.values() for o in options},
+            order=tuple(
+                (kind, firsts.get(key, key) if kind == "term" else key, dist)
+                for kind, key, dist in self.order
+            ),
         )
 
     @property
@@ -586,7 +582,7 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
     marks exactly the words the search surfaced."""
     if spec.is_empty or not word:
         return False
-    s = _stem(word)
+    s = index_token(word)
     if s in spec.exact_stems:
         return True
     for pattern in (glob_to_regex(g) for g in spec.wildcards):
@@ -606,7 +602,7 @@ def match_color(word: str, spec: MatchSpec) -> int:
     distinct term in a multi-word query highlights in its own colour. Returns 0
     (the default yellow slot) when no ordered term matches (e.g. a synonym
     variant, or an empty ``order``)."""
-    s = _stem(word)
+    s = index_token(word)
     for i, (kind, key, dist) in enumerate(spec.order):
         if kind == "term":
             if s == key or (dist and fuzzy_reaches(s, key, dist)):
@@ -635,7 +631,7 @@ def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
     if not spec.phrases or not text:
         return []
     bounds = [(m.start(), m.end()) for m in DOC_WORD_RE.finditer(text)]
-    stems = [_stem(text[s:e]) for s, e in bounds]
+    stems = [index_token(text[s:e]) for s, e in bounds]
     raw: list[tuple[int, int]] = []
     for phrase in spec.phrases:
         plist = list(phrase)
@@ -788,7 +784,10 @@ def glob_match_mask(word: str, glob: str) -> list[bool] | None:
     filled it (a wildcard "variance"). None when the surface word doesn't fully
     match the glob (e.g. stemming dropped a suffix) — caller falls back to a
     whole-word highlight."""
-    m = re.fullmatch(_glob_capture_regex(glob), word.lower())
+    folded = fold(word).lower()
+    if len(folded) != len(word):
+        return None
+    m = re.fullmatch(_glob_capture_regex(glob), folded)
     if m is None:
         return None
     fill: set[int] = set()
@@ -812,8 +811,11 @@ def align_doc_word(doc_word: str, query_word: str) -> list[bool]:
     Comparison is case-insensitive — case differences alone don't
     count as mismatches.
     """
-    a = query_word.lower()
-    b = doc_word.lower()
+    a = fold(query_word).lower()
+    # Accents fold before comparing, so "Crémant" against "cremant" is no typo;
+    # a fold that changes the length (ß to ss) would misalign the mask.
+    folded = fold(doc_word).lower()
+    b = folded if len(folded) == len(doc_word) else doc_word.lower()
     m, n = len(a), len(b)
     if n == 0:
         return []

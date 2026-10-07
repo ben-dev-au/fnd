@@ -6,6 +6,7 @@ from pathlib import Path
 
 import tantivy
 
+from fnd.analysis import register
 from fnd.extract.base import Chunk
 from fnd.index import _doc_for_chunk
 from fnd.schema import F_TAGS_FM, F_TAGS_OS, build_schema
@@ -23,7 +24,7 @@ def _chunk(seq: int) -> Chunk:
 
 
 def _index_with(tmp_path: Path, docs: list[tantivy.Document]) -> tantivy.Index:
-    index = tantivy.Index(build_schema(), path=str(tmp_path))
+    index = register(tantivy.Index(build_schema(), path=str(tmp_path)))
     writer = index.writer(15_000_000)
     for d in docs:
         writer.add_document(d)

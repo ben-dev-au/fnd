@@ -2,7 +2,7 @@
 
 Three widening passes are tried in order:
 
-  0. literal — query as the user typed it (already stem-aware via en_stem)
+  0. literal: query as the user typed it (already stem-aware via the index analyser)
   1. fuzzy — Lucene-style "rewrite" fuzzy: enumerate the F_BODY term
      dictionary for indexed stems within the per-term auto-distance
      (0 for ≤2 chars, 1 for 3-5, 2 for ≥6 — same shape as Lucene's
@@ -45,7 +45,7 @@ from fnd.query import (
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
-from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
+from fnd.analysis import index_token
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.render import keep_shown
 from fnd.schema import F_BODY, build_schema
@@ -134,9 +134,9 @@ def fuzzy_body_clauses(
 ) -> list[tuple[tantivy.Occur, tantivy.Query]] | None:
     """The fuzzy pass's body clauses, or None where it would not run.
 
-    ``F_BODY`` is en_stem-analysed, so the on-disk token form for "Templates"
+    ``F_BODY`` is analysed by ``fnd_text``, so the on-disk token form for "Templates"
     is ``templat``. This bypasses parse_query (and its query-time stemming),
-    so each query term is lowercased and Snowball-stemmed before the
+    so each query term goes through the same analyser before the
     dictionary is consulted; otherwise the Levenshtein distance is computed
     between mismatched token shapes.
 
@@ -154,7 +154,7 @@ def fuzzy_body_clauses(
     schema = build_schema()
     stems_with_dists: list[tuple[str, int]] = []
     for term, explicit in term_dists:
-        stem = _fuzzy_stem(term)
+        stem = index_token(term)
         if explicit is not None:
             d = explicit
         elif auto_fuzzy_enabled and len(stem) >= min_term_chars:

@@ -10,7 +10,7 @@ Design notes:
 * Recency uses **exponential decay with half-life**, not Tantivy's fixed
   ``log2(2 + x)`` formula (`weight_by_field`), so the shape is configurable
   per profile and the closed-form math is unit-testable.
-* Phrase proximity uses **stem equality** (Snowball English) so it agrees
+* Phrase proximity uses **stem equality** (the index analyser) so it agrees
   with how the index tokenizes; otherwise a query for "penfold" would miss
   the "penfolds" in the body and never form a window.
 * Filetype boost is a flat multiplier per :attr:`Hit.kind`; absent kinds
@@ -29,8 +29,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from fnd.analysis import index_token
 from fnd.query import Hit, decoded_body
-from fnd.render import _stem  # stem helper kept centralized in render.py
 
 if TYPE_CHECKING:
     from fnd.config import Config
@@ -117,13 +117,13 @@ def apply_phrase_proximity(
     """
     if profile.phrase_proximity == 0.0:
         return score
-    distinct_stems = {_stem(t) for t in terms if t}
+    distinct_stems = {index_token(t) for t in terms if t}
     if len(distinct_stems) < 2:
         return score
 
     positions: dict[str, list[int]] = {s: [] for s in distinct_stems}
     for i, m in enumerate(re.finditer(r"\w+", body)):
-        st = _stem(m.group(0))
+        st = index_token(m.group(0))
         if st in positions:
             positions[st].append(i)
 

@@ -24,7 +24,7 @@ from fnd.query import Searcher
 
 @pytest.fixture
 def tpl_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A single MD file containing 'templates' (en_stem → ``templat``)."""
+    """A single MD file containing 'templates' (index analyser → ``templat``)."""
     root = tmp_path / "docs"
     root.mkdir(parents=True)
     (root / "tpl.md").write_text(

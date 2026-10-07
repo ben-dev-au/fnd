@@ -24,7 +24,7 @@ def test_pure_phrase_excludes_words_from_doc_wide_highlight() -> None:
 
 
 def test_quoted_underscore_identifier_stays_a_phrase_not_loose_terms() -> None:
-    # The en_stem split (DOC_WORD_RE) makes a quoted underscore identifier a
+    # The index analyser's split (DOC_WORD_RE) makes a quoted underscore identifier a
     # multi-token phrase. Its parts must NOT leak into the loose (doc-wide) term
     # set — otherwise quoting "recursive_directory_iterator" would light up
     # 'recursive'/'directory'/'iterator' everywhere, breaking the phrase contract.

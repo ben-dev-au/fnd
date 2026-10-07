@@ -33,6 +33,7 @@ from fnd.fusion import (
     auto_subqueries,
     fusion_search,
     normalise_bm25,
+    query_corrections,
     rank_by_position,
 )
 from fnd.query import (
@@ -42,6 +43,7 @@ from fnd.query import (
     Searcher,
     SourceScope,
     candidate_window,
+    file_key,
     group_by_file,
 )
 from fnd.render import keep_shown
@@ -69,6 +71,7 @@ def search_layered(
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
+    collapse_copies: bool = ...,
     with_trace: Literal[False] = False,
 ) -> list[FileGroup]: ...
 
@@ -91,6 +94,7 @@ def search_layered(
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
+    collapse_copies: bool = ...,
     with_trace: Literal[True],
 ) -> tuple[list[FileGroup], SearchTrace]: ...
 
@@ -112,6 +116,7 @@ def search_layered(
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
+    collapse_copies: bool = False,
     with_trace: bool = False,
 ) -> list[FileGroup] | tuple[list[FileGroup], SearchTrace]:
     """Run the regime-aware search and return ranked :class:`FileGroup`s.
@@ -138,9 +143,10 @@ def search_layered(
         min_files=limit,
     )
 
-    # Step 2: strong-signal check. Disabled when intent is supplied —
-    # the obvious BM25 match may not be what the caller wants.
-    ss_trace = _evaluate_strong_signal(probe.hits, intent_present=bool(intent))
+    # Step 2: strong-signal check, skipped with an intent (the obvious BM25 match
+    # may not be what the caller wants) or a respelt word (the probe lacked it).
+    fixes = query_corrections(searcher, query) if auto_fuzzy_enabled else {}
+    ss_trace = _evaluate_strong_signal(probe.hits, intent_present=bool(intent), respelt=bool(fixes))
     fusion_trace = None
     cascade_trace: CascadeTrace | None = None
     exhausted = [probe.exhausted]
@@ -177,6 +183,7 @@ def search_layered(
                 source_scope=source_scope,
                 precomputed_lex=probe,
                 tag_filter=tag_filter,
+                corrections=fixes,
                 with_trace=True,
             )
             exhausted.extend(sq.exhausted for sq in fusion_trace.subqueries)
@@ -192,6 +199,7 @@ def search_layered(
                 source_scope=source_scope,
                 precomputed_lex=probe,
                 tag_filter=tag_filter,
+                corrections=fixes,
             )
 
         regime = "fusion"
@@ -247,6 +255,7 @@ def search_layered(
         limit=limit,
         sections_per_file=sections_per_file,
         score_threshold=sections_score_threshold,
+        collapse_copies=collapse_copies,
     )
 
     if with_trace:
@@ -269,7 +278,10 @@ def search_layered(
             regime=regime,
             # A pass pages until it holds more files than ``limit`` or has seen
             # every matching one; one that stopped at its ceiling left files unseen.
-            files_truncated=(len({h.parent_id for h in hits}) > len(groups) or not all(all_files)),
+            files_truncated=(
+                len({file_key(h, collapse_copies=collapse_copies) for h in hits}) > len(groups)
+                or not all(all_files)
+            ),
             # A pass that stopped paging left matching chunks unread, so a
             # shown file's section count is a floor.
             sections_truncated=(
@@ -322,7 +334,9 @@ def _compound_hits(
     )
 
 
-def _evaluate_strong_signal(probe: list[Hit], *, intent_present: bool) -> StrongSignalTrace:
+def _evaluate_strong_signal(
+    probe: list[Hit], *, intent_present: bool, respelt: bool = False
+) -> StrongSignalTrace:
     """Decide whether the literal probe is a clear winner.
 
     A single uncontested hit (``len(probe) == 1``) treats the runner-up
@@ -333,7 +347,7 @@ def _evaluate_strong_signal(probe: list[Hit], *, intent_present: bool) -> Strong
     top_n = normalise_bm25(probe[0].score) if probe else 0.0
     second_n = normalise_bm25(probe[1].score) if len(probe) > 1 else 0.0
     gap = top_n - second_n
-    if intent_present or not probe:
+    if intent_present or respelt or not probe:
         return StrongSignalTrace(
             top_score_norm=top_n,
             second_score_norm=second_n,
@@ -342,6 +356,7 @@ def _evaluate_strong_signal(probe: list[Hit], *, intent_present: bool) -> Strong
             threshold_gap=STRONG_SIGNAL_MIN_NORM_GAP,
             fired=False,
             disabled_by_intent=intent_present,
+            disabled_by_respelling=respelt,
         )
     fired = top_n >= STRONG_SIGNAL_MIN_NORM_SCORE and gap >= STRONG_SIGNAL_MIN_NORM_GAP
     return StrongSignalTrace(

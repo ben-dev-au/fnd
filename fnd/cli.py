@@ -396,6 +396,7 @@ def search(
     from fnd.synonyms import load_app_synonyms
     from fnd.tag_query import TagFilter
     from fnd.tags import providers_for, source_tag_selection
+    from fnd.typos import describe
 
     cfg = load()
     # Everything a user can misspell is checked into one collector and reported
@@ -469,6 +470,7 @@ def search(
             profile=profile_for_scope(cfg, collections),
             auto_fuzzy_enabled=cfg.defaults.fuzzy_enabled,
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
+            collapse_copies=cfg.defaults.collapse_copies,
             with_trace=True,
         )
         spec = MatchSpec.from_query(
@@ -476,10 +478,15 @@ def search(
             synonyms=synonyms,
             auto_fuzzy=cfg.defaults.fuzzy_enabled,
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
-        )
-        shown = materialise_hits([g.hits[0] for g in groups if g.hits], spec)
-        for hit in shown:
+        ).with_corrections(trace.corrections)
+        if trace.corrections:
+            typer.echo(describe(trace.corrections), err=True)
+        shown_groups = [g for g in groups if g.hits]
+        shown = materialise_hits([g.hits[0] for g in shown_groups], spec)
+        for group, hit in zip(shown_groups, shown, strict=True):
             _print_hit(hit)
+            if group.copies:
+                typer.echo(f"        also at: {', '.join(group.copies)}")
         if explain is None:
             return
         if not (1 <= explain <= len(shown)):

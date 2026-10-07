@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from rich.text import Text
 from textual.widgets import Static
 
 from fnd.matching import MatchSpec
@@ -36,6 +37,7 @@ from fnd.query import FileGroup, FilteredSearcher, Searcher, SourceScope
 from fnd.rerank import RankingProfile, profile_for_scope
 from fnd.tui.progress.facility import ProgressSession
 from fnd.tui.progress.operations import SEARCH
+from fnd.typos import describe
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -70,6 +72,7 @@ class _SearchRequest:
     sections_score_threshold: float
     auto_fuzzy_enabled: bool
     min_term_chars: int
+    collapse_copies: bool
     match_spec: MatchSpec
     evidence_spec: MatchSpec
     profile: RankingProfile
@@ -341,6 +344,7 @@ class SearchController:
             ),
             auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
+            collapse_copies=defaults.collapse_copies if defaults else True,
             match_spec=match_spec,
             evidence_spec=evidence_spec,
             profile=profile,
@@ -421,9 +425,11 @@ class SearchController:
             profile=request.profile,
             auto_fuzzy_enabled=request.auto_fuzzy_enabled,
             min_term_chars=request.min_term_chars,
+            collapse_copies=request.collapse_copies,
             with_trace=True,
         )
-        return materialise_upfront(groups, request.match_spec, intent=request.intent), trace
+        spec = request.match_spec.with_corrections(trace.corrections)
+        return materialise_upfront(groups, spec, intent=request.intent), trace
 
     # ── commit (event loop) ──────────────────────────────────────
 
@@ -463,8 +469,11 @@ class SearchController:
         self._clear_query_notice()
         self.latest_trace = trace
         self.groups = groups
-        self.match_spec = request.match_spec
-        self.evidence_spec = request.evidence_spec
+        fixes = trace.corrections if trace is not None else {}
+        self.match_spec = request.match_spec.with_corrections(fixes)
+        self.evidence_spec = request.evidence_spec.with_corrections(fixes)
+        if fixes:
+            self._set_query_notice(describe(fixes))
         self.current_query = request.query  # the original (with [...]) for history
 
         # A new query must always re-render the first result, even when it
@@ -548,11 +557,15 @@ class SearchController:
             text = err.message if not err.hint else f"{err.message} ({err.hint})"
         else:
             text = str(err)
+        self._set_query_notice(text)
+
+    def _set_query_notice(self, text: str) -> None:
         try:
             notice = self._app.query_one("#query_notice", Static)
         except Exception:
             return
-        notice.update(text)
+        # Text, not a markup string: the line can quote what the user typed.
+        notice.update(Text(text))
         notice.display = True
 
     def _clear_query_notice(self) -> None:
