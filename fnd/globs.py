@@ -21,7 +21,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-__all__ = ["GlobSet", "PathGlob", "names_hidden", "translate"]
+__all__ = ["GlobSet", "PathGlob", "config_regex", "names_hidden", "translate"]
 
 
 def names_hidden(pattern: str) -> bool:
@@ -152,7 +152,7 @@ def translate(pattern: str, *, anchored: bool, fold_case: bool = False) -> re.Pa
 
 
 @functools.lru_cache(maxsize=2048)
-def _config_regex(pattern: str) -> re.Pattern[str] | None:
+def config_regex(pattern: str) -> re.Pattern[str] | None:
     try:
         return translate(pattern, anchored=True)
     except re.error:
@@ -168,7 +168,7 @@ class PathGlob:
     pattern: str
 
     def matches(self, rel: str) -> bool:
-        regex = _config_regex(self.pattern)
+        regex = config_regex(self.pattern)
         return regex is not None and regex.match(rel) is not None
 
 

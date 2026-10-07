@@ -168,9 +168,12 @@ def _path_globs(glob: str) -> tuple[list[str], bool]:
 
 
 def _matching_nothing(glob: str) -> str:
-    """A glob that matched nothing, given the empty segment no path has."""
-    empty_segment = glob.startswith("/") or glob.endswith("/") or "//" in glob
-    return glob if empty_segment else f"/{glob}"
+    """A glob that matched nothing, kept so by an interior empty segment. A leading
+    or trailing ``/`` is kept as written: the Glob type reads it as the root or the
+    folder the user meant."""
+    if glob.startswith("/") or glob.endswith("/") or "//" in glob:
+        return glob
+    return f"{glob}//**"
 
 
 def _add_root_readings(out: list[str], rest: list[tuple[_Piece, ...]]) -> None:

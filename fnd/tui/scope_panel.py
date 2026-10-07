@@ -1268,10 +1268,10 @@ class ScopeController:
         cfg = self._app._config
         if cfg is None:
             return frozenset()
-        from fnd.tags import normalise_tag
+        from fnd.tags import frontmatter_key
 
         return frozenset(
-            t for t in (normalise_tag(k) for k in cfg.defaults.tag_frontmatter_keys) if t
+            t for t in (frontmatter_key(k) for k in cfg.defaults.tag_frontmatter_keys) if t
         )
 
     def _ghost_tag_values(self, catalogue: dict[str, list[Any]]) -> list[tuple[str, str]]:

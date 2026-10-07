@@ -650,7 +650,7 @@ def collection_list() -> None:
 @collection_app.command("add")
 def collection_add(
     name: str = typer.Argument(..., help="Collection name."),
-    source: list[Path] = typer.Option(
+    source: list[str] = typer.Option(
         ...,
         "--source",
         help="Root directory for this collection. One per command; "
@@ -705,29 +705,46 @@ def collection_add(
 
     cfg_path = default_config_path()
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    from pydantic import ValidationError
+
     from fnd.config import SourceFilters
 
     # The current shape, not a source-level `excludes` or `frontmatter_filter`:
     # a new write should not create something the next migration has to move.
-    own = SourceFilters(frontmatter=filter or None, excludes=list(exclude) or None)
-    new_source = SourceConfig(
-        path=source[0],
-        includes=list(include),
-        follow_symlinks=follow_symlinks,
-        filters=own if filter or exclude else None,
-    )
+    try:
+        own = SourceFilters(frontmatter=filter or None, excludes=list(exclude) or None)
+        new_source = SourceConfig(
+            path=source[0],  # pyright: ignore[reportArgumentType]
+            includes=list(include),
+            follow_symlinks=follow_symlinks,
+            filters=own if filter or exclude else None,
+        )
+    except ValidationError as e:
+        first = e.errors()[0]
+        echo(f"invalid {'.'.join(map(str, first['loc'])) or 'source'}: {first['msg']}", err=True)
+        raise typer.Exit(code=1) from e
     # Read before the write: the sibling set is what the new source is being
     # compared against, and after the write it contains the new source itself.
     from fnd.config import load as _load
     from fnd.config import overlapping_source
+    from fnd.config_types import name_clash
 
-    existing = []
+    names: dict[str, Any] = {}
     with contextlib.suppress(Exception):
-        prior = _load(cfg_path).collections.get(name)
-        existing = list(prior.sources) if prior else []
+        names = dict(_load(cfg_path).collections)
+    clash = name_clash(name, names, ignoring=name)
+    if clash is not None:
+        echo(f"collection {clash!r} already exists; names differing only by case clash", err=True)
+        raise typer.Exit(code=1)
+    prior = names.get(name)
+    existing = list(prior.sources) if prior else []
     overlap, overlap_contains = overlapping_source(existing, new_source)
-    write_collection_source(config_path=cfg_path, collection_name=name, source=new_source)
-    echo(f"added source {source[0]} to collection {name} in {cfg_path}")
+    try:
+        write_collection_source(config_path=cfg_path, collection_name=name, source=new_source)
+    except ValueError as e:
+        echo(f"nothing was written: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    echo(f"added source {new_source.path} to collection {name} in {cfg_path}")
     if overlap:
         relation = "already covers" if overlap_contains else "is already inside"
         echo(
@@ -735,17 +752,17 @@ def collection_add(
             f"reached by both are indexed once.",
             err=True,
         )
-    root = Path(source[0]).expanduser()
+    root = new_source.path
     if not root.exists():
         # Indexing it yields nothing and says nothing, so a typo looks like a
         # working collection until the first search comes back empty.
         echo(
-            f"fnd: {source[0]} does not exist; indexing it will find no files.",
+            f"fnd: {root} does not exist; indexing it will find no files.",
             err=True,
         )
     elif root.is_symlink() and not follow_symlinks:
         echo(
-            f"fnd: {source[0]} is a symlink and follow-symlinks is off, so this "
+            f"fnd: {root} is a symlink and follow-symlinks is off, so this "
             f"source will index nothing. Re-add it with --follow-symlinks, or "
             f"point it at the real folder.",
             err=True,

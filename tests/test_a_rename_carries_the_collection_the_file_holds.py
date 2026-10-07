@@ -112,3 +112,13 @@ async def test_a_collection_removed_since_launch_is_not_brought_back(
         )
 
     assert _layout(cfg_path) == {"papers": ["three"]}
+
+
+@pytest.mark.asyncio
+async def test_a_case_only_rename_goes_through(cfg_path: Path, tmp_index_dir: Path) -> None:
+    """Two names differing by case cannot coexist, so the rename is one write."""
+    app = FNDApp(index_dir=tmp_index_dir)
+    async with app.run_test(size=(110, 34)) as pilot:
+        await pilot.pause()
+        await _rename(app, pilot, lambda: None, "Notes")
+    assert _layout(cfg_path) == {"Notes": ["one", "two"]}

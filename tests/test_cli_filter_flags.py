@@ -335,3 +335,25 @@ class TestCollectionAddWritesTheCurrentShape:
         src.mkdir()
         _out, err = _run(tmp_path, "collection", "add", "r", "--source", str(src))
         assert "does not exist" not in err, err
+
+    def test_an_empty_source_is_refused_not_stored_as_the_cwd(self, tmp_path: Path) -> None:
+        _out, err = _run(tmp_path, "collection", "add", "e", "--source", "")
+        assert "must not be empty" in err, err
+        assert not (tmp_path / "d" / "fnd" / "config.toml").exists()
+
+    def test_a_quoted_source_is_stored_without_its_quotes(self, tmp_path: Path) -> None:
+        import tomllib
+
+        src = tmp_path / "my src"
+        src.mkdir()
+        _run(tmp_path, "collection", "add", "q", "--source", f"'{src}'")
+        raw = tomllib.loads((tmp_path / "d" / "fnd" / "config.toml").read_text(encoding="utf-8"))
+        assert raw["collections"]["q"]["sources"][0]["path"] == str(src)
+
+    def test_a_name_differing_only_by_case_is_refused(self, tmp_path: Path) -> None:
+        src = tmp_path / "src"
+        src.mkdir()
+        _run(tmp_path, "collection", "add", "notes", "--source", str(src))
+        _out, err = _run(tmp_path, "collection", "add", "Notes", "--source", str(src))
+        assert "already exists" in err, err
+        assert "Traceback" not in err, err

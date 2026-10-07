@@ -824,10 +824,6 @@ def _validate_user_app(app_id: str, raw: dict[str, Any]) -> _UserAppSpec:
         if not isinstance(url_raw, str) or not url_raw:
             raise ValueError(f"app {app_id!r}: url must be a non-empty string")
         url = url_raw
-    # Dry-run the template against a stub OpenRequest so placeholder
-    # typos ({ptha} for {path}) surface at config load — not at open
-    # time, where the resulting KeyError gets surfaced as an ugly
-    # "Open failed: KeyError: 'ptha'" toast in the OpenWithScreen.
     _validate_template(app_id, argv=argv, url=url)
     return _UserAppSpec(
         id=app_id,
@@ -844,33 +840,16 @@ def _validate_template(
     argv: tuple[str, ...] | None,
     url: str | None,
 ) -> None:
-    """Dry-run-format the template against a fully-populated stub
-    OpenRequest. Re-raise the placeholder name as a ValueError so the
-    config-load error message points users at the typo."""
-    stub = OpenRequest(
-        path=Path("/stub/path"),
-        kind="md",
-        page=1,
-        slide=1,
-        heading_path="Stub > Section",
-        line=1,
-        query="stub",
-        vault="StubVault",
-        file_in_vault="stub.md",
-        source_path=Path("/stub"),
-    )
+    """Refuse a template the opener cannot fill, naming the app."""
+    from fnd.config_types import check_argv, check_template
+
     try:
         if argv is not None:
-            _render_argv(list(argv), stub)
+            check_argv(list(argv))
         if url is not None:
-            _render_url(url, stub)
-    except KeyError as e:
-        # e.args[0] is the missing placeholder name.
-        bad = e.args[0] if e.args else "?"
-        raise ValueError(
-            f"app {app_id!r}: template references unknown placeholder {{{bad}}}. "
-            f"See docs/apps.md for the variable list."
-        ) from None
+            check_template(url)
+    except ValueError as e:
+        raise ValueError(f"app {app_id!r}: {e}. See docs/apps.md for the variable list.") from None
 
 
 def _make_user_handler(spec: _UserAppSpec) -> Callable[[OpenRequest], int]:

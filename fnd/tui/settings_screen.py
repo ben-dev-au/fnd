@@ -47,6 +47,7 @@ from textual.widget import Widget
 from textual.widgets import Input, OptionList, Static, TextArea
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
+from fnd.config_types import clean_path_text, glob_error, join_list, name_clash, split_list
 from fnd.display_text import display_line
 from fnd.fsmeta import path_is_absent
 from fnd.tui.actions import Keymap, load_keymap
@@ -731,19 +732,11 @@ def _coercion_error(coerce: Any, hint: str, err: Exception) -> str:
     return f"needs {want}" + (f" ({hint})" if hint else "")
 
 
-def _out_of_bounds(item: MenuItem, value: Any) -> str:
-    """Why the row refuses ``value``, or "".
+def _refusal(item: MenuItem, value: Any) -> str:
+    """Why the config field the row writes refuses ``value``, or ""."""
+    from fnd.config_types import setting_error
 
-    Nine rows printed a range in two places and enforced it in none, so
-    `result_limit = 99999` against `1-1000` was written without a word.
-    """
-    bounds = getattr(item, "bounds", None)
-    if bounds is None or not isinstance(value, int | float) or isinstance(value, bool):
-        return ""
-    low, high = bounds
-    if low <= value <= high:
-        return ""
-    return f"outside {item.hint or f'{low}-{high}'}"
+    return setting_error(item.setting_key, value) if item.setting_path else ""
 
 
 class EditBar(Horizontal):
@@ -890,7 +883,7 @@ class EditBar(Horizontal):
         self._validation_timer = None
         from pathlib import Path as _Path
 
-        raw = value.strip().strip("'\"")
+        raw = clean_path_text(value)
         if not raw:
             self._set_status("", tone="error")
             return
@@ -935,9 +928,9 @@ class EditBar(Horizontal):
         except (TypeError, ValueError) as e:
             self.show_error(_coercion_error(coerce, self._item.hint, e))
             return
-        out_of_range = _out_of_bounds(self._item, value)
-        if out_of_range:
-            self.show_error(out_of_range)
+        refused = _refusal(self._item, value)
+        if refused:
+            self.show_error(refused)
             return
         self.post_message(self.EditCommitted(self._item, value))
 
@@ -2381,13 +2374,9 @@ class _SourceFields(Screen[None]):
 
     def _open_filters(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
-        raw_path = str(self._fields.get("path") or "").strip()
+        raw_path = clean_path_text(str(self._fields.get("path") or ""))
         root = Path(raw_path).expanduser() if raw_path else None
-        globs = [
-            g.strip()
-            for g in str(self._fields.get("includes_custom") or "").split(",")
-            if g.strip()
-        ]
+        globs = split_list(str(self._fields.get("includes_custom") or ""))
         open_source_filter_browser(
             app,
             self._fields["filters"],
@@ -2612,7 +2601,7 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
         # ORed path glob like its neighbours, not a file type.
         self._fields = {
             "path": str(s.path),
-            "includes_custom": ", ".join(s.includes),
+            "includes_custom": join_list(s.includes),
             "filter": _source_frontmatter(s),
             "follow_symlinks": bool(s.follow_symlinks),
             "app": s.app or "",
@@ -2760,7 +2749,7 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
         if value == "obsidian" and not str(self._fields.get("app_params_vault") or "").strip():
             from fnd.apps import detect_obsidian_vault
 
-            path_s = str(self._fields.get("path") or "").strip()
+            path_s = clean_path_text(str(self._fields.get("path") or ""))
             if path_s:
                 try:
                     detected = detect_obsidian_vault(Path(path_s).expanduser())
@@ -2926,12 +2915,8 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
 
         self._clear_error()
 
-        path = str(self._fields["path"] or "").strip().strip("'\"")
-        includes_globs: list[str] = []
-        for g in str(self._fields.get("includes_custom") or "").split(","):
-            g = g.strip()
-            if g:
-                includes_globs.append(g)
+        path = clean_path_text(str(self._fields["path"] or ""))
+        includes_globs = split_list(str(self._fields.get("includes_custom") or ""))
         app: FNDApp = self.app  # type: ignore[assignment]
         # Read the file, not the launch snapshot: `write_collection` replaces the
         # collection table wholesale, so a stale model deletes sources added by
@@ -3043,7 +3028,7 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
         certain to fail."""
         from pathlib import Path
 
-        path = str(self._fields["path"] or "").strip().strip("'\"")
+        path = clean_path_text(str(self._fields["path"] or ""))
         if not path:
             return "Path is required."
         if path_is_absent(Path(path).expanduser()):
@@ -3318,9 +3303,10 @@ class AddCollectionWizard(_SourceFields, DocumentScreen):
         except InvalidCollectionNameError as e:
             return str(e)
         cfg = self.app._config  # type: ignore[attr-defined]
-        if cfg is not None and name in cfg.collections:
-            return f"Collection {name!r} already exists."
-        path = str(self._fields["path"]).strip().strip("'\"")
+        clash = name_clash(name, cfg.collections) if cfg is not None else None
+        if clash is not None:
+            return f"Collection {clash!r} already exists."
+        path = clean_path_text(str(self._fields["path"]))
         if not path:
             return "Source path is required."
         expanded = Path(path).expanduser()
@@ -3362,14 +3348,10 @@ class AddCollectionWizard(_SourceFields, DocumentScreen):
         self._clear_error()
 
         name = str(self._fields["name"]).strip()
-        path = str(self._fields["path"]).strip().strip("'\"")
+        path = clean_path_text(str(self._fields["path"]))
         p = Path(path).expanduser()
 
-        includes_globs = [
-            g.strip()
-            for g in str(self._fields.get("includes_custom") or "").split(",")
-            if g.strip()
-        ]
+        includes_globs = split_list(str(self._fields.get("includes_custom") or ""))
 
         app: FNDApp = self.app  # type: ignore[assignment]
 
@@ -3398,6 +3380,8 @@ class AddCollectionWizard(_SourceFields, DocumentScreen):
             )
         except InvalidCollectionNameError as e:
             return str(e)
+        except ValueError as e:
+            return _summarise(e)
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         self._opened_with = copy.deepcopy(self._fields)
@@ -3453,10 +3437,9 @@ class RenameCollectionScreen(Screen[None]):
         from fnd.config import (
             InvalidCollectionNameError,
             default_config_path,
-            delete_collection,
             load,
+            rename_collection,
             validate_collection_name,
-            write_collection,
         )
 
         try:
@@ -3465,8 +3448,8 @@ class RenameCollectionScreen(Screen[None]):
             self.notify(str(e), severity="error", timeout=6)
             return
         app: FNDApp = self.app  # type: ignore[assignment]
-        # The file, not `app._config`: the collection is copied whole under the
-        # new name, so a stale model drops or resurrects sources.
+        # The file, not `app._config`: a clash or a vanished name is judged
+        # against what the rename will rewrite.
         try:
             cfg = load()
         except Exception as e:
@@ -3485,8 +3468,9 @@ class RenameCollectionScreen(Screen[None]):
             )
             self.app.pop_screen()
             return
-        if new_name in cfg.collections:
-            self.notify(f"{new_name!r} already exists", severity="warning")
+        clash = name_clash(new_name, cfg.collections, ignoring=self._old_name)
+        if clash is not None:
+            self.notify(f"{clash!r} already exists", severity="warning")
             return
         busy = _indexing_now(app)
         if busy is not None:
@@ -3498,15 +3482,11 @@ class RenameCollectionScreen(Screen[None]):
                 timeout=8,
             )
             return
-        existing = cfg.collections[self._old_name]
-        write_collection(
-            config_path=default_config_path(),
-            name=new_name,
-            collection=existing,
-        )
-        delete_collection(
-            config_path=default_config_path(), name=self._old_name, renamed_to=new_name
-        )
+        try:
+            rename_collection(config_path=default_config_path(), old=self._old_name, new=new_name)
+        except (OSError, ValueError, KeyError) as e:
+            self.notify(f"Nothing was renamed: {_summarise(e)}", severity="error", timeout=8)
+            return
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Past Rename and the now-stale per-collection screen.
@@ -5394,9 +5374,22 @@ class FilterTextScreen(PartScreen):
         self._refresh_status()
 
     def _parsed(self) -> tuple[Any, Any]:
+        """The spec, or the error the save would raise: the parse and the model both."""
+        from pydantic import ValidationError
+
+        from fnd.config import SourceFilters
+        from fnd.filter_dsl import FilterError
         from fnd.filters.text_form import parse_or_error
 
-        return parse_or_error(self.query_one("#filter_text", TextArea).text)
+        spec, err = parse_or_error(self.query_one("#filter_text", TextArea).text)
+        if spec is None:
+            return spec, err
+        try:
+            SourceFilters.model_validate(_spec_to_mapping(spec))
+        except ValidationError as e:
+            first = e.errors()[0]
+            return None, FilterError(f"{first['loc'][0]}: {first['msg']}", 1)
+        return spec, None
 
     def _refresh_status(self) -> None:
         status = self.query_one("#filter_status", Static)
@@ -5704,7 +5697,7 @@ class RuleTextScreen(PartScreen):
 
 
 class GlobTextScreen(PartScreen):
-    """Exclude globs typed by hand, comma-separated: a part of the browser.
+    """Exclude globs typed by hand, one per line: a part of the browser.
 
     The presets are rows to tick; this holds whatever else the walk should skip.
     """
@@ -5722,7 +5715,7 @@ class GlobTextScreen(PartScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
             set_border_title(box, self._title)
-            yield TextArea(", ".join(self._value), id="glob_text")
+            yield TextArea("\n".join(join_list([g]) for g in self._value), id="glob_text")
             yield PlainStatic("", id="glob_status")
             yield PlainStatic(_GLOB_HINT, id="glob_help")
         yield PlainStatic("", id="footer_hints")
@@ -5743,13 +5736,10 @@ class GlobTextScreen(PartScreen):
 
     def _globs(self) -> tuple[str, ...]:
         text = self.query_one("#glob_text", TextArea).text
-        return tuple(g.strip() for g in text.replace("\n", ",").split(",") if g.strip())
+        return tuple(split_list(text))
 
     def _problem(self) -> str:
-        from fnd.filters.excludes import invalid_glob
-
-        bad = [g for g in self._globs() if invalid_glob(g)]
-        return f"{bad[0]!r} is not a valid glob" if bad else ""
+        return next((e for e in map(glob_error, self._globs()) if e), "")
 
     def _refresh_status(self) -> None:
         status = self.query_one("#glob_status", Static)

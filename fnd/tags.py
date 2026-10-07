@@ -27,6 +27,7 @@ __all__ = [
     "TagContext",
     "TagProvider",
     "expand_ancestors",
+    "frontmatter_key",
     "normalise_tag",
     "providers_for",
     "read_tags",
@@ -51,6 +52,12 @@ def normalise_tag(raw: str) -> str:
         text = text[1:]
     text = " ".join(text.split())
     return text.casefold()[:MAX_TAG_LEN]
+
+
+def frontmatter_key(raw: object) -> str:
+    """A frontmatter field name as a tag namespace; config keys and a note's own
+    keys both fold through this, so they meet case- and ``#``-insensitively."""
+    return normalise_tag(str(raw))
 
 
 def source_tag_selection(raw: Iterable[str], sources: Iterable[str]) -> dict[str, frozenset[str]]:
@@ -149,7 +156,7 @@ class FrontmatterTagProvider:
         # Frontmatter keys are matched case-insensitively; tags:/tag: are
         # handled by the plain path and must never be namespaced as well.
         self._extra_keys = tuple(
-            k for k in (str(k).strip().casefold() for k in extra_keys) if k and k not in _TAG_KEYS
+            k for k in (frontmatter_key(k) for k in extra_keys) if k and k not in _TAG_KEYS
         )
 
     def available_on(self, platform: str) -> bool:
@@ -166,10 +173,9 @@ class FrontmatterTagProvider:
         if self._extra_keys:
             wanted = set(self._extra_keys)
             for raw_key, raw_value in fm.items():
-                folded = str(raw_key).strip().casefold()
-                if folded not in wanted:
+                namespace = frontmatter_key(raw_key)
+                if namespace not in wanted:
                     continue
-                namespace = normalise_tag(folded)
                 # Strip Obsidian wikilink brackets BEFORE _collect splits on
                 # "/", or a subfolder link like "[[Notes/Algebra]]" is torn
                 # into a malformed "[[notes" fragment plus the real path.

@@ -738,9 +738,10 @@ class TestARowNamesAGlobThatCannotReachAFolder:
         assert "⚠" in row
         assert "'src/**'" in row, row
 
-    def test_a_trailing_slash_is_no_better(self, tmp_path: Path) -> None:
+    def test_a_trailing_slash_means_the_folder(self, tmp_path: Path) -> None:
+        """The model stores ``build/`` as ``build/**``, so there is nothing to warn about."""
         (tmp_path / "build").mkdir()
-        assert "⚠" in self._row(tmp_path, excludes=["build/"])
+        assert "⚠" not in self._row(tmp_path, excludes=["build/"])
 
     def test_the_working_glob_says_nothing(self, tmp_path: Path) -> None:
         """The control: the form it recommends must not warn about itself."""
