@@ -348,7 +348,8 @@ class TestCollectionAddWritesTheCurrentShape:
         src.mkdir()
         _run(tmp_path, "collection", "add", "q", "--source", f"'{src}'")
         raw = tomllib.loads((tmp_path / "d" / "fnd" / "config.toml").read_text(encoding="utf-8"))
-        assert raw["collections"]["q"]["sources"][0]["path"] == str(src)
+        stored = raw["collections"]["q"]["sources"][0]["path"]
+        assert Path(stored).expanduser() == src
 
     def test_a_name_differing_only_by_case_is_refused(self, tmp_path: Path) -> None:
         src = tmp_path / "src"

@@ -34,6 +34,7 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -48,7 +49,7 @@ from textual.widgets import Input, OptionList, Static, TextArea
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
 from fnd.config_types import clean_path_text, glob_error, join_list, name_clash, split_list
-from fnd.display_text import display_line
+from fnd.display_text import display_line, fit
 from fnd.fsmeta import path_is_absent
 from fnd.tui.actions import Keymap, load_keymap
 from fnd.tui.editing import (
@@ -390,7 +391,7 @@ class _FilterSummary:
             # the common case is untouched.
             return Text(str(self))
         rows = rows[:rows_left]
-        rows[-1] = rows[-1][: usable - 1].rstrip()[:-1] + "…"
+        rows[-1] = fit(rows[-1].rstrip(), usable - 2).removesuffix("…").rstrip() + "…"
         return Text(self._head + "\n" + "\n".join(rows))
 
     def __str__(self) -> str:
@@ -470,7 +471,7 @@ def _render_row(
     label_to_render = display_line(item.label)
     if width is not None and pending_segments:
         affordance_len = sum(
-            len(seg_text) for seg_text, seg_style in pending_segments if "dim" not in seg_style
+            cell_len(seg_text) for seg_text, seg_style in pending_segments if "dim" not in seg_style
         )
         # Capped, so an over-long value elides itself rather than eating the
         # label's budget and eliding the label.
@@ -480,9 +481,8 @@ def _render_row(
         min_pad = 2
         gap = 2
         label_budget = width - used_leading - affordance_len - min_pad - gap
-        if label_budget > 0 and len(label_to_render) > label_budget:
-            keep = max(1, label_budget - 1)
-            label_to_render = label_to_render[:keep] + "…"
+        if label_budget > 0:
+            label_to_render = fit(label_to_render, max(2, label_budget))
 
     if highlight:
         low = label_to_render.lower()
@@ -527,7 +527,7 @@ def _render_row(
         segments = _truncate_segments_to_fit(
             segments, budget=width - used - min_pad - gap, elide=item.elide
         )
-        plain_len = sum(len(seg_text) for seg_text, _ in segments)
+        plain_len = sum(cell_len(seg_text) for seg_text, _ in segments)
         pad = max(min_pad, width - used - plain_len - gap)
         text.append(" " + "·" * pad + " ", style="dim")
     else:
@@ -539,9 +539,7 @@ def _render_row(
 
 def _shorten(text: str, keep: int, elide: str) -> str:
     """``text`` in ``keep`` cells, marking the end that was dropped."""
-    if keep <= 1:
-        return "…"
-    return "…" + text[-(keep - 1) :] if elide == "head" else text[: keep - 1] + "…"
+    return fit(text, max(1, keep), keep="end" if elide == "head" else "start")
 
 
 def _truncate_segments_to_fit(
@@ -553,20 +551,20 @@ def _truncate_segments_to_fit(
     would defeat the per-kind visual language.
 
     Returns the original list when no truncation is needed."""
-    plain_len = sum(len(seg_text) for seg_text, _ in segments)
+    plain_len = sum(cell_len(seg_text) for seg_text, _ in segments)
     if plain_len <= budget:
         return segments
     # Reserve every non-dim segment in full; truncate the leading
     # dim segments to consume whatever's left.
-    reserved = sum(len(seg_text) for seg_text, style in segments if "dim" not in style)
+    reserved = sum(cell_len(seg_text) for seg_text, style in segments if "dim" not in style)
     available_for_dim = budget - reserved
     if reserved > budget:
         # A value is not an affordance: reserved in full, a long one runs past
         # the right border and the terminal cuts it unmarked. Glyphs are one or
         # two cells, so shrinking the longest segment leaves them whole.
         kept = [(t, s) for t, s in segments if "dim" not in s]
-        longest = max(range(len(kept)), key=lambda i: len(kept[i][0]))
-        room = budget - (reserved - len(kept[longest][0]))
+        longest = max(range(len(kept)), key=lambda i: cell_len(kept[i][0]))
+        room = budget - (reserved - cell_len(kept[longest][0]))
         text, style = kept[longest]
         kept[longest] = (_shorten(text, room, elide), style)
         return kept
@@ -580,13 +578,11 @@ def _truncate_segments_to_fit(
     for seg_text, seg_style in segments:
         if "dim" in seg_style and not truncated:
             remaining = available_for_dim - consumed
-            if len(seg_text) <= remaining:
+            if cell_len(seg_text) <= remaining:
                 out.append((seg_text, seg_style))
-                consumed += len(seg_text)
+                consumed += cell_len(seg_text)
             else:
-                # Truncate this segment with a single-char ellipsis.
-                keep = max(0, remaining - 1)
-                out.append((seg_text[:keep] + "…", seg_style))
+                out.append((fit(seg_text, max(1, remaining)), seg_style))
                 truncated = True
         else:
             out.append((seg_text, seg_style))
@@ -2404,8 +2400,7 @@ class _SourceFields(Screen[None]):
         source = " (inherited)" if inherited else ""
         shown = display_line(rule)
         width = max(20, self.size.width - 12)
-        if len(shown) > width:
-            shown = shown[: width - 1] + "…"
+        shown = fit(shown, width)
         self.query_one("#form_sample_sep", Static).update(
             f"─── Paste frontmatter to test:  {shown}{source} ───"
         )

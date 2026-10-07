@@ -16,7 +16,7 @@ from rich.cells import cell_len
 from textual.widgets import Tree
 
 from fnd.config import is_all_collections
-from fnd.display_text import display_line
+from fnd.display_text import display_line, fit
 from fnd.fsmeta import path_is_absent
 from fnd.kinds import CATEGORIES, CATEGORY_BY_ID, KIND_BY_ID, KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope, SearchSnapshot
@@ -109,13 +109,13 @@ def _branch_row(
             return text
     keep = budget - cell_len(compact) - 4
     if keep >= 1:
-        return f"{label[:keep]}\u2026 ({compact})"
+        return f"{fit(label, keep + 1)} ({compact})"
     # Neither half fits whole. Elide the value rather than drop it, and never
     # drop the label: it is what the row is found by, and a row that silently
     # loses its value paints identically to a different state.
     room = budget - cell_len(label) - 4
     if room >= 1:
-        return f"{label} ({compact[:room]}\u2026)"
+        return f"{label} ({fit(compact, room + 1)})"
     # Nothing fits. A fixed label is short and known, so it stays whole and
     # the row clips; a name is user data and must never read as a DIFFERENT
     # name, so it keeps an ellipsis instead.

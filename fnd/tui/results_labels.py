@@ -262,11 +262,11 @@ def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
 
 
 def _shorten(text: str, limit: int) -> str:
-    """Truncate ``text`` to ``limit`` chars with an ellipsis suffix."""
-    text = text.strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 1)].rstrip() + "…"
+    """``text`` on one line in at most ``limit`` cells, an ellipsis marking the cut."""
+    from fnd.display_text import fit
+
+    cut = fit(text.strip().replace("\n", " "), limit)
+    return cut.removesuffix("…").rstrip() + "…" if cut.endswith("…") else cut
 
 
 def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
@@ -278,21 +278,24 @@ def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
     ends plus the suffix. When even one stem char won't fit we still show
     ``…<suffix>``; only when the suffix itself can't fit (``max_width`` shorter
     than ``…`` + suffix) do we fall back to a plain right-truncation that drops
-    it. Char-counted (like ``_shorten``); wide glyphs aside.
+    it. Measured in cells, so a wide glyph counts two.
     """
-    if len(name) <= max_width:
+    from rich.cells import cell_len
+
+    from fnd.display_text import fit
+
+    if cell_len(name) <= max_width:
         return name
-    if max_width <= 1:
-        return name[: max(0, max_width)]
     suffix = Path(name).suffix
     stem = name[: len(name) - len(suffix)] if suffix else name
-    stem_budget = max_width - len(suffix) - 1  # 1 cell for the ellipsis
+    stem_budget = max_width - cell_len(suffix) - 1  # 1 cell for the ellipsis
     if stem_budget < 0:
         # Even "…" + suffix won't fit; show leading chars, plain-truncated.
-        return name[: max_width - 1] + "…"
-    head = (stem_budget + 1) // 2
-    tail = stem_budget - head
-    return stem[:head] + "…" + (stem[-tail:] if tail else "") + suffix
+        return fit(name, max_width)
+    head = fit(stem, (stem_budget + 1) // 2 + 1).removesuffix("…")
+    room = stem_budget - cell_len(head)
+    tail = fit(stem, room + 1, keep="end").removeprefix("…") if room > 0 else ""
+    return f"{head}…{tail}{suffix}"
 
 
 def _format_hit_label(

@@ -1414,15 +1414,14 @@ class FNDApp(PlainToastApp):
     # surface stable while the presenter owns the state.
 
     def _diag_log_path(self) -> str:
-        """Opt-in preview-perf diagnostic log, in the OS temp dir. Gated by
-        _FND_PREVIEW_DIAG=1; production code paths never write here."""
-        import os
-        import tempfile
+        """Opt-in preview-perf diagnostic log. Gated by _FND_PREVIEW_DIAG=1;
+        production code paths never write here."""
+        from fnd.paths import diagnostics_dir
 
-        return os.path.join(tempfile.gettempdir(), "fnd-preview-diag.log")
+        return str(diagnostics_dir() / "fnd-preview-diag.log")
 
     def _diag_log(self, msg: str) -> None:
-        # _FND_PREVIEW_DIAG=1 appends to <tempdir>/fnd-preview-diag.log.
+        # _FND_PREVIEW_DIAG=1 appends to <diagnostics_dir>/fnd-preview-diag.log.
         # Investigation-only; remove once findings recorded.
         import os
         import time as _time
@@ -1437,7 +1436,7 @@ class FNDApp(PlainToastApp):
 
     def action_diag_dump_preview(self) -> None:
         # Walks the active preview and writes a per-type widget count
-        # to /tmp/fnd-preview-diag.log. Always on (ignores the
+        # to <diagnostics_dir>/fnd-preview-diag.log. Always on (ignores the
         # env-var gate the log writes use) so a one-key tap works.
         from collections import Counter
 
@@ -1579,7 +1578,7 @@ class FNDApp(PlainToastApp):
         _, hit = target
         if self._refuse_if_missing(Path(hit.path)):
             return
-        opener.open_smart(
+        rc = opener.open_smart(
             path=Path(hit.path),
             kind=hit.kind,
             page=hit.page,
@@ -1590,6 +1589,15 @@ class FNDApp(PlainToastApp):
             query=self._search.current_query,
             source=self._source_for_hit(hit),
         )
+        from fnd.launcher import LAUNCH_FAILED
+
+        if rc == LAUNCH_FAILED:
+            self.notify(
+                "The app for this file could not be started. Check its command in "
+                "Settings, or choose another with Open With.",
+                severity="error",
+                timeout=8,
+            )
 
     def action_open_default_app(self) -> None:
         """Open the focused file in its default app, ignoring the locator."""
@@ -2568,8 +2576,6 @@ class FNDApp(PlainToastApp):
     def action_open_config_file(self) -> None:
         """Drop into ``$EDITOR`` on the user's config.toml; reload Config
         on return. On validation failure, push the recovery screen."""
-        import os
-        import subprocess
 
         from fnd._perms import secure_write_text
         from fnd.config import (
@@ -2589,9 +2595,8 @@ class FNDApp(PlainToastApp):
 
         while isinstance(self.screen, SettingsScreen):
             self.pop_screen()
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
-        with self.suspend():
-            subprocess.call([editor, str(path)])
+        if not self._edit_in_editor(path):
+            return
         try:
             self._config = load()
         except Exception as e:
@@ -2615,8 +2620,6 @@ class FNDApp(PlainToastApp):
 
     def action_open_keybindings_file(self) -> None:
         """Drop into $EDITOR on keybindings.toml; reload keymap on return."""
-        import os
-        import subprocess
 
         from fnd.config import default_config_path
 
@@ -2634,14 +2637,25 @@ class FNDApp(PlainToastApp):
 
         while isinstance(self.screen, SettingsScreen):
             self.pop_screen()
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
-        with self.suspend():
-            subprocess.call([editor, str(path)])
+        if not self._edit_in_editor(path):
+            return
         # Reload the keymap so new bindings take effect immediately.
         from fnd.tui.actions import load_keymap
 
         self._fnd_keymap = load_keymap()
         self.notify("Reloaded keybindings", timeout=2)
+
+    def _edit_in_editor(self, path: Path) -> bool:
+        """Suspend into the user's editor; False, after saying so, if it cannot start."""
+        from fnd import launcher
+        from fnd.tui.config_recovery_screen import _editor_refusal
+
+        with self.suspend():
+            rc = launcher.edit(path)
+        if rc == launcher.LAUNCH_FAILED:
+            self.notify(_editor_refusal(path), severity="error", timeout=8)
+            return False
+        return True
 
     def _on_recovery_done(self, result: object) -> None:
         from fnd.config import load

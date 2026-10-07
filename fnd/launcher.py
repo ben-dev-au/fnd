@@ -23,7 +23,9 @@ import contextlib
 import functools
 import os
 import platform
+import shlex
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from shutil import which
@@ -187,3 +189,44 @@ def open_url(url: str) -> int:
 def reveal(path: Path | str) -> None:
     """Reveal ``path`` in the platform file manager (fire-and-forget)."""
     get_launcher().reveal(Path(path))
+
+
+def run(argv: list[str]) -> int:
+    """Run an app's own command line: blocking, output discarded, never raising."""
+    return _run(argv)
+
+
+def capture(argv: list[str], *, timeout: float) -> int:
+    """Exit status of a probe, or ``LAUNCH_FAILED`` if it cannot start or finish in time."""
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=timeout, check=False).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return LAUNCH_FAILED
+
+
+def editor_argv(path: Path) -> list[str]:
+    """``$VISUAL``, else ``$EDITOR``, split as a shell would (``code -w`` is a
+    program and a flag), then ``path``; ``vi`` or Notepad when neither is set."""
+    raw = (os.environ.get("VISUAL") or os.environ.get("EDITOR") or "").strip()
+    if raw and which(raw):
+        # The whole value names a program: an unquoted path holding spaces.
+        argv = [raw]
+    else:
+        try:
+            argv = shlex.split(raw, posix=sys.platform != "win32")
+        except ValueError:
+            argv = [raw]
+        if sys.platform == "win32":
+            argv = [a[1:-1] if len(a) > 1 and a[0] == a[-1] == '"' else a for a in argv]
+    if not argv:
+        argv = ["notepad" if sys.platform == "win32" else "vi"]
+    return [*argv, str(path)]
+
+
+def edit(path: Path) -> int:
+    """Edit ``path`` in the user's editor in the foreground; ``LAUNCH_FAILED``
+    if it cannot start."""
+    try:
+        return subprocess.call(editor_argv(path))
+    except OSError:
+        return LAUNCH_FAILED

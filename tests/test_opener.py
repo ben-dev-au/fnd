@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fnd import opener
+from fnd import launcher, opener
 
 # Skim is a macOS-only PDF viewer and its skim:/// deep-link is only ever built
 # on Darwin (open_smart gates the promotion behind sys.platform == "darwin").
@@ -98,7 +98,7 @@ def test_open_smart_auto_promotes_preview_when_no_skim_and_ax_granted(
 
     captured: list[list[str]] = []
     monkeypatch.setattr(
-        apps_mod.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )

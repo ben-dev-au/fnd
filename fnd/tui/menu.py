@@ -38,6 +38,7 @@ from fnd.config import (
     DEFAULT_RESULT_LIMIT,
     is_all_collections,
 )
+from fnd.display_text import fit
 from fnd.fsmeta import path_is_absent
 from fnd.index_freshness import State
 from fnd.tui.editing import BACK, CLEAR, SAVE, SAVE_KEY, editing_help_rows
@@ -2055,14 +2056,14 @@ def _summary_config_path(_app: FNDApp) -> str:
     from fnd.config import default_config_path
 
     p = str(default_config_path())
-    return ("…" + p[-50:]) if len(p) > 50 else p
+    return fit(p, 51, keep="end")
 
 
 def _summary_keybindings_path(_app: FNDApp) -> str:
     from fnd.config import default_config_path
 
     p = str(default_config_path().parent / "keybindings.toml")
-    return ("…" + p[-50:]) if len(p) > 50 else p
+    return fit(p, 51, keep="end")
 
 
 # ── Indexing section ────────────────────────────────────────────────
@@ -2895,9 +2896,7 @@ def _summary_cache_location_row(_app: FNDApp) -> str:
     home = str(Path.home())
     if p.startswith(home):
         p = "~" + p[len(home) :]
-    if len(p) > 50:
-        p = "…" + p[-50:]
-    return p
+    return fit(p, 51, keep="end")
 
 
 def _cache_size_short() -> str:

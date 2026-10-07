@@ -39,7 +39,7 @@ from textual.widgets import OptionList, ProgressBar, Static, Tree
 
 from fnd.cloud_files import FetchWait
 from fnd.config import CollectionConfig
-from fnd.display_text import display_line
+from fnd.display_text import display_line, fit
 from fnd.index_runner import IndexState, ProgressEvent, run_indexer
 from fnd.tui.ui_text import PlainOptionList, PlainStatic, PlainTree, set_border_title
 
@@ -1004,7 +1004,7 @@ def _short_name(path: str) -> str:
     if not path:
         return "?"
     name = display_line(Path(path).name)
-    return name if len(name) <= 68 else name[:65] + "…"
+    return fit(name, 68)
 
 
 def _format_indexed_line(

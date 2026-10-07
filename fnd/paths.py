@@ -40,6 +40,14 @@ def app_cache_dir() -> Path:
     return Path(user_cache_dir(_APP_NAME, appauthor=False))
 
 
+def diagnostics_dir() -> Path:
+    """Opt-in diagnostic logs: user-owned, not the shared temp dir, where a
+    fixed file name is a link anyone can plant."""
+    from fnd._perms import secure_mkdir
+
+    return secure_mkdir(app_cache_dir() / "diagnostics")
+
+
 # ── Data-root derivations ────────────────────────────────────────────────
 
 
@@ -50,7 +58,7 @@ def reindex_state_dir() -> Path:
 
 def reindex_state_path(collection: str) -> Path:
     """Resume-state file for one ``collection``."""
-    return reindex_state_dir() / f"{collection}.state.toml"
+    return reindex_state_dir() / f"{safe_filename(collection)}.state.toml"
 
 
 def dismissed_dir() -> Path:
@@ -144,3 +152,36 @@ def storable(value: Any) -> Any:
     if isinstance(value, list | tuple):
         return [storable(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
     return value
+
+
+# Characters no Windows, macOS or Linux file name may hold, plus the reserved
+# device names, which Windows refuses whatever follows the first dot.
+_UNSAFE_NAME_CHARS = frozenset('<>:"/\\|?*') | frozenset(chr(c) for c in range(0x20))
+_RESERVED_STEMS = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
+
+
+def safe_filename(name: str) -> str:
+    """``name`` as a file name every filesystem takes: unchanged when it already
+    is one, otherwise escaped and suffixed with a hash so two names never meet."""
+    import hashlib
+
+    plain = (
+        name not in ("", ".", "..")
+        and not set(name) & _UNSAFE_NAME_CHARS
+        and not name.endswith((".", " "))
+        and name.split(".", 1)[0].upper() not in _RESERVED_STEMS
+    )
+    if plain:
+        return name
+    escaped = "".join("_" if ch in _UNSAFE_NAME_CHARS or ch == "." else ch for ch in name)
+    digest = hashlib.sha1(name.encode("utf-8", "surrogatepass"), usedforsecurity=False).hexdigest()
+    return f"{escaped[:48]}-{digest[:10]}"

@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Literal
 
-__all__ = ["display_block", "display_line", "terminal_block", "terminal_line"]
+__all__ = ["display_block", "display_line", "fit", "terminal_block", "terminal_line"]
 
 # Whitespace that isn't a plain space maps to one space, one for one, so an
 # intentional run (a label's ``loc  snippet`` gap) survives.
@@ -74,3 +75,27 @@ def terminal_line(text: str) -> str:
 def terminal_block(text: str) -> str:
     """:func:`terminal_line` per line, each line break kept as one ``\\n``."""
     return "\n".join(terminal_line(line) for line in _LINE_BREAK.split(text))
+
+
+def fit(text: str, cells: int, *, keep: Literal["start", "end"] = "start") -> str:
+    """``text`` in at most ``cells`` terminal cells, an ellipsis marking the end
+    dropped: measured in painted cells, so a wide or combining character never
+    overflows a column a character count says it fits."""
+    from rich.cells import split_graphemes
+
+    spans, total = split_graphemes(text)
+    if total <= cells:
+        return text
+    if cells <= 0:
+        return ""
+    room = cells - 1
+    taken: list[str] = []
+    used = 0
+    # By grapheme: an emoji with its variation selector is one two-cell unit.
+    for start, end, width in spans if keep == "start" else reversed(spans):
+        if used + width > room:
+            break
+        taken.append(text[start:end])
+        used += width
+    kept = "".join(taken) if keep == "start" else "".join(reversed(taken))
+    return f"{kept}\u2026" if keep == "start" else f"\u2026{kept}"

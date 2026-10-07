@@ -13,8 +13,6 @@ valid config) never has to deal with a half-valid state.
 from __future__ import annotations
 
 import datetime as _dt
-import os
-import subprocess
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -45,6 +43,16 @@ def _format_error(exc: Exception, config_path: Path) -> str:
 def _backup_name(config_path: Path) -> Path:
     stamp = _dt.datetime.now(tz=_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     return config_path.with_name(f"{config_path.name}.bak-{stamp}")
+
+
+def _editor_refusal(path: Path) -> str:
+    """Why the editor did not open, naming the command that failed."""
+    import shlex
+
+    from fnd import launcher
+
+    editor = shlex.join(launcher.editor_argv(path)[:-1])
+    return f"Could not start the editor {editor!r}. Set $VISUAL or $EDITOR to one on your PATH."
 
 
 class _ResetConfirmScreen(Screen[bool]):
@@ -167,7 +175,8 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
     # ── Actions ──────────────────────────────────────────────────────
 
     def action_open_editor(self) -> None:
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+        from fnd import launcher
+
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         if not self._config_path.exists():
             from fnd._perms import secure_write_text
@@ -175,7 +184,10 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
 
             secure_write_text(self._config_path, starter_config())
         with self.app.suspend():
-            subprocess.call([editor, str(self._config_path)])
+            rc = launcher.edit(self._config_path)
+        if rc == launcher.LAUNCH_FAILED:
+            self.notify(_editor_refusal(self._config_path), severity="error", timeout=8)
+            return
         try:
             from fnd.config import load
 

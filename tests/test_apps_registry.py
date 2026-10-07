@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from fnd import apps
+from fnd import apps, launcher
 from fnd.apps import OpenRequest, build_registry, load_user_apps, resolve_app
 
 
@@ -39,7 +39,7 @@ def _capture_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     directly via ``subprocess.run``."""
     captured: list[list[str]] = []
     monkeypatch.setattr(
-        apps.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
@@ -229,7 +229,7 @@ def test_user_app_handler_dispatches_via_subprocess_run(
         captured.append(list(argv))
         return type("R", (), {"returncode": 0})()
 
-    monkeypatch.setattr(apps.subprocess, "run", fake_run)
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
     cfg = {"toy": _user_app_cfg(argv=["toy", "-f", "{path}"])}
     app = load_user_apps(cfg)["toy"]
     req = OpenRequest(path=Path("/tmp/x.md"), kind="md")

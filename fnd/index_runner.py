@@ -204,8 +204,15 @@ def state_dir() -> Path:
 
 
 def state_file_for(collection: str) -> Path:
-    """Where the in-flight state for ``collection`` lives."""
-    return state_dir() / f"{collection}.state.toml"
+    """Where the in-flight state for ``collection`` lives. A state an earlier
+    build saved under the raw name moves here, or resuming would never clear it."""
+    path = state_dir() / f"{paths.safe_filename(collection)}.state.toml"
+    legacy = state_dir() / f"{collection}.state.toml"
+    if legacy != path and not path.exists():
+        with contextlib.suppress(OSError, ValueError):
+            if legacy.is_file():
+                legacy.replace(path)
+    return path
 
 
 def saved_states() -> list[tuple[Path, IndexState]]:

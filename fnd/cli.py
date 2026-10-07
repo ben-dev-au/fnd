@@ -13,9 +13,7 @@ Phases 1-3 surface:
 from __future__ import annotations
 
 import contextlib
-import os
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -579,8 +577,13 @@ def config_edit() -> None:
         secure_write_text(path, starter_config())
         echo(f"wrote starter template to {path}")
 
-    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
-    rc = subprocess.call([editor, str(path)])
+    from fnd import launcher
+
+    rc = launcher.edit(path)
+    if rc == launcher.LAUNCH_FAILED:
+        editor = shlex.join(launcher.editor_argv(path)[:-1])
+        echo(f"could not start the editor `{editor}`; set $VISUAL or $EDITOR", err=True)
+        raise typer.Exit(code=1)
     sys.exit(rc)
 
 

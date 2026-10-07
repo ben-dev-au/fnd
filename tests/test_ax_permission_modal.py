@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from fnd import apps
+from fnd import apps, launcher
 
 
 def test_set_notice_sink_routes_through_sink() -> None:
@@ -133,7 +133,7 @@ def test_preview_handler_emits_ax_notice_when_blocked(
 
     captured_run: list[list[str]] = []
     monkeypatch.setattr(
-        apps.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: captured_run.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
@@ -161,7 +161,7 @@ def test_preview_handler_silent_when_no_page_locator(
     notices: list[str] = []
     apps.set_notice_sink(notices.append)
     monkeypatch.setattr(
-        apps.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: type("R", (), {"returncode": 0})(),
     )

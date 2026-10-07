@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from fnd import apps
+from fnd import apps, launcher
 
 
 def test_preview_script_uses_exact_path_match() -> None:
@@ -41,7 +41,7 @@ def test_handle_preview_opens_via_launchservices_then_pagejumps(
     osascript must never be the opener."""
     calls: list[list[str]] = []
 
-    def fake_run(cmd: list[str], check: bool = False) -> object:
+    def fake_run(cmd: list[str], **_kw: object) -> object:
         calls.append(list(cmd))
 
         class _Result:
@@ -49,7 +49,7 @@ def test_handle_preview_opens_via_launchservices_then_pagejumps(
 
         return _Result()
 
-    monkeypatch.setattr(apps.subprocess, "run", fake_run)
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
     monkeypatch.setattr(apps, "ax_trusted", lambda: True)
     raw = Path("/tmp/a report.pdf")
     apps._handle_preview(apps.OpenRequest(path=raw, kind="pdf", page=5))
@@ -66,7 +66,7 @@ def test_handle_preview_falls_back_without_ax(monkeypatch: pytest.MonkeyPatch) -
     """No Accessibility → open on page 1 via `open -a Preview`, no osascript."""
     captured: dict[str, list[str]] = {}
 
-    def fake_run(cmd: list[str], check: bool = False) -> object:
+    def fake_run(cmd: list[str], **_kw: object) -> object:
         captured["cmd"] = cmd
 
         class _Result:
@@ -74,7 +74,7 @@ def test_handle_preview_falls_back_without_ax(monkeypatch: pytest.MonkeyPatch) -
 
         return _Result()
 
-    monkeypatch.setattr(apps.subprocess, "run", fake_run)
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
     monkeypatch.setattr(apps, "ax_trusted", lambda: False)
     monkeypatch.setattr(apps, "_emit_notice", lambda _msg: None)
     req = apps.OpenRequest(path=Path("/tmp/doc.pdf"), kind="pdf", page=5)
