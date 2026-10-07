@@ -140,7 +140,7 @@ def test_a_relative_source_path_resolves_at_load(
 
 @pytest.mark.parametrize(
     "name",
-    ["a/b", "..\\x", "", "zero\N{ZERO WIDTH SPACE}width", "bidi\N{RIGHT-TO-LEFT OVERRIDE}x"],
+    ["a/b", "..\\x", "", "tab\tname"],
 )
 def test_an_unsafe_collection_name_is_refused_at_load(name: str) -> None:
     with pytest.raises(ValidationError):
@@ -196,6 +196,37 @@ def test_every_field_answers_setting_error() -> None:
     assert setting_error(("defaults", "tag_frontmatter_keys"), ["Course"]) == ""
     assert setting_error(("defaults", "fuzzy_enabled"), True) == ""
     assert setting_error(("defaults", "result_limit"), 5000) == "outside 1-1000"
+
+
+@pytest.mark.parametrize(
+    ("typed", "stored"),
+    [
+        ("cafe\N{COMBINING ACUTE ACCENT}", "caf\N{LATIN SMALL LETTER E WITH ACUTE}"),
+        ("zero\N{ZERO WIDTH SPACE}width", "zerowidth"),
+        ("bidi\N{RIGHT-TO-LEFT OVERRIDE}x", "bidix"),
+    ],
+)
+def test_a_name_an_earlier_build_stored_loads_canonical(typed: str, stored: str) -> None:
+    """Never a lockout: the name is stored as queries and the index spell it."""
+    cfg = Config.model_validate(
+        {"defaults": {"collection": typed}, "collections": {typed: {"sources": [{"path": "/tmp"}]}}}
+    )
+    assert list(cfg.collections) == [stored]
+    assert cfg.defaults.collection == stored
+
+
+def test_the_startup_rewrite_names_a_composed_collection(tmp_path: Path) -> None:
+    from fnd.config import ensure_current
+
+    cfg_path = tmp_path / "config.toml"
+    name = "cafe\N{COMBINING ACUTE ACCENT}"
+    cfg_path.write_text(
+        f'[collections."{name}"]\n[[collections."{name}".sources]]\npath = "/tmp"\n',
+        encoding="utf-8",
+    )
+    applied = ensure_current(cfg_path)
+    assert any("composed" in a for a in applied), applied
+    assert list(load(cfg_path).collections) == ["caf\N{LATIN SMALL LETTER E WITH ACUTE}"]
 
 
 @pytest.mark.parametrize("name", ["all", "Soft Eng Textbooks", "x" * 80, "Études"])

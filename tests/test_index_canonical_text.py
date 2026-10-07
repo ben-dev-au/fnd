@@ -70,7 +70,7 @@ def corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
         "# Data\n\nThe \N{LATIN SMALL LIGATURE FI}lter stage.\n", encoding="utf-8"
     )
     (docs / "shy.md").write_text(
-        "# Words\n\nAn exam\N{SOFT HYPHEN}ple sentence.\n", encoding="utf-8"
+        "# Words\n\nA wonder\N{SOFT HYPHEN}ful sentence.\n", encoding="utf-8"
     )
     (docs / "bom.md").write_bytes(
         b"\xef\xbb\xbf---\ntags: [alpha]\nsecretkey: zebrafish\n---\n# Body\n\nvisible text\n"
@@ -88,7 +88,7 @@ def corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
         (NFC, "nfd.md"),
         ("password", "zw.md"),
         ("filter", "lig.md"),
-        ("example", "shy.md"),
+        ("wonderful", "shy.md"),
         ("notebookword", "nb.ipynb"),
     ],
 )
@@ -236,3 +236,48 @@ def test_a_name_that_is_not_utf8_keeps_the_failure_log(
     failure_log.record_failure(collection="c", path="/x/bad" + chr(0xDCFF) + ".pdf", reason="r")
     assert "good.pdf" in log.read_text(encoding="utf-8")
     assert "bad" in log.read_text(encoding="utf-8")
+
+
+def test_a_name_that_is_not_utf8_is_spelt_one_way_everywhere() -> None:
+    from fnd.display_text import display_line, terminal_line
+    from fnd.paths import storable
+
+    name = "bad" + chr(0xDCFF) + ".md"
+    assert display_line(name) == terminal_line(name) == storable(name) == "bad\\udcff.md"
+
+
+# ── matching a decomposed folder name ────────────────────────────────
+
+
+@pytest.fixture
+def nfd_folder(tmp_path: Path) -> Path:
+    root = tmp_path / "root"
+    (root / NFD).mkdir(parents=True)
+    (root / NFD / "a.md").write_text("x", encoding="utf-8")
+    (root / "keep.md").write_text("x", encoding="utf-8")
+    return root
+
+
+def test_a_composed_exclude_prunes_a_decomposed_folder(nfd_folder: Path) -> None:
+    from fnd.walk import walk
+
+    walked = {p.name for p in walk(roots=[nfd_folder], excludes=[f"{NFC}/**"])}
+    assert walked == {"keep.md"}
+
+
+def test_a_composed_ignore_line_ignores_a_decomposed_folder(nfd_folder: Path) -> None:
+    from fnd.walk import walk
+
+    (nfd_folder / ".fndignore").write_text(f"{NFC}/\n", encoding="utf-8")
+    walked = {p.name for p in walk(roots=[nfd_folder], ignore_names=(".fndignore",))}
+    assert walked == {"keep.md"}
+
+
+def test_a_filter_rule_answers_what_the_walk_would(nfd_folder: Path) -> None:
+    from fnd.filter_dsl import compile_filter
+    from fnd.globs import GlobSet
+
+    rel = f"{NFD}/a.md"
+    glob = f"{NFC}/**"
+    assert GlobSet.parse([glob]).matches(rel)
+    assert compile_filter(f"file.path ~~ '{glob}'")({"file.path": rel})

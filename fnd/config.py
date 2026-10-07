@@ -37,6 +37,7 @@ from fnd.config_types import (
     clamped_settings,
     collection_key,
     collection_name_hazard,
+    composed_names,
 )
 from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_SPECS, split_type_globs
 from fnd.paths import app_data_dir  # re-exported: many modules import it from here
@@ -886,6 +887,21 @@ class Config(_ConfigModel):
     """Default app per file type, e.g. `md = "obsidian"`. Missing types use the
     system default."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _composed_collection_names(cls, data: Any) -> Any:
+        """A name an earlier build stored decomposed (pasted from Finder) is
+        stored composed, as queries and the index spell it; never refused."""
+        renamed = composed_names(data)
+        if not renamed:
+            return data
+        data = dict(data)
+        data["collections"] = {renamed.get(k, k): v for k, v in data["collections"].items()}
+        defaults = data.get("defaults")
+        if isinstance(defaults, dict) and defaults.get("collection") in renamed:
+            data["defaults"] = {**defaults, "collection": renamed[defaults["collection"]]}
+        return data
+
     @model_validator(mode="after")
     def _distinct_collection_names(self) -> Config:
         """Names differing only by case share one state file on APFS and NTFS."""
@@ -1130,7 +1146,11 @@ def ensure_current(config_path: Path | None = None) -> list[str]:
     rendered = render_config(config, preserved=extract_preserved(text), version=version)
     if rendered == text or tomllib.loads(rendered) == tomllib.loads(text):
         return []
-    applied = [*applied, *clamped_settings(raw, config)]
+    applied = [
+        *applied,
+        *clamped_settings(raw, config),
+        *(f"Store the collection name {new!r} composed" for new in composed_names(raw).values()),
+    ]
     _refuse_lossy(rendered, config, raw)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     # The backup carries the same source paths and filter expressions as the

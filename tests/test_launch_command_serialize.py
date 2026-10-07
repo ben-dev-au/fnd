@@ -129,7 +129,7 @@ def _parsed_query(command: str) -> str:
 
 
 @pytest.mark.parametrize(
-    "query", ["-draft exam", "--help", "-c notes", "version", "index", "plain words"]
+    "query", ["-draft report", "--help", "-c notes", "version", "index", "plain words"]
 )
 def test_the_command_hands_back_the_query_it_was_given(query: str) -> None:
     assert _parsed_query(_cmd(query=query, full_collections=("notes",))) == query

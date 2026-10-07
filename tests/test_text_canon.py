@@ -7,7 +7,7 @@ import unicodedata
 
 import pytest
 
-from fnd.text_canon import canonical, identity_key
+from fnd.text_canon import canonical
 from tests import _hostile_text
 
 ACUTE = "\N{COMBINING ACUTE ACCENT}"
@@ -86,15 +86,3 @@ def test_tabs_spaces_and_newlines_are_kept() -> None:
 @pytest.mark.parametrize("raw", [*_hostile_text.ALL, f"cafe{ACUTE}", "\N{LATIN SMALL LIGATURE FI}"])
 def test_canonical_is_idempotent(raw: str) -> None:
     assert canonical(canonical(raw)) == canonical(raw)
-
-
-def test_identity_ignores_case_composition_and_spacing() -> None:
-    assert identity_key(f"  Cafe{ACUTE}   Notes ") == identity_key(
-        "caf\N{LATIN SMALL LETTER E WITH ACUTE} notes"
-    )
-    assert identity_key("Stra\N{LATIN SMALL LETTER SHARP S}e") == identity_key("STRASSE")
-    assert identity_key("a\N{ZERO WIDTH SPACE}b") == identity_key("ab")
-
-
-def test_identity_keeps_distinct_names_distinct() -> None:
-    assert identity_key("notes") != identity_key("note s")

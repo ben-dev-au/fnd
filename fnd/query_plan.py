@@ -1,7 +1,7 @@
 """Query planning: the one place raw user text becomes a validated, search-ready
 query. Both the CLI and the TUI build a :class:`QueryPlan` so they validate
-identically — canonical Unicode, bounds, inline ``[metadata filter]`` split, and
-proximity — instead of each re-deriving it with subtly different (and
+identically (canonical Unicode, bounds, inline ``[metadata filter]`` split, and
+proximity) instead of each re-deriving it with subtly different (and
 inconsistent) error handling.
 
 DSL *expansion* still happens downstream in :class:`fnd.query.Searcher`; the plan

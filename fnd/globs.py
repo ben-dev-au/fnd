@@ -21,6 +21,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from fnd.text_canon import canonical
+
 __all__ = ["GlobSet", "PathGlob", "config_regex", "names_hidden", "translate"]
 
 
@@ -130,8 +132,9 @@ def _collapse(segments: list[str]) -> list[str]:
 
 def translate(pattern: str, *, anchored: bool, fold_case: bool = False) -> re.Pattern[str]:
     """Compile one glob. ``anchored`` fixes it to the root; otherwise it may
-    start at any directory, which is git's rule for a slashless pattern."""
-    segments = _collapse(pattern.split("/"))
+    start at any directory, which is git's rule for a slashless pattern.
+    The pattern is canonical, so match it against :func:`canonical` text."""
+    segments = _collapse(canonical(pattern).split("/"))
     parts: list[str] = []
     for index, segment in enumerate(segments):
         last = index == len(segments) - 1
@@ -168,6 +171,10 @@ class PathGlob:
     pattern: str
 
     def matches(self, rel: str) -> bool:
+        return self.matches_canonical(canonical(rel))
+
+    def matches_canonical(self, rel: str) -> bool:
+        """:meth:`matches` for a path already :func:`canonical`."""
         regex = config_regex(self.pattern)
         return regex is not None and regex.match(rel) is not None
 
@@ -187,7 +194,8 @@ class GlobSet:
         return bool(self.globs)
 
     def matches(self, rel: str) -> bool:
-        return any(g.matches(rel) for g in self.globs)
+        rel = canonical(rel)
+        return any(g.matches_canonical(rel) for g in self.globs)
 
     def covers_dir(self, rel: str) -> bool:
         """Whether every path under folder ``rel`` matches: a ``prefix/**`` glob whose prefix does."""

@@ -55,7 +55,6 @@ _SUBPROCESS_ALLOWED = {
     "extras.py",
     "tui/clipboard.py",
     "tui/extras_install_progress.py",
-    "tui/ax_permission_screen.py",
     "extract/_docling_daemon.py",
 }
 
@@ -170,7 +169,7 @@ def test_a_url_path_keeps_its_slashes() -> None:
 
     path = Path("/n/my a.md")
     req = OpenRequest(path=path, kind="md", line=3)
-    want = f"vscode://file{quote(str(path), safe='/')}:3"
+    want = f"vscode://file{quote(str(path), safe='/:')}:3"
     assert _render_url("vscode://file{path}:{line}", req) == want
 
 

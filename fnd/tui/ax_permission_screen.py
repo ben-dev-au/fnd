@@ -18,7 +18,6 @@ every keystroke.
 
 from __future__ import annotations
 
-import subprocess
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -119,14 +118,9 @@ class AccessibilityPermissionScreen(ModalScreen[None]):
     # ── Actions ──────────────────────────────────────────────────────
 
     def action_open_settings(self) -> None:
-        # `open <url>` returns immediately; the settings pane comes to the
-        # foreground over the terminal hosting fnd. Popen so we don't block
-        # if `open` is slow on first use.
-        subprocess.Popen(
-            ["open", _SETTINGS_URL],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        from fnd import launcher
+
+        launcher.open_url(_SETTINGS_URL)
 
     def action_retry(self) -> None:
         from fnd import apps

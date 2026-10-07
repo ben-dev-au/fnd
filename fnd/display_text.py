@@ -21,7 +21,14 @@ import re
 import unicodedata
 from typing import Literal
 
-__all__ = ["display_block", "display_line", "fit", "terminal_block", "terminal_line"]
+__all__ = [
+    "display_block",
+    "display_line",
+    "escape_surrogates",
+    "fit",
+    "terminal_block",
+    "terminal_line",
+]
 
 # Whitespace that isn't a plain space maps to one space, one for one, so an
 # intentional run (a label's ``loc  snippet`` gap) survives.
@@ -33,8 +40,8 @@ _LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
 
 _STRIP_CATEGORIES = frozenset({"Cc", "Cf"})
 
-# A lone surrogate is how Python holds a file-name byte that is not UTF-8; it
-# cannot be encoded for the terminal, so it shows as the replacement character.
+# A lone surrogate is how Python holds a file-name byte that is not UTF-8. It
+# cannot be encoded, so every sink spells it as the same visible escape.
 _SURROGATE = re.compile(r"[\ud800-\udfff]")
 
 # What acts on a terminal or hides text: C0/C1 controls except tab, line breaks,
@@ -52,7 +59,7 @@ def display_line(text: str) -> str:
     # Once separators are spaces, only Cc/Cf can make a string unprintable.
     if text.isprintable():
         return text
-    text = _SURROGATE.sub("\ufffd", text)
+    text = escape_surrogates(text)
     return "".join(ch for ch in text if unicodedata.category(ch) not in _STRIP_CATEGORIES)
 
 
@@ -64,6 +71,12 @@ def display_block(text: str) -> str:
 
 def _escape(match: re.Match[str]) -> str:
     return ascii(match.group())[1:-1]
+
+
+def escape_surrogates(text: str) -> str:
+    """``text`` with each lone surrogate as its ``\\udcff`` escape, the one
+    spelling the TUI, the CLI and stored files share for such a byte."""
+    return _SURROGATE.sub(_escape, text)
 
 
 def terminal_line(text: str) -> str:

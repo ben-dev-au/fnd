@@ -4,8 +4,8 @@ Extracted document text, file names, queries, tags and config values all pass
 through :func:`canonical`, so the index and every query agree on what a
 character is: a decomposed ``é`` (macOS file names) and a composed one are the
 same letter, a ``ﬁ`` ligature from a PDF is ``fi``, and an invisible character
-can neither split a word nor hide inside one. Equality of names and tags goes
-through :func:`identity_key`.
+can neither split a word nor hide inside one. File paths are matched in this
+form (globs, ignore files, filter rules) but stored and opened as their bytes.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-__all__ = ["canonical", "decode", "identity_key"]
+__all__ = ["canonical", "decode"]
 
 # The line model of an editor and of markdown-it: only CR and CRLF end a line,
 # so a deep-link line number and a preview section match the file as opened.
@@ -41,12 +41,6 @@ def canonical(text: str) -> str:
     text = _HIDDEN.sub("", _SEPARATOR.sub(" ", _LINE_BREAK.sub("\n", text)))
     text = _PRESENTATION.sub(lambda m: unicodedata.normalize("NFKC", m.group()), text)
     return unicodedata.normalize("NFC", text)
-
-
-def identity_key(text: str) -> str:
-    """The key two names or tags are the same under: :func:`canonical`, case
-    folded, whitespace runs collapsed and trimmed."""
-    return " ".join(canonical(text).casefold().split())
 
 
 _BOMS = (

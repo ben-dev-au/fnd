@@ -304,18 +304,61 @@ search result lands; chain continuations re-enter through
 (the modal's drain holds one queue reference, and a mid-chain opt-out
 should stay opted out), while a fresh run allocates both.
 
+## Trust boundaries
+
+There is no generic "sanitise". Text coming in is canonicalised and checked
+where it enters, into a typed value; text going out is encoded at its sink, by
+the kind of sink. Downstream code relies on the boundary rather than restating
+its rules.
+
+| Boundary (inbound) | Single entry | What it guarantees |
+|---|---|---|
+| Extracted text | `extract/_bound.py::bounded` | chunk size bound; every text field `text_canon.canonical` |
+| File bytes | `text_canon.decode` | BOM honoured; UTF-8, or Windows-1252 for a legacy file |
+| Query text | `QueryPlan` (`query_plan.py`) | canonical, curly quotes straightened, bounded, escaped for tantivy |
+| Config values | the field types in `config_types.py` | cleaned and checked at load, whichever surface wrote them |
+| File names | `extract.base.file_parent_id`, index path tokens | hashable whatever their bytes; searched canonical, stored raw |
+
+- `text_canon.canonical` is the one Unicode policy: NFC, Latin ligatures and
+  full-width letters folded, CR and CRLF as `\n` (an editor's line model),
+  other separators a space, hidden format and control characters dropped.
+  Queries and the index both pass through it, so they agree by construction.
+- A path is stored and opened as its bytes (a Linux file name is bytes), but
+  matched canonical on both sides: walk globs, ignore files and filter rules
+  agree on a decomposed name. A file name that is not UTF-8 is spelt `\udcff`
+  wherever it is shown or stored.
+
+| Sink (outbound) | Encoder |
+|---|---|
+| TUI text | `tui/ui_text.py` (`ui_text`, `PlainStatic`, `PlainToastApp`, …) over `display_text.display_line` |
+| CLI output | `cli_output.echo` over `display_text.terminal_line` |
+| A shown or copied command | `shlex.join` |
+| A spawned process | `launcher` (`run`, `edit`, `open_path`, `open_url`): never a shell, never raising |
+| A URL template | every placeholder percent-encoded (`apps._render_url`) |
+| A file name from a user's name | `paths.safe_filename` |
+| A TOML file holding walked names | `paths.storable` |
+| A fixed-width cell | `display_text.fit` (cell width, by grapheme) |
+
+Gates keep it from decaying: AST tests fail a TUI sink given raw text
+(`test_markup_sinks`), a CLI print outside `cli_output` (`test_cli_output`),
+a spawn outside `launcher` (`test_external_sinks`), and a settings path
+formatted from a name (`test_config_field_types`). `tests/_hostile_text.py`
+is the shared corpus for the terminal sinks.
+
 ## Module map
 
 ```text
 fnd/
 ├── cli.py              CLI commands
-├── config.py           Pydantic config (collections, sources, defaults)
+├── config.py, config_types.py   Pydantic config + its typed, checked fields
+├── text_canon.py       the one Unicode policy for text coming in
 ├── kinds.py, kind_catalog.py    file-type registry + Filters grouping
 ├── extract/            per-format extraction + recovery tiers
 ├── index*.py, walk.py, schema.py, migrate.py    index building + schema
 ├── query*.py           parse → validate → AST → compile
 ├── cascade.py, fusion.py, layered.py, rerank.py   search passes + ranking
-├── matching.py, render.py, display_text.py        match semantics + rendering
+├── matching.py, render.py      match semantics + rendering
+├── display_text.py, cli_output.py   text going out to a terminal
 ├── tags.py, tag_query.py, tag_catalog.py, filter_dsl.py, fsmeta.py   filters
 ├── paths.py, launcher.py, os_labels.py, cloud_files.py   platform seams
 ├── apps.py, opener.py, launch_command.py          open-in-app + shareable commands

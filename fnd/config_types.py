@@ -43,6 +43,7 @@ __all__ = [
     "clean_path_text",
     "collection_key",
     "collection_name_hazard",
+    "composed_names",
     "field_bounds",
     "glob_error",
     "join_list",
@@ -188,6 +189,21 @@ CollectionName = Annotated[str, AfterValidator(_collection_name)]
 def collection_key(name: str) -> str:
     """Names with one key share a state file on a case-insensitive filesystem."""
     return canonical(name).casefold()
+
+
+def composed_names(raw: object) -> dict[str, str]:
+    """``{old: new}`` for each collection key in a raw config that is not
+    :func:`canonical`, when the canonical spelling is free."""
+    tables = raw.get("collections") if isinstance(raw, dict) else None
+    if not isinstance(tables, dict):
+        return {}
+    names = {k for k in tables if isinstance(k, str)}  # pyright: ignore[reportUnknownVariableType]
+    out: dict[str, str] = {}
+    for name in names:
+        new = canonical(name)
+        if new != name and new.strip() and new not in names and new not in out.values():
+            out[name] = new
+    return out
 
 
 def name_clash(name: str, names: Iterable[str], *, ignoring: str | None = None) -> str | None:

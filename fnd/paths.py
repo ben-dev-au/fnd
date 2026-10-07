@@ -56,11 +56,6 @@ def reindex_state_dir() -> Path:
     return app_data_dir() / "reindex"
 
 
-def reindex_state_path(collection: str) -> Path:
-    """Resume-state file for one ``collection``."""
-    return reindex_state_dir() / f"{safe_filename(collection)}.state.toml"
-
-
 def dismissed_dir() -> Path:
     """Marker store for user-dismissed PDFs (sharded by sha prefix)."""
     return app_data_dir() / "dismissed"
@@ -146,7 +141,9 @@ def storable(value: Any) -> Any:
     """``value`` with every string valid UTF-8: a file name that is not (held as
     lone surrogates) becomes visible escapes, so writing it to TOML cannot raise."""
     if isinstance(value, str):
-        return os.fsencode(value).decode("utf-8", "backslashreplace")
+        from fnd.display_text import escape_surrogates
+
+        return escape_surrogates(value)
     if isinstance(value, dict):
         return {k: storable(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
     if isinstance(value, list | tuple):

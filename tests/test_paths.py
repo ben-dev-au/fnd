@@ -43,7 +43,6 @@ def test_data_helpers_hang_off_data_root() -> None:
     root = paths.app_data_dir()
     for p in (
         paths.reindex_state_dir(),
-        paths.reindex_state_path("papers"),
         paths.dismissed_dir(),
         paths.first_reindex_marker_path(),
         paths.throughput_log_path(),
@@ -66,7 +65,9 @@ def test_layout_matches_legacy_on_disk_names() -> None:
     """Lock the on-disk basenames so a rename can't silently orphan an
     existing user's index/cache."""
     assert paths.reindex_state_dir().name == "reindex"
-    assert paths.reindex_state_path("c").name == "c.state.toml"
+    from fnd.index_runner import state_file_for
+
+    assert state_file_for("c").name == "c.state.toml"
     assert paths.dismissed_dir().name == "dismissed"
     assert paths.first_reindex_marker_path().name == "first_reindex_warning_seen"
     assert paths.throughput_log_path().name == "indexer_throughput.jsonl"
