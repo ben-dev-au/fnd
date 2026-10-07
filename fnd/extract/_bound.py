@@ -24,18 +24,38 @@ import re
 from collections.abc import Iterable, Iterator
 
 from fnd.extract.base import MAX_CHUNK_CHARS, MAX_TABLE_CHARS, Block, Chunk
+from fnd.text_canon import canonical
 
 __all__ = ["bounded"]
 
 
 def bounded(chunks: Iterable[Chunk]) -> Iterator[Chunk]:
-    """Yield ``chunks`` with every body under the budget and ``chunk_seq`` renumbered."""
+    """Yield ``chunks`` with every body under the budget, every text field
+    :func:`~fnd.text_canon.canonical`, and ``chunk_seq`` renumbered."""
     seq = 0
     for chunk in chunks:
-        for piece in _pieces(chunk):
+        for raw in _pieces(chunk):
+            # After the cut: an extractor's spans count lines its own way.
+            piece = _canonical(raw)
             piece.chunk_seq = seq
             seq += 1
             yield piece
+
+
+_TEXT_FIELDS = ("body", "body_md", "heading_path", "title", "author", "page_label")
+
+
+def _canonical(chunk: Chunk) -> Chunk:
+    """``chunk`` itself when already canonical, the common case, else a copy that is."""
+    texts = {name: canonical(getattr(chunk, name)) for name in _TEXT_FIELDS}
+    blocks = [
+        b if canonical(b.text) == b.text else dataclasses.replace(b, text=canonical(b.text))
+        for b in chunk.body_struct
+    ]
+    same = all(texts[n] == getattr(chunk, n) for n in _TEXT_FIELDS)
+    if same and all(a is b for a, b in zip(blocks, chunk.body_struct, strict=True)):
+        return chunk
+    return dataclasses.replace(chunk, body_struct=blocks, **texts)
 
 
 def _pieces(chunk: Chunk) -> Iterator[Chunk]:

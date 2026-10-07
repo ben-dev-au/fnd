@@ -32,11 +32,15 @@ _LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
 
 _STRIP_CATEGORIES = frozenset({"Cc", "Cf"})
 
+# A lone surrogate is how Python holds a file-name byte that is not UTF-8; it
+# cannot be encoded for the terminal, so it shows as the replacement character.
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
 # What acts on a terminal or hides text: C0/C1 controls except tab, line breaks,
 # the bidi controls (CVE-2021-42574) and the invisible tag block.
 _LINE_HAZARD = re.compile(
     r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e"
-    r"\u2066-\u2069\U000e0000-\U000e007f]"
+    r"\u2066-\u2069\ud800-\udfff\U000e0000-\U000e007f]"
 )
 
 
@@ -47,6 +51,7 @@ def display_line(text: str) -> str:
     # Once separators are spaces, only Cc/Cf can make a string unprintable.
     if text.isprintable():
         return text
+    text = _SURROGATE.sub("\ufffd", text)
     return "".join(ch for ch in text if unicodedata.category(ch) not in _STRIP_CATEGORIES)
 
 

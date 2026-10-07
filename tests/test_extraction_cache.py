@@ -259,7 +259,8 @@ def test_cache_overlay_per_file_identity_on_restore(tmp_path: Path) -> None:
     # Use the real PDF extractor against two copies of the same fixture.
     import shutil
 
-    from fnd.extract.pdf import _parent_id, extract
+    from fnd.extract.base import file_parent_id as _parent_id
+    from fnd.extract.pdf import extract
 
     fixture = Path(__file__).parent / "fixtures" / "papers" / "test.pdf"
     if not fixture.exists():

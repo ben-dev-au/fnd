@@ -249,7 +249,7 @@ def save_state(state_path: Path, state: IndexState) -> None:
     fd, tmp = tempfile.mkstemp(dir=state_path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
-            tomli_w.dump(state.to_toml_dict(), f)
+            tomli_w.dump(paths.storable(state.to_toml_dict()), f)
         os.replace(tmp, state_path)
     except Exception:
         with contextlib.suppress(OSError):

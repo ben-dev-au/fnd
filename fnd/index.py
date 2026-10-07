@@ -48,6 +48,7 @@ from fnd.schema import (
     parse_membership_token,
 )
 from fnd.struct import encode as encode_body_struct
+from fnd.text_canon import canonical
 from fnd.walk import walk
 
 # 50 MB heap for the writer; tune later if 50k corpus is sluggish.
@@ -211,7 +212,8 @@ def _doc_for_chunk(
     for collection, source in pairs:
         doc.add_text(F_MEMBERSHIP, membership_token(collection, source))
     doc.add_text(F_PATH, chunk.path)
-    doc.add_text(F_PATH_TOKENS, chunk.path)
+    # Searched, never opened: canonical so an NFD macOS name meets an NFC query.
+    doc.add_text(F_PATH_TOKENS, canonical(chunk.path))
     doc.add_text(F_KIND, chunk.kind)
     doc.add_text(F_HEADING_PATH, chunk.heading_path)
     doc.add_text(F_TITLE, chunk.title)
@@ -477,10 +479,10 @@ def build_index_from_config(
 
 
 def _path_parent_id(path: Path) -> str:
-    """Mirror of the extractor's hashing so deletes target the right docs."""
-    import hashlib
+    """The extractors' own id, so deletes target the right docs."""
+    from fnd.extract.base import file_parent_id
 
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
+    return file_parent_id(path)
 
 
 # Terms-aggregation bucket cap when enumerating a collection's indexed files.

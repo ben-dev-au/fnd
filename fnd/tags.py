@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from fnd.text_canon import canonical
+
 __all__ = [
     "MAX_TAGS_PER_FILE",
     "MAX_TAG_LEN",
@@ -42,12 +44,12 @@ _TAG_KEYS = ("tags", "tag")
 
 
 def normalise_tag(raw: str) -> str:
-    """Strip a leading ``#``, collapse whitespace, casefold, bound length.
+    """Canonical, a leading ``#`` stripped, whitespace collapsed, casefolded, length bounded.
 
     Returns ``""`` for anything unusable, which callers drop. Casefolding stops
     ``Recipe`` and ``recipe`` becoming two buckets in the tag pane.
     """
-    text = raw.strip()
+    text = canonical(raw).strip()
     if text.startswith("#"):
         text = text[1:]
     text = " ".join(text.split())

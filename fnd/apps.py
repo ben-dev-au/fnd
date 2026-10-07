@@ -558,21 +558,19 @@ def _resolve_match_line(
     """
     if not query or from_line < 1:
         return from_line
-    terms = {m.group(0).lower() for m in _WORD_TOKEN_RE.finditer(query)}
+    from fnd.text_canon import canonical, decode
+
+    terms = {m.group(0).lower() for m in _WORD_TOKEN_RE.finditer(canonical(query))}
     if not terms:
         return from_line
     try:
-        with path.open("r", encoding="utf-8") as f:
-            for offset, raw in enumerate(f):
-                if offset + 1 < from_line:
-                    continue
-                if offset + 1 - from_line >= max_scan_lines:
-                    break
-                low = raw.lower()
-                if any(m.group(0).lower() in terms for m in _WORD_TOKEN_RE.finditer(low)):
-                    return offset + 1
-    except (OSError, UnicodeDecodeError):
+        lines = decode(path.read_bytes()).split("\n")
+    except OSError:
         return from_line
+    # Decoded as the index decoded it, so line numbers and words agree with the chunk.
+    for offset, raw in enumerate(lines[from_line - 1 : from_line - 1 + max_scan_lines]):
+        if any(m.group(0) in terms for m in _WORD_TOKEN_RE.finditer(raw.lower())):
+            return from_line + offset
     return from_line
 
 

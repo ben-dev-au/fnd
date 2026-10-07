@@ -43,11 +43,17 @@ def test_other_compatibility_characters_are_kept(raw: str) -> None:
     assert canonical(raw) == unicodedata.normalize("NFC", raw)
 
 
-@pytest.mark.parametrize(
-    "brk", ["\r\n", "\r", "\v", "\f", "\x85", "\N{LINE SEPARATOR}", "\N{PARAGRAPH SEPARATOR}"]
-)
-def test_every_line_break_is_one_newline(brk: str) -> None:
+@pytest.mark.parametrize("brk", ["\r\n", "\r"])
+def test_an_editor_line_break_is_one_newline(brk: str) -> None:
     assert canonical(f"a{brk}b") == "a\nb"
+
+
+@pytest.mark.parametrize(
+    "sep", ["\v", "\f", "\x85", "\N{LINE SEPARATOR}", "\N{PARAGRAPH SEPARATOR}"]
+)
+def test_other_separators_are_a_space(sep: str) -> None:
+    """No editor counts them as a line, so a line number past one stays right."""
+    assert canonical(f"a{sep}b") == "a b"
 
 
 @pytest.mark.parametrize(

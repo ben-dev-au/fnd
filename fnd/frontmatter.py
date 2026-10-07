@@ -66,13 +66,20 @@ def read_frontmatter_from_text(text: str) -> dict[str, object] | None:
 
 
 def read_frontmatter_from_file(path: Path) -> dict[str, object] | None:
-    """Convenience wrapper. Returns None if the file can't be read as
-    UTF-8 text — frontmatter only makes sense for text formats."""
+    """The file's frontmatter, decoded as the extractor decodes it; None if unreadable."""
+    from fnd.extract._limits import LIMIT_FRONTMATTER_LINE_BYTES, LIMIT_FRONTMATTER_TOTAL_BYTES
+    from fnd.text_canon import decode
+
+    # Past this the parser has already refused the block, so the rest is never read.
+    budget = LIMIT_FRONTMATTER_TOTAL_BYTES + 2 * LIMIT_FRONTMATTER_LINE_BYTES
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        with path.open("rb") as f:
+            head = f.read(budget + 1)
+    except OSError:
         return None
-    return read_frontmatter_from_text(text)
+    if len(head) > budget:
+        head = head[: head.rfind(b"\n") + 1]
+    return read_frontmatter_from_text(decode(head))
 
 
 def _parse_block(lines: list[str]) -> dict[str, object]:

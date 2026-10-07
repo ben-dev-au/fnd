@@ -32,6 +32,7 @@ from enum import Enum, auto
 from typing import Any
 
 from fnd.globs import PathGlob
+from fnd.text_canon import canonical
 
 
 class TokenKind(Enum):
@@ -526,20 +527,28 @@ def _make_evaluator(node: object) -> Predicate:
         inner = _make_evaluator(node.operand)
         return lambda fm: not inner(fm)
     if isinstance(node, Compare):
-        field, op, value = node.field, node.op, node.value
+        field, op, value = node.field, node.op, _canon(node.value)
         return lambda fm: _eval_compare(fm, field, op, value)
     if isinstance(node, In):
-        return lambda fm: _eval_in(fm, node.value, node.field, node.negated)
+        member = _canon(node.value)
+        return lambda fm: _eval_in(fm, member, node.field, node.negated)
     if isinstance(node, FieldIn):
-        return lambda fm: _eval_field_in(fm, node.field, node.values, node.negated)
+        values = tuple(_canon(v) for v in node.values)
+        return lambda fm: _eval_field_in(fm, node.field, values, node.negated)
     raise AssertionError(f"unknown AST node {type(node).__name__}")
+
+
+def _canon(value: object) -> object:
+    """A string as the index holds text, so a decomposed literal (pasted from
+    Finder) meets a composed value and the reverse; anything else unchanged."""
+    return canonical(value) if isinstance(value, str) else value
 
 
 def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) -> bool:
     if field not in fm:
         # Strict null: missing field is False for every comparison.
         return False
-    actual = fm[field]
+    actual = _canon(fm[field])
     if op in ("==", "!="):
         equal = _scalar_equal(actual, value)
         return equal if op == "==" else not equal
@@ -583,7 +592,7 @@ def _eval_field_in(
 ) -> bool:
     if field not in fm:
         return False  # strict null, as for every other comparison
-    actual = fm[field]
+    actual = _canon(fm[field])
     if isinstance(actual, list | tuple):
         return False  # a list field belongs on the ``In`` form
     member = any(_scalar_equal(actual, v) for v in values)

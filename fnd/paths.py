@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from platformdirs import user_cache_dir, user_data_dir
 
@@ -131,3 +132,15 @@ def uv_tool_root() -> Path:
     xdg = os.environ.get("XDG_DATA_HOME")
     data_home = Path(xdg) if xdg else Path.home() / ".local" / "share"
     return data_home / "uv" / "tools"
+
+
+def storable(value: Any) -> Any:
+    """``value`` with every string valid UTF-8: a file name that is not (held as
+    lone surrogates) becomes visible escapes, so writing it to TOML cannot raise."""
+    if isinstance(value, str):
+        return os.fsencode(value).decode("utf-8", "backslashreplace")
+    if isinstance(value, dict):
+        return {k: storable(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, list | tuple):
+        return [storable(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    return value
