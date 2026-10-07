@@ -26,6 +26,7 @@ _BOOL_OPS = frozenset({"AND", "OR", "NOT"})
 # field:value head — value captured greedily (the tokenizer already kept any
 # bracketed/quoted run together as one token).
 _CLAUSE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(.+)$", re.DOTALL)
+_FIELD_NAME_RE = re.compile(r"(?<![\w.])([A-Za-z_][A-Za-z0-9_]*):")
 _RANGE_RE = re.compile(r"^\[\s*(.+?)\s+TO\s+(.+?)\s*\]$", re.IGNORECASE)
 _CMP_RE = re.compile(r"^(>=|<=|>|<)(.+)$")
 _WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
@@ -240,3 +241,13 @@ def extract_filters(
         else:
             filters.append(compiled)
     return ExtractResult(content=" ".join(content), filters=filters)
+
+
+def has_unlifted_filter(query: str, schema: tantivy.Schema) -> bool:
+    """True when a known field clause stays in the content, as one beside a
+    boolean operator does; only the query parser can honour it there."""
+    content = extract_filters(query, schema).content
+    return any(
+        m.group(1) in ("has", "exists") or resolve(m.group(1)) is not None
+        for m in _FIELD_NAME_RE.finditer(content)
+    )

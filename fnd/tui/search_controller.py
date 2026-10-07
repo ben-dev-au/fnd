@@ -26,15 +26,14 @@ that keeps a stale result out, not a belt-and-braces extra.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Static
 
 from fnd.matching import MatchSpec
-from fnd.query import CandidatePool, FileGroup, Hit, Searcher, SourceScope
-from fnd.rerank import RankingProfile, profile_from_config
+from fnd.query import FileGroup, FilteredSearcher, Searcher, SourceScope
+from fnd.rerank import RankingProfile, profile_for_scope
 from fnd.tui.progress.facility import ProgressSession
 from fnd.tui.progress.operations import SEARCH
 
@@ -75,45 +74,6 @@ class _SearchRequest:
     evidence_spec: MatchSpec
     profile: RankingProfile
     intent: str | None
-
-
-class _PrefixingSearcher:
-    """Wrap a :class:`Searcher` and AND a fixed filter prefix into every
-    query string before it reaches Tantivy.
-
-    Fusion's phrase pass would otherwise wrap the whole query (including
-    field-restrictor prefixes like ``kind:md``) in quotes, which the
-    Tantivy parser reads as a literal phrase. By keeping the lexical
-    part clean and re-attaching the filter prefix at every sub-query
-    issue point, both fusion and cascade get correct field-restricted
-    behaviour without changing their public signatures.
-    """
-
-    def __init__(self, inner: Searcher, *, clauses: Sequence[str]) -> None:
-        self._inner = inner
-        # The join must be AND: the parser is OR-default, so a space join makes
-        # a second filter WIDEN the results. Passes building their own boolean
-        # query read the clauses; `extract_filters` will not lift one by `AND`.
-        self.filter_clauses = tuple(c for c in (c.strip() for c in clauses) if c)
-        self._prefix = " AND ".join(self.filter_clauses)
-        self.filter_prefix = self._prefix
-
-    def _wrap(self, query: str) -> str:
-        if not self._prefix:
-            return query
-        return f"({self._prefix}) AND ({query})"
-
-    def _candidates(self, query: str, **kwargs: Any) -> CandidatePool:
-        return self._inner._candidates(self._wrap(query), **kwargs)
-
-    def _filtered_raw_hits(self, query: str, **kwargs: Any) -> list[Hit]:
-        return self._inner._filtered_raw_hits(self._wrap(query), **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        # Forward attribute access to the underlying searcher (e.g.
-        # ``_searcher`` for fuzzy_pass's typed-API path, plus public
-        # methods callers might still want).
-        return getattr(self._inner, name)
 
 
 class SearchController:
@@ -159,24 +119,12 @@ class SearchController:
         # :explain overlay can dump it as JSON. None until
         # the first search runs.
         self.latest_trace: SearchTrace | None = None
-        # Synonyms for the cascade and fusion's ``syn`` sub-query.
-        # Bundled curated defaults + the user's optional personal table;
-        # missing personal file is fine (defaults still apply).
-        from fnd.config import app_data_dir
-        from fnd.synonyms import SynonymTable, load_default_synonyms, load_merged_synonyms
+        from fnd.synonyms import load_app_synonyms
 
-        try:
-            self.synonyms: SynonymTable = load_merged_synonyms(app_data_dir() / "synonyms.toml")
-        except Exception:
-            # A bad personal file is already skipped inside the loader; this is
-            # a last resort — still keep the bundled defaults, not an empty table.
-            try:
-                self.synonyms = load_default_synonyms()
-            except Exception:
-                self.synonyms = SynonymTable()
+        self.synonyms: SynonymTable = load_app_synonyms()
         # Ranking profile applied at search time. Built from the active
         # collection's ``ranking_profile`` field once the scope exists;
-        # default profile (all-zero) is the BM25 identity.
+        # default profile (all-zero) is the identity.
         self.ranking_profile: RankingProfile = RankingProfile()
         # Monotonic query counter. ``_prepare`` bumps it; ``_commit`` refuses
         # any result that does not carry the current value. This is the whole
@@ -186,24 +134,8 @@ class SearchController:
         self._committed_generation: int = 0
 
     def resolve_profile(self) -> RankingProfile:
-        """Pick the ranking profile to apply to search results.
-
-        Resolution order:
-          1. If a single collection is active and its ``ranking_profile``
-             is defined in the config, use that.
-          2. Else fall back to the ``default`` ranking profile if defined.
-          3. Else neutral (BM25 identity) — return ``RankingProfile()``.
-        """
-        if self._app._config is None:
-            return RankingProfile()
-        name = "default"
-        if len(self._app._scope.collections) == 1:
-            try:
-                col = self._app._config.collection(self._app._scope.collections[0])
-                name = col.ranking_profile or "default"
-            except KeyError:
-                name = "default"
-        return profile_from_config(self._app._config.ranking_profile(name))
+        """The ranking profile for the current scope (see :func:`profile_for_scope`)."""
+        return profile_for_scope(self._app._config, self._app._scope.collections)
 
     def run(self, query: str) -> None:
         """Issue a query. Returns immediately; the search runs off the loop."""
@@ -341,9 +273,8 @@ class SearchController:
             multicolour=defaults.multicolour_highlights if defaults else True,
         )
 
-        # Filters (kind:, mtime:) and scope (c:) form a SEPARATE prefix, so the
-        # fusion phrase-pass can quote the lexical part without Tantivy reading
-        # ``kind:md glimmer`` as a literal phrase.
+        # Filters (kind:, mtime:) stay out of the query string: fusion's phrase
+        # pass quotes the lexical part, and stopword stripping reads it.
         filter_clauses: list[str] = []
         if self._app._scope.filter_kinds:
             if len(self._app._scope.filter_kinds) == 1:
@@ -355,8 +286,7 @@ class SearchController:
         if self._app._scope.filter_created and self._app._scope.filter_created != "any":
             filter_clauses.append(f"created:{self._app._scope.filter_created}")
 
-        # Tags never ride the prefix string — see fnd/tag_query.py. They are
-        # typed state, passed down beside the collection scope.
+        # Tags are typed state (see fnd/tag_query.py), passed beside the scope.
         from fnd.tag_query import TagFilter
 
         scope = self._app._scope
@@ -472,7 +402,7 @@ class SearchController:
         from fnd.tui.results_view import materialise_upfront
 
         searcher = (
-            _PrefixingSearcher(handle, clauses=request.filter_clauses)
+            FilteredSearcher(handle, clauses=request.filter_clauses)
             if request.filter_clauses
             else handle
         )

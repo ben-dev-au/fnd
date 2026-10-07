@@ -359,64 +359,53 @@ async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_in
 
 @pytest.mark.asyncio
 async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_index: Path) -> None:
-    """Active filters get AND-combined with the lexical query before
-    each fusion sub-query reaches the searcher. We spy at the lowest
-    layer (``_candidates``) since fusion issues multiple parallel
-    sub-queries — at least one of them must carry the kind/date filter
-    clauses for the field-restriction to take effect."""
+    """Every pass carries the active filters as typed clauses, never as query text."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        captured_queries: list[str] = []
+        captured: list[tuple[str, tuple[str, ...]]] = []
         searcher = app._search.searcher
         assert searcher is not None
         original = searcher._candidates
 
         def spy(query: str, **kwargs: object) -> object:
-            captured_queries.append(query)
+            captured.append((query, tuple(kwargs.get("filter_clauses", ()))))  # type: ignore[arg-type]
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
         searcher._candidates = spy  # type: ignore[method-assign]
-        # Activate kind=md filter.
         app._scope.filter_kinds = ["md"]
         app._scope.filter_date = "week"
         await run_search(pilot, app, "glimmer")
-        joined = " || ".join(captured_queries)
-        assert "kind:md" in joined, joined
-        assert "mtime:week" in joined, joined
-        assert "glimmer" in joined, joined
-        # Substring presence passes whether the two are ANDed or space-joined,
-        # and the parser is OR-default, so space-joining makes a second filter
-        # WIDEN the results. Pin the join itself.
-        assert "kind:md AND mtime:week" in joined, joined
+        assert captured
+        assert any("glimmer" in q for q, _ in captured), captured
+        for query, clauses in captured:
+            assert clauses == ("kind:md", "mtime:week"), captured
+            assert "kind:" not in query, captured
+            assert "mtime:" not in query, captured
 
 
 @pytest.mark.asyncio
 async def test_kind_multi_select_uses_or_group(
     cfg_one_collection: Config, mixed_index: Path
 ) -> None:
-    """Multiple kinds compose as ``kind:(a b)`` so Tantivy treats them
-    as a disjunction across the kind field."""
+    """Multiple kinds compose as one ``kind:(a b)`` clause, a disjunction."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        captured_queries: list[str] = []
+        captured: list[tuple[str, ...]] = []
         searcher = app._search.searcher
         assert searcher is not None
         original = searcher._candidates
 
         def spy(query: str, **kwargs: object) -> object:
-            captured_queries.append(query)
+            captured.append(tuple(kwargs.get("filter_clauses", ())))  # type: ignore[arg-type]
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
         searcher._candidates = spy  # type: ignore[method-assign]
         app._scope.filter_kinds = ["pdf", "md"]
         await run_search(pilot, app, "glimmer")
-        joined = " || ".join(captured_queries)
-        # Order-independent check across all sub-queries.
-        assert "kind:(" in joined, joined
-        assert "pdf" in joined
-        assert "md" in joined
+        assert captured
+        assert all(clauses == ("kind:(md pdf)",) for clauses in captured), captured
 
 
 @pytest.mark.asyncio

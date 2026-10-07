@@ -1,8 +1,7 @@
 """Regime-aware layered search.
 
-One entry point — :func:`search_layered` — chosen by both the TUI and
-the CLI. Encapsulates the three search regimes through a single
-decision tree:
+One entry point, :func:`search_layered`, for the TUI and the CLI. It chooses
+one of three regimes:
 
 * **strong-signal**: literal probe alone, when the normalised top BM25
   ≥ 0.85 AND gap ≥ 0.15 AND no intent provided.
@@ -11,11 +10,14 @@ decision tree:
 * **cascade**: widening fallback when fusion's chunk pool is
   sparse (< limit / 4). Adds fuzzy~1 and synonym passes.
 
-The regime decision logic lives here, not scattered across modules.
-The :class:`SearchTrace` returned when ``with_trace=True`` records
-which regime fired and why.
+Every regime orders its hits by :attr:`fnd.query.Hit.rank_score`: the fused
+score, or list position on the same scale for strong-signal and cascade. A
+ranking profile scales it; the display BM25 in ``Hit.score`` never orders.
 
-Strong-signal bypass adapted from tobi/qmd (MIT) — see README.
+The :class:`SearchTrace` returned when ``with_trace=True`` records which
+regime fired and why.
+
+Strong-signal bypass adapted from tobi/qmd (MIT); see README.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from fnd.fusion import (
     auto_subqueries,
     fusion_search,
     normalise_bm25,
+    rank_by_position,
 )
 from fnd.query import (
     CandidatePool,
@@ -62,6 +65,7 @@ def search_layered(
     source_scope: SourceScope | None = ...,
     intent: str | None = ...,
     profile: object | None = ...,
+    now: int | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
@@ -83,6 +87,7 @@ def search_layered(
     source_scope: SourceScope | None = ...,
     intent: str | None = ...,
     profile: object | None = ...,
+    now: int | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
@@ -103,6 +108,7 @@ def search_layered(
     source_scope: SourceScope | None = None,
     intent: str | None = None,
     profile: object | None = None,
+    now: int | None = None,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
@@ -154,7 +160,7 @@ def search_layered(
             tag_filter=tag_filter,
             min_files=limit,
         )
-        hits = probe.hits + compound.hits
+        hits = rank_by_position(probe.hits + compound.hits)
         exhausted.append(compound.exhausted)
         all_files.append(compound.all_files)
         regime = "strong-signal"
@@ -221,20 +227,20 @@ def search_layered(
                     min_term_chars=min_term_chars,
                 )
             if len(cascade_hits) > len(hits):
-                hits = cascade_hits
+                hits = rank_by_position(cascade_hits)
                 regime = _cascade_regime_label(cascade_trace) if cascade_trace else "cascade"
                 if cascade_trace is not None:
                     exhausted = [p.exhausted for p in cascade_trace.passes]
                     all_files = [p.all_files for p in cascade_trace.passes]
 
-    # Step 5: rerank + group. Identical for every regime so all three
-    # search paths produce identically-shaped FileGroups. Hits stay light;
-    # the caller materialises the ones it shows.
+    # Step 5: rerank + group, identical for every regime. Hits stay light; the
+    # caller materialises the ones it shows.
     if profile is not None:
         from fnd.rerank import RankingProfile, rerank_hits
 
         assert isinstance(profile, RankingProfile)
-        hits = rerank_hits(hits, profile=profile, query=query)
+        if not profile.is_identity:
+            hits = rerank_hits(hits, profile=profile, query=query, now=now)
 
     groups = group_by_file(
         hits,

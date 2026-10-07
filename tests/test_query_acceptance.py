@@ -33,6 +33,7 @@ from fnd.extract.base import Block
 from fnd.layered import search_layered
 from fnd.query import Searcher
 from fnd.query_plan import QueryPlan
+from fnd.rerank import RankingProfile
 from fnd.schema import (
     F_AUTHOR,
     F_BODY,
@@ -455,14 +456,21 @@ def test_query_capability(
     assert pred(run(searcher, query)), f"{name} [{path}] failed"
 
 
-def test_weighted_default_ranking_layered(searcher: Searcher) -> None:
-    """Weighted default (TUI/fusion path): bare multi-term retrieves OR but ranks
-    all-term docs above single-term docs. This is the user's model and it holds
-    on the fusion path today — the rework must preserve it once wildcard/fuzzy
-    terms also resolve. (Plain BM25-over-OR does NOT guarantee this; fusion/RRF
-    does — which is why single-pass CLI needs unifying, see below.)"""
+@pytest.mark.parametrize(
+    "profile",
+    [None, RankingProfile(), RankingProfile(filetype_boosts={"md": 1.0})],
+    ids=["no-profile", "tui-default-profile", "neutral-boost"],
+)
+def test_weighted_default_ranking_layered(
+    searcher: Searcher, profile: RankingProfile | None
+) -> None:
+    """Bare multi-term retrieves OR but ranks all-term docs above single-term
+    docs, with or without the ranking profile the TUI always passes. (Plain
+    BM25-over-OR does not guarantee this; fusion does.)"""
     p = QueryPlan.from_user_text("cross entropy loss")
-    groups = search_layered(searcher, query=p.lexical, limit=50, sections_per_file=5)
+    groups = search_layered(
+        searcher, query=p.lexical, limit=50, sections_per_file=5, profile=profile
+    )
     ranked = [h.parent_id for g in groups for h in g.hits]
     assert "all3" in ranked
     all3_rank = ranked.index("all3")

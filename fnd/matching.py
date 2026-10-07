@@ -338,7 +338,11 @@ class MatchSpec:
         a render-side dependency on the parser (render already
         depends on this module via the highlight helpers).
         """
-        from fnd.cascade import _carries_precision_intent, _terms_with_fuzzy  # avoid cycle
+        from fnd.cascade import (  # avoid cycle
+            _carries_precision_intent,
+            _fuzzy_stands_down,
+            _terms_with_fuzzy,
+        )
         from fnd.query_dsl import _expand_proximity_aliases  # local import: avoid cycle
         from fnd.render import _terms_from_query  # local import: avoid cycle
 
@@ -513,7 +517,7 @@ class MatchSpec:
                 explicit_pairs.get(_stem(term.lower()), 0), dist
             )
         auto_pairs: dict[str, int] = {}
-        if auto_fuzzy and widens:
+        if auto_fuzzy and not _fuzzy_stands_down(query):
             # Typed stems only: synonyms and joined compounds are searched exactly,
             # so fuzzing them paints words no search matched (`2nd` -> "and").
             for s in typed:

@@ -761,5 +761,5 @@ open-source projects:
   the score normalization `s / (1 + s)` that makes its thresholds (0.85
   score, 0.15 gap) corpus-stable, and the `intent:` line in the multi-line
   query DSL.
-- The Reciprocal Rank Fusion constant `k = 60` and rank-position bonuses
-  follow Cormack/Clarke/Buettcher (2009).
+- The Reciprocal Rank Fusion constant `k = 60` follows
+  Cormack/Clarke/Buettcher (2009).

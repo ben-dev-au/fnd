@@ -137,6 +137,20 @@ def load_merged_synonyms(personal_path: Path | None = None) -> SynonymTable:
     return merge_tables(*tables)
 
 
+def load_app_synonyms() -> SynonymTable:
+    """The table every search uses: the merged table, else the bundled
+    defaults, else empty. A failure here must never stop a search."""
+    from fnd.config import app_data_dir
+
+    try:
+        return load_merged_synonyms(app_data_dir() / "synonyms.toml")
+    except Exception:
+        try:
+            return load_default_synonyms()
+        except Exception:
+            return SynonymTable()
+
+
 def expand(query: str, table: SynonymTable) -> str:
     """Rewrite ``query`` so any synonym-group member becomes a Tantivy
     OR-disjunction over every member of that group.

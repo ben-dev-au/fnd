@@ -55,10 +55,10 @@ class HitContribution:
     chunk_seq: int
     bm25_per_source: dict[str, float]  # raw BM25 keyed by source name
     rank_per_source: dict[str, int]  # 1-indexed rank in each sub-query; 0 = absent
-    rrf_per_source: dict[str, float]  # weight / (k + rank) + position bonus
+    rrf_per_source: dict[str, float]  # weight / (k + rank), equal scores sharing a rank
     fused_total: float  # sum of rrf_per_source
     primary_source: str
-    final_score: float  # the BM25 score restored to Hit.score
+    final_score: float  # Hit.score: the best BM25, for display
 
 
 @dataclass(slots=True, frozen=True)
@@ -67,8 +67,6 @@ class FusionTrace:
     subqueries: list[SubQueryTrace]
     contributions: list[HitContribution]  # ordered as fusion returned them
     rrf_k: int
-    pos_bonus_rank_1: float
-    pos_bonus_rank_2_3: float
     default_weights: dict[str, float] = field(default_factory=dict)
 
 
@@ -144,7 +142,6 @@ def _fusion_to_json(t: FusionTrace) -> dict[str, object]:
     return {
         "query": t.query,
         "rrf_k": t.rrf_k,
-        "pos_bonuses": {"rank_1": t.pos_bonus_rank_1, "rank_2_3": t.pos_bonus_rank_2_3},
         "default_weights": t.default_weights,
         "subqueries": [
             {

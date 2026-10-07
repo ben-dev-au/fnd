@@ -370,10 +370,9 @@ def search(
         None,
         "--explain",
         help=(
-            "Print JSON trace for the Nth hit (1-indexed). Routes through "
-            "the regime-aware layered search; emits which regime fired "
-            "(strong-signal / fusion / cascade), per-sub-query BM25 stats, "
-            "and per-hit RRF contributions."
+            "Print a JSON trace for the Nth row (1-indexed): which regime "
+            "fired (strong-signal, fusion or cascade), per-sub-query BM25 "
+            "stats and per-hit RRF contributions."
         ),
     ),
 ) -> None:
@@ -388,10 +387,13 @@ def search(
     from fnd.config import load
     from fnd.filter_dsl import FilterError
     from fnd.layered import search_layered
+    from fnd.matching import MatchSpec
     from fnd.migrate import prompt_and_rebuild_or_exit
-    from fnd.query import Hit, Searcher, materialise_hits, snippet_spec
+    from fnd.query import FilteredSearcher, Searcher, materialise_hits
     from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
     from fnd.query_plan import QueryPlan
+    from fnd.rerank import profile_for_scope
+    from fnd.synonyms import load_app_synonyms
     from fnd.tag_query import TagFilter
     from fnd.tags import providers_for, source_tag_selection
 
@@ -413,11 +415,11 @@ def search(
     collections = resolve_collection_option(collection, cfg, issues)
     resolve_or_exit(issues)
 
-    prefix_clauses: list[str] = []
+    filter_clauses: list[str] = []
     if flags.created:
-        prefix_clauses.append(f"created:{flags.created}")
+        filter_clauses.append(f"created:{flags.created}")
     if flags.modified:
-        prefix_clauses.append(f"mtime:{flags.modified}")
+        filter_clauses.append(f"mtime:{flags.modified}")
     # ``flags.kinds`` is already category-expanded + de-duped by
     # parse_filter_flags. All values collapse into ONE kind:(a b …) OR-group
     # (F_KIND stores fine-grained ids) so multiple --kind flags match ANY of the
@@ -425,9 +427,7 @@ def search(
     # match nothing (a chunk has a single kind).
     if flags.kinds:
         kv = list(flags.kinds)
-        prefix_clauses.append(f"kind:{kv[0]}" if len(kv) == 1 else f"kind:({' '.join(kv)})")
-    if prefix_clauses:
-        query = f"{' '.join(prefix_clauses)} {query}".strip()
+        filter_clauses.append(f"kind:{kv[0]}" if len(kv) == 1 else f"kind:({' '.join(kv)})")
 
     if limit < 1:
         # Tantivy takes it unchecked: 0 panics out of Rust with a build
@@ -449,51 +449,53 @@ def search(
         )
 
     searcher = Searcher(index_dir=default_index_dir())
+    scoped = FilteredSearcher(searcher, clauses=filter_clauses) if filter_clauses else searcher
+    synonyms = load_app_synonyms()
     try:
         # One validated plan: bounds, inline [filter] split, proximity. An inline
         # [...] in the positional query takes precedence over --meta.
         plan = QueryPlan.from_user_text(query)
         lexical = plan.lexical
         metadata_filter = plan.metadata_filter or meta
-        if explain is None:
-            hits = searcher.search(
-                lexical,
-                limit=limit,
-                collection=collections,
-                metadata_filter=metadata_filter,
-                tag_filter=tag_filter,
-            )
-            for hit in hits:
-                _print_hit(hit)
-            return
         groups, trace = search_layered(
-            searcher,
+            scoped,  # type: ignore[arg-type]
             query=lexical,
             limit=limit,
-            sections_per_file=5,
+            sections_per_file=1,
             collection=collections,
+            synonyms=synonyms,
             metadata_filter=metadata_filter,
+            tag_filter=tag_filter,
+            profile=profile_for_scope(cfg, collections),
             auto_fuzzy_enabled=cfg.defaults.fuzzy_enabled,
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
             with_trace=True,
         )
-        # Flatten groups → hits in display order; one row per matched section.
-        flat: list[Hit] = [h for g in groups for h in g.hits]
-        for hit in materialise_hits(flat[:limit], snippet_spec(lexical)):
+        spec = MatchSpec.from_query(
+            lexical,
+            synonyms=synonyms,
+            auto_fuzzy=cfg.defaults.fuzzy_enabled,
+            min_term_chars=cfg.defaults.fuzzy_min_term_chars,
+        )
+        shown = materialise_hits([g.hits[0] for g in groups if g.hits], spec)
+        for hit in shown:
             _print_hit(hit)
-        if not (1 <= explain <= len(flat)):
+        if explain is None:
+            return
+        if not (1 <= explain <= len(shown)):
             typer.echo(
-                f"--explain {explain}: out of range (have {len(flat)} hits)",
+                f"--explain {explain}: out of range (have {len(shown)} hits)",
                 err=True,
             )
             raise typer.Exit(code=1)
         payload = trace.to_json()
-        target = flat[explain - 1]
+        target = shown[explain - 1]
         payload["explained_hit"] = {
             "index": explain,
             "parent_id": target.parent_id,
             "chunk_seq": target.chunk_seq,
             "score": round(target.score, 4),
+            "rank_score": round(target.rank_key, 6),
         }
         typer.echo(json.dumps(payload, indent=2))
     except FilterError as e:

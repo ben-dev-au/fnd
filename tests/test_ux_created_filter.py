@@ -115,19 +115,20 @@ async def test_created_composes_into_the_query(
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        seen: list[str] = []
+        seen: list[tuple[str, ...]] = []
         searcher = app._search.searcher
         assert searcher is not None
         original = searcher._candidates
 
         def spy(query: str, **kwargs: object) -> object:
-            seen.append(query)
+            seen.append(tuple(kwargs.get("filter_clauses", ())))  # type: ignore[arg-type]
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
         searcher._candidates = spy  # type: ignore[method-assign]
         app._scope.filter_created = "week"
         await run_search(pilot, app, "glimmer")
-        assert any("created:" in q for q in seen), seen
+        assert seen
+        assert all(clauses == ("created:week",) for clauses in seen), seen
 
 
 @pytest.mark.asyncio

@@ -59,7 +59,7 @@ def _carries_precision_intent(query: str) -> bool:
     * a quoted phrase, ``{N}`` proximity, or ``NEAR/N``;
     * a ``*``/``?`` wildcard (the fuzzy pass strips these and fuzzy-matches the
       bare stem — ``crypto*`` would re-admit ``cryptid``);
-    * an explicit exclusion (``NOT x`` / ``-x``) — the fuzzy pass strips the
+    * an explicit exclusion (``NOT x`` / ``-x``): the fuzzy pass strips the
       operator and would re-admit the excluded docs.
     """
     if any(ch in query for ch in '"{*?') or "NEAR/" in query:
@@ -67,6 +67,15 @@ def _carries_precision_intent(query: str) -> bool:
     # ``-word`` or ``-(group)`` exclusion (the ``(`` case would otherwise slip
     # past and the fuzzy pass would re-admit the excluded branch).
     return bool(re.search(r"\bNOT\b", query)) or bool(re.search(r"(?:^|\s)-[\w(]", query))
+
+
+def _fuzzy_stands_down(query: str) -> bool:
+    """True where the fuzzy pass must not run: precision intent, or a field
+    clause it cannot lift to a filter (``(kind:a AND kind:b) AND x``), which its
+    own query would drop. The synonym and compound passes keep such a clause."""
+    from fnd.query_filters import has_unlifted_filter
+
+    return _carries_precision_intent(query) or has_unlifted_filter(query, build_schema())
 
 
 _FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
@@ -399,7 +408,7 @@ def cascade_search(
     # proximity ({N}/NEAR) and would re-admit far matches.
     pool = (
         CandidatePool([], exhausted=True, all_files=True)
-        if _carries_precision_intent(query)
+        if _fuzzy_stands_down(query)
         else _fuzzy_pass(
             searcher,
             query=query,
@@ -445,5 +454,5 @@ def _with_pass(h: Hit, pass_index: int) -> Hit:
     """Return a copy of ``h`` tagged with ``pass_index``. Hits are frozen
     dataclasses, so we copy rather than mutate — via ``dataclasses.replace``,
     which cannot drop a field the way an enumerated rebuild does (see
-    :func:`fnd.fusion._with_score`)."""
+    :func:`fnd.fusion._with_pass_index`)."""
     return dataclasses.replace(h, pass_index=pass_index)

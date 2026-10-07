@@ -28,7 +28,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from tantivy import Index, Query, Schema
 
@@ -40,6 +40,7 @@ from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-expo
 from fnd.query_plan import enforce_query_bounds
 
 if TYPE_CHECKING:
+    from fnd.synonyms import SynonymTable
     from fnd.tag_query import TagFilter
 
 from fnd.schema import (
@@ -202,6 +203,14 @@ class Hit:
     # the preview mode and progress plan read it for every listed hit.
     materialised: bool = field(default=True, compare=False)
     stored_struct: bytes = field(default=b"", compare=False, repr=False)
+    # The score the result list is ordered by: fused, positional or reranked.
+    # None for a single pass's hit, which ranks by its BM25 ``score``.
+    rank_score: float | None = None
+
+    @property
+    def rank_key(self) -> float:
+        """The value this hit ranks by."""
+        return self.score if self.rank_score is None else self.rank_score
 
 
 @dataclass(slots=True, frozen=True)
@@ -245,7 +254,7 @@ class FileGroup:
     """One file with its ranked matched sections.
 
     The TUI tree renders the file as a parent node and ``hits`` as its sorted
-    children. ``top_score`` mirrors ``hits[0].score`` for sorting.
+    children. ``top_score`` is ``hits[0].score``, the display score.
     """
 
     parent_id: str
@@ -288,13 +297,7 @@ def _first_int(doc: object, field: str) -> int:
 
 @lru_cache(maxsize=64)
 def _snippet_spec(query: str) -> MatchSpec:
-    """Highlight spec for snippet anchoring, cached across a query's hits.
-
-    Built from the query alone — no synonym table. The searcher has none, and
-    measurement over a real corpus found no snippet that needed synonym
-    expansion to be anchorable, so threading one down here would be coupling
-    without a payoff.
-    """
+    """Highlight spec for snippet anchoring without synonyms, cached across a query's hits."""
     return MatchSpec.from_query(query)
 
 
@@ -605,21 +608,6 @@ def _collect(
         size = min(read * 3, ceiling - read)
 
 
-def _dedup_by_file(hits: list[Hit], limit: int) -> list[Hit]:
-    """First ``limit`` hits with one per ``parent_id`` (the file's best chunk,
-    since ``hits`` is already ranked)."""
-    seen: set[str] = set()
-    out: list[Hit] = []
-    for h in hits:
-        if h.parent_id in seen:
-            continue
-        seen.add(h.parent_id)
-        out.append(h)
-        if len(out) >= limit:
-            break
-    return out
-
-
 def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
     """Parse via Tantivy, converting its raw ``ValueError`` syntax errors into a
     typed :class:`QuerySyntaxError` so callers never crash on a malformed query."""
@@ -635,12 +623,8 @@ def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
 class Searcher:
     """Single-pass searcher against an existing fnd index."""
 
-    # Hard-filter clauses every pass must honour. Wrappers that scope a search
-    # set both: `filter_prefix` is the joined string the tantivy parser sees,
-    # and `filter_clauses` is the same clauses UNJOINED, for passes that build
-    # their own boolean query. Re-splitting the joined form loses them, because
-    # a clause adjacent to `AND` is not lifted (see fnd/query_filters.py).
-    filter_prefix: str = ""
+    # Hard-filter clauses (``kind:md``, ``mtime:week``) a scoping wrapper sets;
+    # every pass lowers them to typed filters, never into the query string.
     filter_clauses: tuple[str, ...] = ()
 
     def __init__(self, *, index_dir: Path) -> None:
@@ -695,6 +679,7 @@ class Searcher:
         source_scope: SourceScope | None = None,
         fuzzy_distance: int = 0,
         tag_filter: TagFilter | None = None,
+        filter_clauses: Sequence[str] = (),
     ) -> Query | None:
         """One pass's Tantivy query; None for an explicitly empty scope."""
         import tantivy
@@ -723,6 +708,11 @@ class Searcher:
         # phrases and explicit-syntax queries pass through untouched.
         content = strip_query_stopwords(preprocess(extracted.content))
         filters = list(extracted.filters)
+        for clause in filter_clauses:
+            lifted = extract_filters(clause, schema, self._index)
+            if lifted.content.strip():
+                raise ValueError(f"not a filter clause: {clause!r}")
+            filters.extend(lifted.filters)
         # Tags are typed state, never query text — see fnd/tag_query.py.
         if tag_filter is not None and not tag_filter.is_empty():
             compiled_tags = compile_tag_filter(tag_filter, schema)
@@ -798,6 +788,7 @@ class Searcher:
         fuzzy_distance: int = 0,
         tag_filter: TagFilter | None = None,
         min_files: int = 0,
+        filter_clauses: Sequence[str] = (),
     ) -> CandidatePool:
         """One pass's light hits; :func:`_collect` decides when paging stops."""
         parsed = self._build_query(
@@ -806,6 +797,7 @@ class Searcher:
             source_scope=source_scope,
             fuzzy_distance=fuzzy_distance,
             tag_filter=tag_filter,
+            filter_clauses=filter_clauses,
         )
         if parsed is None:
             return CandidatePool([], exhausted=True, all_files=True)
@@ -819,30 +811,6 @@ class Searcher:
             keep=_meta_keep(metadata_filter),
         )
 
-    def _filtered_raw_hits(
-        self,
-        query: str,
-        *,
-        target: int,
-        collection: str | list[str] | None,
-        metadata_filter: str | None,
-        source_scope: SourceScope | None = None,
-        fuzzy_distance: int = 0,
-        tag_filter: TagFilter | None = None,
-        min_files: int = 0,
-    ) -> list[Hit]:
-        """At least ``target`` light survivors of the optional metadata filter."""
-        return self._candidates(
-            query,
-            window=target,
-            collection=collection,
-            metadata_filter=metadata_filter,
-            source_scope=source_scope,
-            fuzzy_distance=fuzzy_distance,
-            tag_filter=tag_filter,
-            min_files=min_files,
-        ).hits
-
     def search(
         self,
         query: str,
@@ -853,56 +821,28 @@ class Searcher:
         now: int | None = None,
         metadata_filter: str | None = None,
         source_scope: SourceScope | None = None,
-        fuzzy_distance: int = 0,
         intent: str | None = None,
         tag_filter: TagFilter | None = None,
+        synonyms: SynonymTable | None = None,
     ) -> list[Hit]:
-        """Return one materialised Hit per file (the file's best-scored chunk).
+        """The best section of each of the top ``limit`` files, materialised.
 
-        The default ranking is unified on fusion (RRF), the same weighted
-        ordering the TUI uses: a doc matching every query term outranks one
-        matching only a single rarer term (raw BM25 over an OR does not
-        guarantee that). The legacy single-pass BM25 path is kept only for the
-        rerank ``profile`` (recency / filetype / phrase-proximity) and the
-        explicit cascade ``fuzzy_distance`` callers.
-
-        Use :meth:`search_grouped` to keep all matched sections of each file.
-        ``source_scope`` further narrows scope to chunks indexed from the
-        listed source paths.
+        Ranked by :func:`fnd.layered.search_layered`, the TUI's ranking.
         """
-        if not query.strip():
-            return []
-        if profile is None and fuzzy_distance == 0:
-            from fnd.fusion import fusion_search
-
-            fused = fusion_search(
-                self,
-                query=query,
-                limit=limit,
-                collection=collection,
-                metadata_filter=metadata_filter,
-                source_scope=source_scope,
-                tag_filter=tag_filter,
-            )
-            hits = _dedup_by_file(fused, limit)
-        else:
-            raw = self._filtered_raw_hits(
-                query,
-                target=candidate_window(limit),
-                collection=collection,
-                metadata_filter=metadata_filter,
-                source_scope=source_scope,
-                fuzzy_distance=fuzzy_distance,
-                tag_filter=tag_filter,
-                min_files=limit,
-            )
-            if profile is not None:
-                from fnd.rerank import RankingProfile, rerank_hits
-
-                assert isinstance(profile, RankingProfile)
-                raw = rerank_hits(raw, profile=profile, query=query, now=now)
-            hits = _dedup_by_file(raw, limit)
-        return materialise_hits(hits, _snippet_spec(query), intent=intent)
+        groups = self.search_grouped(
+            query,
+            limit=limit,
+            sections_per_file=1,
+            collection=collection,
+            profile=profile,
+            now=now,
+            metadata_filter=metadata_filter,
+            source_scope=source_scope,
+            intent=intent,
+            tag_filter=tag_filter,
+            synonyms=synonyms,
+        )
+        return [g.hits[0] for g in groups if g.hits]
 
     def _decode_chunk(self, searcher: object, address: object) -> FileChunk:
         """Decode a single chunk's stored fields at ``address`` into a
@@ -988,31 +928,50 @@ class Searcher:
         now: int | None = None,
         metadata_filter: str | None = None,
         source_scope: SourceScope | None = None,
-        fuzzy_distance: int = 0,
         intent: str | None = None,
+        tag_filter: TagFilter | None = None,
+        synonyms: SynonymTable | None = None,
     ) -> list[FileGroup]:
-        """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
-        section hits, materialised. ``source_scope`` narrows scope to chunks
-        indexed from a subset of the active collection's sources.
-        """
-        if not query.strip():
-            return []
-        raw = self._filtered_raw_hits(
-            query,
-            target=candidate_window(limit),
+        """:func:`fnd.layered.search_layered`'s file groups, materialised."""
+        from fnd.layered import search_layered
+
+        groups = search_layered(
+            self,
+            query=query,
+            limit=limit,
+            sections_per_file=sections_per_file,
             collection=collection,
+            synonyms=synonyms,
             metadata_filter=metadata_filter,
             source_scope=source_scope,
-            fuzzy_distance=fuzzy_distance,
-            min_files=limit,
+            intent=intent,
+            profile=profile,
+            now=now,
+            tag_filter=tag_filter,
         )
-        if profile is not None:
-            from fnd.rerank import RankingProfile, rerank_hits
+        spec = (
+            _snippet_spec(query)
+            if synonyms is None
+            else MatchSpec.from_query(query, synonyms=synonyms)
+        )
+        return materialise_groups(groups, spec, intent=intent)
 
-            assert isinstance(profile, RankingProfile)
-            raw = rerank_hits(raw, profile=profile, query=query, now=now)
-        groups = group_by_file(raw, limit=limit, sections_per_file=sections_per_file)
-        return materialise_groups(groups, _snippet_spec(query), intent=intent)
+
+class FilteredSearcher:
+    """A :class:`Searcher` whose every pass carries ``clauses`` (``kind:md``,
+    ``mtime:week``) as typed hard filters, leaving the query text to the content."""
+
+    def __init__(self, inner: Searcher, *, clauses: Sequence[str]) -> None:
+        self._inner = inner
+        self.filter_clauses = tuple(c for c in (c.strip() for c in clauses) if c)
+
+    def _candidates(self, query: str, **kwargs: Any) -> CandidatePool:
+        return self._inner._candidates(query, filter_clauses=self.filter_clauses, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        # ``_searcher`` and ``_index`` for the cascade's fuzzy pass, which reads
+        # ``filter_clauses`` itself.
+        return getattr(self._inner, name)
 
 
 def group_by_file(
@@ -1024,18 +983,10 @@ def group_by_file(
 ) -> list[FileGroup]:
     """Bucket a flat ranked Hit list into per-file groups.
 
-    Hits keep first-seen order, so passing pre-ranked output (BM25,
-    reranked, fusion-fused, cascade-stitched) produces FileGroups in the
-    same order. Within a group, sections that scored equally are ordered by
-    position, so a file's own sections never read out of sequence for want of
-    a tie-break. Sections are kept when the section's score is at least
-    ``score_threshold * file_top_score`` and the per-file cap
-    ``sections_per_file`` hasn't been hit yet; ``score_threshold = 0``
-    disables the relative filter (cap-only behaviour).
-
-    Used both by :meth:`Searcher.search_grouped` and the cascade /
-    fusion paths in the TUI's ``_run_query`` so every search path
-    funnels through identical grouping logic.
+    Files keep the first-seen order of ``hits``. A file's sections are ordered
+    by :attr:`Hit.rank_key`, document position breaking ties, and cut to
+    ``sections_per_file``; with ``score_threshold`` above 0, a section is kept
+    only when its display ``score`` is at least that share of the top section's.
     """
     groups: dict[str, list[Hit]] = {}
     order: list[str] = []
@@ -1048,21 +999,13 @@ def group_by_file(
             bucket.append(h)
     out: list[FileGroup] = []
     for pid in order[:limit]:
-        all_hits = groups[pid]
-        top = all_hits[0]
-        # Relative-score filter: keep sections whose score is at least
-        # ``threshold * top_score``. Threshold 0 disables (cap-only).
+        # Position is only the tie-break: equal scores come back in segment
+        # order ("Day 3 … Day 60, Day 1, Day 2"), and the preview lands on the first.
+        ranked = sorted(groups[pid], key=lambda h: (-h.rank_key, h.chunk_seq, h.line))
+        top = ranked[0]
         if score_threshold > 0.0 and top.score > 0.0:
             min_score = top.score * score_threshold
-            kept = [h for h in all_hits if h.score >= min_score]
-        else:
-            kept = all_hits
-        # Ranked, then document order as the TIE-BREAK: equal scores come back in
-        # segment order ("Day 3 … Day 60, Day 1, Day 2"). Position alone would
-        # demote the best-scoring section and land the preview on the first.
-        section_hits = sorted(
-            kept[:sections_per_file], key=lambda h: (-h.score, h.chunk_seq, h.line)
-        )
+            ranked = [h for h in ranked if h.score >= min_score]
         out.append(
             FileGroup(
                 parent_id=pid,
@@ -1070,7 +1013,7 @@ def group_by_file(
                 kind=top.kind,
                 title=top.title,
                 top_score=top.score,
-                hits=section_hits,
+                hits=ranked[:sections_per_file],
                 memberships=top.memberships,
             )
         )
