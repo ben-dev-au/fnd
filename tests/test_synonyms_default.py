@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from fnd.synonyms import (
     DEFAULT_SYNONYMS_PATH,
     SynonymTable,
@@ -126,3 +128,15 @@ def test_malformed_personal_file_keeps_defaults(tmp_path: Path):
     table = load_merged_synonyms(personal)
     # bundled defaults survive a broken personal file
     assert table.expansions_for("mfa") is not None
+
+
+@pytest.mark.parametrize("query", ["50%", "$100", "x=1", "1/2", "x^2", "+mfa", "/mfa/", "'mfa'"])
+def test_a_word_inside_a_token_is_left_alone(query: str) -> None:
+    table = load_default_synonyms()
+    assert expand(query, table) == query
+
+
+def test_a_whole_token_still_expands() -> None:
+    table = load_default_synonyms()
+    assert expand("50 off", table).startswith("(50 OR ")
+    assert expand("(mfa)", table).startswith("((mfa OR ")

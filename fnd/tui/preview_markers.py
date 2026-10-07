@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from fnd.matching import DOC_WORD_RE, prime
 from fnd.render import text_has_any_match
 from fnd.tui.match_evidence import rendered_text
 
@@ -46,13 +47,16 @@ def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[li
     """
     match_lines: list[int] = []
     cursor = 0
-    for c in chunks:
+    # rendered_text: the substrate the renderer actually mounts, so a marker
+    # can never point at a line the pane won't paint.
+    texts = [rendered_text(c) for c in chunks]
+    # One regex batch for the whole file, not one per line.
+    prime(spec, (w for text in texts for w in DOC_WORD_RE.findall(text)))
+    for text in texts:
         # splitlines() (not split("\n")) so a trailing newline doesn't add a
         # phantom line and an empty source counts as 0 lines, not 1 — both keep
         # the total / fractions closer to the rendered row count.
-        # rendered_text: the substrate the renderer actually mounts, so a
-        # marker can never point at a line the pane won't paint.
-        lines = rendered_text(c).splitlines()
+        lines = text.splitlines()
         local = next(
             (i for i, ln in enumerate(lines) if text_has_any_match(ln, spec)),
             None,

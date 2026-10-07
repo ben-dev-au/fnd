@@ -74,11 +74,17 @@ def strip_query_stopwords(query: str) -> str:
     is entirely stopwords (so an all-stopword query falls back to its
     original behaviour instead of becoming empty).
     """
-    if _SPECIAL.search(query):
+    if _SPECIAL.search(query) or is_all_stopwords(query):
         return query
-    # Strip surrounding punctuation for the membership test so "the,"/"in."
-    # are recognised, but keep the original token when retained.
-    kept = [t for t in query.split() if t.strip(string.punctuation).lower() not in STOPWORDS]
-    if not kept:
-        return query
-    return " ".join(kept)
+    return " ".join(t for t in query.split() if not _is_stopword(t))
+
+
+def is_all_stopwords(query: str) -> bool:
+    """Whether every word of ``query`` is a stopword; search keeps such a query whole."""
+    words = query.split()
+    return bool(words) and all(_is_stopword(t) for t in words)
+
+
+def _is_stopword(token: str) -> bool:
+    # Surrounding punctuation stripped, so "the,"/"in." are recognised.
+    return token.strip(string.punctuation).lower() in STOPWORDS

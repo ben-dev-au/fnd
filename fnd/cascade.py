@@ -25,13 +25,16 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import tantivy
 
 from fnd.explain import CascadePassTrace, CascadeTrace
 from fnd.matching import AUTO_FUZZY_MAX, auto_fuzzy_distance
 from fnd.query import Hit, Searcher, SourceScope, scope_arms, scope_or
+from fnd.query_ast import FUZZY_MAX
+from fnd.query_errors import QuerySyntaxError
+from fnd.query_spans import has_phrase
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -53,7 +56,7 @@ def _carries_precision_intent(query: str) -> bool:
     * an explicit exclusion (``NOT x`` / ``-x``) — the fuzzy pass strips the
       operator and would re-admit the excluded docs.
     """
-    if any(ch in query for ch in '"{*?') or "NEAR/" in query:
+    if any(ch in query for ch in '"{*?') or "NEAR/" in query or has_phrase(query):
         return True
     # ``-word`` or ``-(group)`` exclusion (the ``(`` case would otherwise slip
     # past and the fuzzy pass would re-admit the excluded branch).
@@ -94,7 +97,7 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
         if dist_str is None or dist_str == "":
             out.append((term, None))
         else:
-            out.append((term, min(int(dist_str), 2)))
+            out.append((term, min(int(dist_str), FUZZY_MAX)))
     return out
 
 
@@ -306,6 +309,15 @@ def _materialize_hits(
     return out
 
 
+def _derived_hits(searcher: Searcher, query: str, **kwargs: Any) -> list[Hit]:
+    """A rewrite the engine refuses widens to nothing; the literal hits stand,
+    as in fusion's derived passes."""
+    try:
+        return searcher._filtered_raw_hits(query, **kwargs)
+    except QuerySyntaxError:
+        return []
+
+
 @overload
 def cascade_search(
     searcher: Searcher,
@@ -478,7 +490,8 @@ def cascade_search(
     if synonyms is not None and synonyms.groups and not _carries_precision_intent(query):
         syn_q = expand(literal_query, synonyms)
         if syn_q != literal_query:
-            raw = searcher._filtered_raw_hits(
+            raw = _derived_hits(
+                searcher,
                 syn_q,
                 target=pass_target,
                 collection=collection,
@@ -507,7 +520,8 @@ def cascade_search(
     if not _carries_precision_intent(query):
         comp_q = expand(literal_query, compound_table(literal_query))
         if comp_q != literal_query:
-            raw = searcher._filtered_raw_hits(
+            raw = _derived_hits(
+                searcher,
                 comp_q,
                 target=pass_target,
                 collection=collection,

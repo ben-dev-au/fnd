@@ -387,7 +387,7 @@ def search(
     from fnd.layered import search_layered
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.query import Hit, Searcher
-    from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
+    from fnd.query_errors import QueryError, QuerySyntaxError
     from fnd.query_plan import QueryPlan
     from fnd.tag_query import TagFilter
     from fnd.tags import providers_for, source_tag_selection
@@ -499,7 +499,7 @@ def search(
     except QuerySyntaxError as e:
         echo(e.message if not e.hint else f"{e.message}: {e.hint}", err=True)
         raise typer.Exit(code=1) from e
-    except QueryTooLargeError as e:
+    except QueryError as e:
         echo(str(e), err=True)
         raise typer.Exit(code=1) from e
 

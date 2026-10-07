@@ -25,6 +25,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from fnd.query_spans import literal_spans
+
 
 @dataclass(slots=True, frozen=True)
 class SynonymTable:
@@ -161,16 +163,18 @@ def expand(query: str, table: SynonymTable) -> str:
                 key2group.setdefault(toks, g)
                 max_len = max(max_len, len(toks))
 
-    quoted = list(re.finditer(r'"([^"]*)"', query))
-    qranges = [(m.start(), m.end()) for m in quoted]
+    literals = literal_spans(query)
 
-    def in_quote(pos: int) -> bool:
-        return any(s <= pos < e for s, e in qranges)
+    def in_literal(pos: int) -> bool:
+        return any(span.start <= pos < span.end for span in literals)
 
     # Replacements as (start, end, text). Quoted-phrase and bare-word spans
-    # never overlap (bare words inside quotes are skipped).
+    # never overlap (bare words inside a phrase or regex are skipped).
     repls: list[tuple[int, int, str]] = []
-    for m in quoted:
+    for span in literals:
+        m = re.fullmatch(r'"([^"]*)"', query[span.start : span.end])
+        if m is None:
+            continue
         # Token-tuple lookup (not exact string) so a quoted phrase expands
         # regardless of hyphen/space, matching the bare-word path below. A
         # single quoted token (e.g. "4", "mfa") is left literal — quoting one
@@ -179,14 +183,16 @@ def expand(query: str, table: SynonymTable) -> str:
         key = tuple(re.findall(r"\w+", m.group(1).casefold()))
         exp = key2group.get(key) if len(key) > 1 else None
         if exp is not None:
-            repls.append((m.start(), m.end(), _format_disjunction(m.group(1), exp)))
+            repls.append((span.start, span.end, _format_disjunction(m.group(1), exp)))
 
-    words = [m for m in re.finditer(r"\w+", query) if not in_quote(m.start())]
+    words = [m for m in re.finditer(r"\w+", query) if not in_literal(m.start())]
     i, n = 0, len(words)
     while i < n:
         matched = False
         for k in range(min(max_len, n - i), 0, -1):
             run = words[i : i + k]
+            if not _whole_token(query, run[0].start(), run[-1].end()):
+                continue
             # Contiguous phrase: only whitespace/hyphens between the tokens.
             if any(
                 set(query[run[j].end() : run[j + 1].start()]) - {" ", "\t", "-"}
@@ -214,6 +220,14 @@ def expand(query: str, table: SynonymTable) -> str:
         last = e
     out.append(query[last:])
     return "".join(out)
+
+
+def _whole_token(query: str, start: int, end: int) -> bool:
+    """Whether ``query[start:end]`` is a whole token: spliced into ``50%`` or
+    ``+mfa``, a disjunction would break the token around it."""
+    before = query[start - 1] if start else " "
+    after = query[end] if end < len(query) else " "
+    return (before.isspace() or before == "(") and (after.isspace() or after == ")")
 
 
 def _format_disjunction(original: str, group: tuple[str, ...]) -> str:

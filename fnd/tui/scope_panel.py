@@ -1140,8 +1140,8 @@ class ScopeController:
         tag vanish the moment one is selected, stranding the user with no way
         to switch without clearing first.
 
-        A cheap parse rather than the ranked pipeline: facets need membership,
-        not ordering. Returns None (whole collection scope) when no query is
+        The search's own content compile, not the ranked pipeline: facets need
+        membership, not ordering. Returns None (whole collection scope) when no query is
         active or the text can't be parsed, so the pane stays browsable.
         """
         raw = (self._app._search.current_query or "").strip()
@@ -1152,9 +1152,12 @@ class ScopeController:
             from fnd.schema import DEFAULT_SEARCH_FIELDS
 
             lexical = QueryPlan.from_user_text(raw).lexical.strip()
-            if not lexical:
+            searcher = getattr(self._app._search, "searcher", None)
+            if not lexical or searcher is None:
                 return None
-            exact = index.parse_query(lexical, DEFAULT_SEARCH_FIELDS)
+            exact = searcher.content_query(lexical, DEFAULT_SEARCH_FIELDS)
+            if exact is None:
+                return None
             return self._widen_to_fuzzy(index, exact, lexical)
         except Exception:
             return None

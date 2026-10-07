@@ -30,6 +30,17 @@ class QuerySyntaxError(QueryError):
         self.hint = hint
 
 
+class QueryEngineError(QuerySyntaxError):
+    """The engine failed on a query it accepted (a tantivy panic); the user can
+    only rephrase it."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "the search engine could not run this query",
+            hint="try fewer wildcards or a simpler pattern",
+        )
+
+
 class UnknownFilterValueError(QueryError):
     """A filter value outside its closed set of legal values — a typo'd
     collection name, file kind, or date token.

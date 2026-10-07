@@ -411,7 +411,7 @@ def test_fusion_search_degrades_malformed_subquery(fusion_corpus: Path) -> None:
     s = Searcher(index_dir=fusion_corpus)
     subs = [
         SubQuery(query="susy breaking", weight=1.0, source="lex"),
-        SubQuery(query="{20}", weight=0.6, source="syn"),  # orphan brace → Tantivy reject
+        SubQuery(query="page:[10 TO]", weight=0.6, source="syn"),  # a range Tantivy rejects
     ]
     hits = fusion_search(s, query="susy breaking", limit=10, subqueries=subs)
     assert hits, "the valid lex sub-query must still surface results"
@@ -423,7 +423,7 @@ def test_fusion_trace_records_degraded_subquery(fusion_corpus: Path) -> None:
     s = Searcher(index_dir=fusion_corpus)
     subs = [
         SubQuery(query="susy breaking", weight=1.0, source="lex"),
-        SubQuery(query="{20}", weight=0.6, source="syn"),
+        SubQuery(query="page:[10 TO]", weight=0.6, source="syn"),
     ]
     _hits, trace = fusion_search(
         s, query="susy breaking", limit=10, subqueries=subs, with_trace=True

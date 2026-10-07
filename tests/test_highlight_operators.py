@@ -225,3 +225,38 @@ def test_phrase_highlights_as_span() -> None:
     spec = MatchSpec.from_query('"the mitochondria"', auto_fuzzy=False)
     spans = phrase_char_spans(_TEXT, spec)
     assert spans, "expected a contiguous phrase span for the quoted phrase"
+
+
+def test_a_single_quoted_phrase_highlights_as_the_double_quoted_one() -> None:
+    single = MatchSpec.from_query("'cross entropy' loss")
+    double = MatchSpec.from_query('"cross entropy" loss')
+    assert single.phrases == double.phrases
+    assert single.exact_stems == double.exact_stems
+
+
+def test_a_regex_with_a_space_highlights_nothing_as_it_finds_nothing() -> None:
+    spec = MatchSpec.from_query("/cross entropy/")
+    assert not word_matches("cross", spec)
+    assert not word_matches("entropy", spec)
+
+
+def test_an_all_stopword_query_highlights_what_it_found() -> None:
+    assert word_matches("the", MatchSpec.from_query("the"))
+
+
+@pytest.mark.parametrize("query", ["/crypto/ the", "crypto* the", "the [kind = pdf] crypto"])
+def test_a_stopword_beside_another_term_is_not_painted(query: str) -> None:
+    assert not word_matches("the", MatchSpec.from_query(query))
+
+
+@pytest.mark.parametrize("space", [" ", "\t", "\N{IDEOGRAPHIC SPACE}"])
+def test_a_regex_with_any_space_paints_no_fragment(space: str) -> None:
+    spec = MatchSpec.from_query(f"/a{space}b/")
+    assert not word_matches("a000b", spec)
+    assert not word_matches("a", spec)
+
+
+def test_a_regex_repetition_highlights_like_search() -> None:
+    spec = MatchSpec.from_query("/[0-9]{4}/")
+    assert word_matches("2024", spec)
+    assert not word_matches("202", spec)
