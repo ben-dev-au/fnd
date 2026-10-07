@@ -55,6 +55,8 @@ def _populated_hit() -> Hit:
         body_text="the full decoded chunk body",
         body_md="## the markdown the preview renders",
         memberships=(("Work", "/w"), ("Personal", "/p")),
+        materialised=False,
+        stored_struct=b"\x03",
     )
 
 

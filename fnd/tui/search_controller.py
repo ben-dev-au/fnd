@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 from textual.widgets import Static
 
 from fnd.matching import MatchSpec
-from fnd.query import FileGroup, Hit, Searcher, SourceScope
+from fnd.query import CandidatePool, FileGroup, Hit, Searcher, SourceScope
 from fnd.rerank import RankingProfile, profile_from_config
 from fnd.tui.progress.facility import ProgressSession
 from fnd.tui.progress.operations import SEARCH
@@ -103,11 +103,11 @@ class _PrefixingSearcher:
             return query
         return f"({self._prefix}) AND ({query})"
 
+    def _candidates(self, query: str, **kwargs: Any) -> CandidatePool:
+        return self._inner._candidates(self._wrap(query), **kwargs)
+
     def _filtered_raw_hits(self, query: str, **kwargs: Any) -> list[Hit]:
         return self._inner._filtered_raw_hits(self._wrap(query), **kwargs)
-
-    def _raw_hits(self, query: str, **kwargs: Any) -> list[Hit]:
-        return self._inner._raw_hits(self._wrap(query), **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         # Forward attribute access to the underlying searcher (e.g.
@@ -469,6 +469,7 @@ class SearchController:
         if handle is None or not request.lexical.strip():
             return [], None
         from fnd.layered import search_layered
+        from fnd.tui.results_view import materialise_upfront
 
         searcher = (
             _PrefixingSearcher(handle, clauses=request.filter_clauses)
@@ -492,7 +493,7 @@ class SearchController:
             min_term_chars=request.min_term_chars,
             with_trace=True,
         )
-        return groups, trace
+        return materialise_upfront(groups, request.match_spec, intent=request.intent), trace
 
     # ── commit (event loop) ──────────────────────────────────────
 

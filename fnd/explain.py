@@ -43,6 +43,8 @@ class SubQueryTrace:
     bm25_second: float
     rrf_k: int
     degraded: bool = False  # sub-query rejected by Tantivy → forced to empty
+    exhausted: bool = True  # every match was read, so no chunk sits beyond the pool
+    all_files: bool = True  # every matching file has a hit in the pool
 
 
 @dataclass(slots=True, frozen=True)
@@ -78,6 +80,8 @@ class CascadePassTrace:
     hit_count: int  # hits this pass returned
     new_count: int  # hits added after dedup against earlier passes
     bm25_top: float
+    exhausted: bool = True  # every match was read, so no chunk sits beyond the pool
+    all_files: bool = True  # every matching file has a hit in the pool
 
 
 @dataclass(slots=True, frozen=True)
@@ -152,6 +156,8 @@ def _fusion_to_json(t: FusionTrace) -> dict[str, object]:
                 "bm25_second": round(s.bm25_second, 4),
                 "rrf_k": s.rrf_k,
                 "degraded": s.degraded,
+                "exhausted": s.exhausted,
+                "all_files": s.all_files,
             }
             for s in t.subqueries
         ],
@@ -184,6 +190,8 @@ def _cascade_to_json(t: CascadeTrace) -> dict[str, object]:
                 "hit_count": p.hit_count,
                 "new_count": p.new_count,
                 "bm25_top": round(p.bm25_top, 4),
+                "exhausted": p.exhausted,
+                "all_files": p.all_files,
             }
             for p in t.passes
         ],

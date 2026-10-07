@@ -389,7 +389,7 @@ def search(
     from fnd.filter_dsl import FilterError
     from fnd.layered import search_layered
     from fnd.migrate import prompt_and_rebuild_or_exit
-    from fnd.query import Hit, Searcher
+    from fnd.query import Hit, Searcher, materialise_hits, snippet_spec
     from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
     from fnd.query_plan import QueryPlan
     from fnd.tag_query import TagFilter
@@ -479,7 +479,7 @@ def search(
         )
         # Flatten groups → hits in display order; one row per matched section.
         flat: list[Hit] = [h for g in groups for h in g.hits]
-        for hit in flat[:limit]:
+        for hit in materialise_hits(flat[:limit], snippet_spec(lexical)):
             _print_hit(hit)
         if not (1 <= explain <= len(flat)):
             typer.echo(

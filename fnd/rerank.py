@@ -32,7 +32,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from fnd.query import Hit
+from fnd.query import Hit, decoded_body
 from fnd.render import _stem  # stem helper kept centralized in render.py
 
 
@@ -194,7 +194,7 @@ def rerank_hits(
             # Prefer the full decoded body; fall back to the snippet for
             # hits that predate body_text plumbing (e.g. external callers).
             s = apply_phrase_proximity(
-                score=s, body=h.body_text or h.snippet, terms=terms, profile=profile
+                score=s, body=decoded_body(h)[0] or h.snippet, terms=terms, profile=profile
             )
         out.append(_replace_score(h, s))
     out.sort(key=lambda x: x.score, reverse=True)

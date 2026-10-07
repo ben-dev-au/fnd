@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, overload
 
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
-from fnd.query import Hit, Searcher, SourceScope
+from fnd.query import CandidatePool, Hit, Searcher, SourceScope, candidate_window
 from fnd.query_errors import QuerySyntaxError
 from fnd.render import keep_shown
 from fnd.synonyms import SynonymTable, compound_table, expand
@@ -150,10 +150,10 @@ class MultiInput:
 
     ``intent`` does NOT produce a sub-query. It influences:
 
-    * regime triage — intent disables strong-signal bypass
+    * regime triage: intent disables strong-signal bypass
       (:func:`fnd.layered._evaluate_strong_signal`)
-    * snippet selection — chunks containing intent tokens preferred
-      (:func:`fnd.query._make_snippet`)
+    * snippet selection: chunks containing intent tokens preferred, once a
+      shown hit is materialised (:func:`fnd.query.materialise`)
     """
 
     subqueries: list[SubQuery]
@@ -337,8 +337,7 @@ def fusion_search(
     subqueries: list[SubQuery] | None = ...,
     metadata_filter: str | None = ...,
     source_scope: SourceScope | None = ...,
-    precomputed_lex_ranking: list[Hit] | None = ...,
-    intent: str | None = ...,
+    precomputed_lex: CandidatePool | None = ...,
     tag_filter: TagFilter | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
@@ -355,8 +354,7 @@ def fusion_search(
     subqueries: list[SubQuery] | None = ...,
     metadata_filter: str | None = ...,
     source_scope: SourceScope | None = ...,
-    precomputed_lex_ranking: list[Hit] | None = ...,
-    intent: str | None = ...,
+    precomputed_lex: CandidatePool | None = ...,
     tag_filter: TagFilter | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], FusionTrace]: ...
@@ -372,8 +370,7 @@ def fusion_search(
     subqueries: list[SubQuery] | None = None,
     metadata_filter: str | None = None,
     source_scope: SourceScope | None = None,
-    precomputed_lex_ranking: list[Hit] | None = None,
-    intent: str | None = None,
+    precomputed_lex: CandidatePool | None = None,
     tag_filter: TagFilter | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], FusionTrace]:
@@ -383,13 +380,17 @@ def fusion_search(
     explicit sub-queries are supplied (e.g. from a ``:multi`` panel),
     auto-derivation is skipped — only the supplied list runs.
 
-    Each sub-query is issued through ``searcher._filtered_raw_hits`` so
-    the metadata filter (frontmatter post-filter) and the ``source_path``
-    scope apply to every sub-ranking. Sub-queries see identical
-    analyzer/field-boost configuration as the single-pass search path.
-    Results are deduplicated by ``(parent_id, chunk_seq)`` and sorted
-    by RRF position; ``pass_index`` is set from the highest-weighted
-    contributing source.
+    ``limit`` is the number of FILES the caller will show. Each sub-query
+    pages through its matches until it holds more distinct files than that
+    (see :meth:`fnd.query.Searcher._candidates`), and every fused chunk is
+    returned, so the file-level cut happens in the caller's grouper and a
+    book with many matching chunks cannot push other files out first. Hits
+    are light; the caller materialises the ones it shows.
+
+    Each sub-query applies the metadata filter and the ``source_path`` scope.
+    Results are deduplicated by ``(parent_id, chunk_seq)`` and sorted by RRF
+    position; ``pass_index`` is set from the highest-weighted contributing
+    source.
 
     **Score semantics**: RRF is used for *ordering*. The returned
     ``Hit.score`` is the maximum BM25 score across the sub-queries that
@@ -398,10 +399,10 @@ def fusion_search(
     queries) rather than the 0.0001-0.07 range RRF arithmetic would
     produce. The internal RRF total still drives the sort order.
 
-    ``precomputed_lex_ranking``: when supplied, the lex sub-query reuses
-    this list instead of issuing a fresh ``_filtered_raw_hits`` call. Lets
-    the regime probe in :mod:`fnd.layered` double as fusion's lex pass,
-    saving one Tantivy round-trip on every non-bypass query.
+    ``precomputed_lex``: when supplied, the lex sub-query reuses this pool
+    instead of issuing a fresh one. Lets the regime probe in
+    :mod:`fnd.layered` double as fusion's lex pass, saving one Tantivy
+    round-trip on every non-bypass query.
 
     ``with_trace``: when ``True``, returns ``(hits, FusionTrace)`` so
     callers (CLI ``--explain`` / TUI ``:explain``) can inspect which
@@ -415,44 +416,46 @@ def fusion_search(
             return [], _empty_fusion_trace(query)
         return []
 
-    def _issue(q: str) -> list[Hit]:
-        # Oversample per sub-query so the post-fusion grouper has enough chunks
-        # to fill ``limit`` files. Mirrors the ``target=limit * 10`` contract the
-        # old single-pass ``Searcher.search_grouped`` used.
-        return searcher._filtered_raw_hits(
+    def _issue(q: str) -> CandidatePool:
+        return searcher._candidates(
             q,
-            target=limit * 10,
+            window=candidate_window(limit),
             collection=collection,
             metadata_filter=metadata_filter,
             source_scope=source_scope,
-            intent=intent,
             tag_filter=tag_filter,
+            min_files=limit,
         )
 
     rankings: list[list[Hit]] = []
     degraded: list[bool] = []
+    exhausted: list[bool] = []
+    all_files: list[bool] = []
     for sub in subs:
         if sub.source == "lex":
             # The lex pass carries the user's literal query: reuse the regime
             # probe's result when supplied, else issue it. A syntax error here is
             # the user's to fix, so it must propagate — the Searcher safety-net
             # and the TUI's inline notice both rely on malformed queries raising.
-            rankings.append(
-                precomputed_lex_ranking
-                if precomputed_lex_ranking is not None
-                else _issue(sub.query)
-            )
+            pool = precomputed_lex if precomputed_lex is not None else _issue(sub.query)
+            rankings.append(pool.hits)
             degraded.append(False)
+            exhausted.append(pool.exhausted)
+            all_files.append(pool.all_files)
             continue
         # Auto-derived passes (phrase / syn): a malformed sub-query degrades to
         # an empty ranking rather than aborting the whole fused search.
         try:
-            issued = _issue(sub.query)
-            rankings.append(keep_shown(issued, query) if sub.source == "compound" else issued)
+            pool = _issue(sub.query)
+            rankings.append(keep_shown(pool.hits, query) if sub.source == "compound" else pool.hits)
             degraded.append(False)
+            exhausted.append(pool.exhausted)
+            all_files.append(pool.all_files)
         except QuerySyntaxError:
             rankings.append([])
             degraded.append(True)
+            exhausted.append(True)
+            all_files.append(True)
 
     weights = [s.weight for s in subs]
     fused = rrf_fuse(rankings, weights=weights)
@@ -460,7 +463,7 @@ def fusion_search(
     primary_source = _attribute_sources(rankings, subs)
     bm25_scores = _bm25_score_map(rankings)
     out: list[Hit] = []
-    for h in fused[:limit]:
+    for h in fused:
         key = (h.parent_id, h.chunk_seq)
         src = primary_source.get(key, "lex")
         # Restore the BM25 score from whichever sub-query surfaced this
@@ -471,7 +474,9 @@ def fusion_search(
 
     if not with_trace:
         return out
-    trace = _build_fusion_trace(query, subs, rankings, degraded, primary_source, out)
+    trace = _build_fusion_trace(
+        query, subs, rankings, degraded, exhausted, all_files, primary_source, out
+    )
     return out, trace
 
 
@@ -480,6 +485,8 @@ def _build_fusion_trace(
     subs: list[SubQuery],
     rankings: list[list[Hit]],
     degraded: list[bool],
+    exhausted: list[bool],
+    all_files: list[bool],
     primary_source: dict[tuple[str, int], str],
     out: list[Hit],
 ) -> FusionTrace:
@@ -493,8 +500,10 @@ def _build_fusion_trace(
             bm25_second=r[1].score if len(r) > 1 else 0.0,
             rrf_k=_RRF_K_DEFAULT,
             degraded=d,
+            exhausted=e,
+            all_files=f,
         )
-        for s, r, d in zip(subs, rankings, degraded, strict=True)
+        for s, r, d, e, f in zip(subs, rankings, degraded, exhausted, all_files, strict=True)
     ]
     # Per-hit contributions: walk each ranking once, accumulate
     # rank/bm25/rrf for each (parent_id, chunk_seq) appearing in ``out``.

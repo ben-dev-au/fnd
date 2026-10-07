@@ -299,13 +299,15 @@ def keep_shown(hits: list[Hit], query: str) -> list[Hit]:
     reaches across any punctuation in the index, and a result whose text shows
     no credible compound is one the preview could not explain."""
     from fnd.matching import MatchSpec
+    from fnd.query import decoded_body
 
     spec = MatchSpec.from_query(query, auto_fuzzy=False)
-    return [
-        h
-        for h in hits
-        if text_has_any_match(_HIDDEN_LINK_RE.sub("]", h.body_md or h.body_text), spec)
-    ]
+    out: list[Hit] = []
+    for h in hits:
+        visible = h.body_md or decoded_body(h)[0]
+        if text_has_any_match(_HIDDEN_LINK_RE.sub("]", visible), spec):
+            out.append(h)
+    return out
 
 
 def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:

@@ -3,12 +3,20 @@
 Single-pass: reranking, cascading and RRF fusion live in :mod:`fnd.rerank`,
 :mod:`fnd.cascade` and :mod:`fnd.fusion`.
 
+Candidates are LIGHT: a pass reads each hit's small stored fields and keeps its
+body bytes undecoded, because a pass over thousands of chunks is cheap (Tantivy
+returns 20,000 in under 10 ms, a stored-field read is about 17 µs) while a
+snippet costs about 4 ms. Results are grouped and cut to files first; only the
+hits a caller shows go through :func:`materialise`. A pass pages through its
+matches until it holds more distinct files than the caller will show (or every
+matching file), so a book with hundreds of matching pages cannot crowd out the
+files ranked after it.
+
 The optional ``metadata_filter`` kwarg on :meth:`Searcher.search` and
 :meth:`Searcher.search_grouped` takes a DSL string (same grammar as the
-index-time ``frontmatter_filter``); it is compiled once and applied as a
-post-rank predicate against each md chunk's stored ``meta_blob``, with
-oversample-and-retry inside :meth:`Searcher._filtered_raw_hits` so the
-caller still gets ``limit`` survivors when the filter is strict.
+index-time ``frontmatter_filter``); it is compiled once and applied to each md
+chunk's stored ``meta_blob`` while a pass pages, so the caller still gets its
+survivors when the filter is strict.
 """
 
 from __future__ import annotations
@@ -16,8 +24,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -189,6 +197,11 @@ class Hit:
     body_md: str = ""
     # (collection, source root) pairs the file is indexed under.
     memberships: tuple[tuple[str, str], ...] = ()
+    # A light hit carries its block bytes undecoded, with empty ``snippet`` and
+    # ``body_text``, until :func:`materialise`. ``body_md`` is always decoded:
+    # the preview mode and progress plan read it for every listed hit.
+    materialised: bool = field(default=True, compare=False)
+    stored_struct: bytes = field(default=b"", compare=False, repr=False)
 
 
 @dataclass(slots=True, frozen=True)
@@ -377,6 +390,7 @@ def _make_snippet(
     *,
     ctx: int = _SNIPPET_CTX,
     intent: str | None = None,
+    spec: MatchSpec | None = None,
 ) -> str:
     """Return a short snippet centred on a match the preview would highlight.
 
@@ -392,10 +406,14 @@ def _make_snippet(
 
     A chunk over ``_SNIPPET_SCAN_CHARS`` is anchored within :func:`_scan_region`
     rather than scanned whole; see that function for what it can and cannot find.
+
+    ``spec`` overrides the query-built spec, so a caller holding the preview's
+    painting spec anchors the row exactly where the preview highlights.
     """
     if not body_text:
         return ""
-    spec = _snippet_spec(query)
+    if spec is None:
+        spec = _snippet_spec(query)
     body_text = _scan_region(body_text, spec)
     anchors = _snippet_anchors(body_text, spec)
     if not anchors:
@@ -428,6 +446,49 @@ def _make_snippet(
     return snippet
 
 
+def decoded_body(hit: Hit) -> tuple[str, str]:
+    """``(body_text, body_md)``, decoding a light hit's block bytes on the fly."""
+    if hit.materialised:
+        return hit.body_text, hit.body_md
+    from fnd.struct import decode as decode_body_struct
+
+    blocks = decode_body_struct(hit.stored_struct) if hit.stored_struct else []
+    return "\n".join(b.text for b in blocks), hit.body_md
+
+
+def materialise(hit: Hit, spec: MatchSpec, *, intent: str | None = None) -> Hit:
+    """``hit`` with its body decoded and a snippet anchored where ``spec`` paints."""
+    if hit.materialised:
+        return hit
+    body_text, _ = decoded_body(hit)
+    return dataclasses.replace(
+        hit,
+        body_text=body_text,
+        snippet=_make_snippet(body_text, "", intent=intent, spec=spec),
+        materialised=True,
+        stored_struct=b"",
+    )
+
+
+def materialise_hits(
+    hits: Sequence[Hit], spec: MatchSpec, *, intent: str | None = None
+) -> list[Hit]:
+    return [materialise(h, spec, intent=intent) for h in hits]
+
+
+def materialise_groups(
+    groups: Sequence[FileGroup], spec: MatchSpec, *, intent: str | None = None
+) -> list[FileGroup]:
+    return [
+        dataclasses.replace(g, hits=materialise_hits(g.hits, spec, intent=intent)) for g in groups
+    ]
+
+
+def snippet_spec(query: str) -> MatchSpec:
+    """The spec a caller without a painting spec of its own anchors snippets on."""
+    return _snippet_spec(query)
+
+
 def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
     """Apply ``predicate`` to a hit's frontmatter. Non-md hits bypass the
     filter entirely (md-only semantics matching :func:`fnd.walk.walk_sources`).
@@ -438,6 +499,110 @@ def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
 
     fm = decode(hit.meta_blob)
     return bool(predicate(fm))  # type: ignore[operator]
+
+
+def _meta_keep(metadata_filter: str | None) -> Callable[[Hit], bool] | None:
+    if metadata_filter is None:
+        return None
+    from fnd.filter_dsl import compile_filter
+
+    predicate = compile_filter(metadata_filter)
+    return lambda h: _passes_meta_filter(h, predicate)
+
+
+def _light_hit(doc: object, score: float) -> Hit:
+    """A candidate's stored fields, its block bytes kept undecoded."""
+    struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
+    md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
+    meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
+    return Hit(
+        score=float(score),
+        parent_id=_first_str(doc, F_PARENT_ID),
+        path=_first_str(doc, F_PATH),
+        kind=_first_str(doc, F_KIND),
+        page=_first_int(doc, F_PAGE),
+        slide=_first_int(doc, F_SLIDE),
+        heading_path=_first_str(doc, F_HEADING_PATH),
+        title=_first_str(doc, F_TITLE),
+        snippet="",
+        page_label=_first_str(doc, F_PAGE_LABEL),
+        chunk_seq=_first_int(doc, F_CHUNK_SEQ),
+        line=_first_int(doc, F_LINE),
+        mtime=_first_int(doc, F_MTIME),
+        meta_blob=meta_blob_bytes or b"",
+        body_md=md_bytes.decode("utf-8") if md_bytes else "",
+        memberships=_memberships_of(doc),
+        materialised=False,
+        stored_struct=struct_bytes or b"",
+    )
+
+
+def candidate_window(limit: int) -> int:
+    """Chunks a pass reads before deciding whether it holds enough files."""
+    return max(limit, 1) * 10
+
+
+#: A pass pages through at most this many windows' worth of matches. Bounds a
+#: strict metadata filter and a query whose few matching files hold every chunk.
+_PAGE_CEILING: Final = 50
+
+
+@dataclass(slots=True, frozen=True)
+class CandidatePool:
+    """One pass's light hits in rank order.
+
+    ``exhausted``: every match was read. ``all_files``: every matching file has
+    a hit here, so a file count taken from the pool is not a floor.
+    """
+
+    hits: list[Hit]
+    exhausted: bool
+    all_files: bool
+
+
+def _collect(
+    searcher: object,
+    query: Query,
+    *,
+    window: int,
+    min_files: int,
+    keep: Callable[[Hit], bool] | None,
+) -> CandidatePool:
+    """Read ``query``'s matches in rank order, a window at a time.
+
+    The first window is enough unless it holds ``min_files`` or fewer distinct
+    files (or fewer than ``window`` survivors of ``keep``); then it pages on
+    until both are met, every match is read, every matching file is seen, or
+    ``_PAGE_CEILING`` windows have been read.
+    """
+    hits: list[Hit] = []
+    files: set[str] = set()
+    read = 0
+    total: int | None = None
+    matching_files: float | None = None
+    ceiling = max(window, 1) * _PAGE_CEILING
+    size = max(window, 1)
+    while True:
+        result = searcher.search(query, limit=size, offset=read, count=total is None)  # type: ignore[attr-defined]
+        if total is None:
+            total = int(result.count)
+        for score, address in result.hits:
+            hit = _light_hit(searcher.doc(address), score)  # type: ignore[attr-defined]
+            if keep is None or keep(hit):
+                hits.append(hit)
+                files.add(hit.parent_id)
+        read += len(result.hits)
+        if read >= total or not result.hits:
+            return CandidatePool(hits, exhausted=True, all_files=True)
+        if len(hits) >= window and len(files) > min_files:
+            return CandidatePool(hits, exhausted=False, all_files=False)
+        # Only an unfiltered pass can count its matching files: `keep` runs here.
+        if keep is None and matching_files is None:
+            matching_files = float(searcher.cardinality(query, F_PARENT_ID))  # type: ignore[attr-defined]
+        seen_all = matching_files is not None and len(files) >= matching_files
+        if seen_all or read >= ceiling:
+            return CandidatePool(hits, exhausted=False, all_files=seen_all)
+        size = min(read * 3, ceiling - read)
 
 
 def _dedup_by_file(hits: list[Hit], limit: int) -> list[Hit]:
@@ -522,17 +687,16 @@ class Searcher:
             return tantivy.Query.empty_query()
         return compile_query(node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs)
 
-    def _raw_hits(
+    def _build_query(
         self,
         query: str,
         *,
-        limit: int,
         collection: str | list[str] | None,
         source_scope: SourceScope | None = None,
         fuzzy_distance: int = 0,
-        intent: str | None = None,
         tag_filter: TagFilter | None = None,
-    ) -> list[Hit]:
+    ) -> Query | None:
+        """One pass's Tantivy query; None for an explicitly empty scope."""
         import tantivy
 
         from fnd.query_dsl import preprocess
@@ -570,7 +734,7 @@ class Searcher:
         arms = scope_arms(schema, collection, source_scope)
         if arms is not None:
             if not arms:
-                return []
+                return None
             filters.append(scope_or(arms))
         # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
         # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
@@ -621,50 +785,39 @@ class Searcher:
                 },
             )
             clauses.append((tantivy.Occur.Should, boost_secondary))
-        parsed = tantivy.Query.boolean_query(clauses)
-        # Pin one generation for the whole search→doc sequence. A
-        # concurrent reload() may swap self._searcher mid-op; the
-        # DocAddresses below are generation-specific, so reading them
-        # against a newer searcher yields garbage (or a Rust panic).
-        searcher = self._searcher
-        result = searcher.search(parsed, limit=limit)
+        return tantivy.Query.boolean_query(clauses)
 
-        from fnd.struct import decode as decode_body_struct
-
-        out: list[Hit] = []
-        for score, address in result.hits:
-            doc = searcher.doc(address)
-            body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
-            body_text = ""
-            if body_struct_bytes is not None:
-                blocks = decode_body_struct(body_struct_bytes)
-                body_text = "\n".join(b.text for b in blocks)
-            meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
-            if meta_blob_bytes is None:
-                meta_blob_bytes = b""
-            body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
-            out.append(
-                Hit(
-                    score=float(score),
-                    parent_id=_first_str(doc, F_PARENT_ID),
-                    path=_first_str(doc, F_PATH),
-                    kind=_first_str(doc, F_KIND),
-                    page=_first_int(doc, F_PAGE),
-                    slide=_first_int(doc, F_SLIDE),
-                    heading_path=_first_str(doc, F_HEADING_PATH),
-                    title=_first_str(doc, F_TITLE),
-                    snippet=_make_snippet(body_text, query, intent=intent),
-                    page_label=_first_str(doc, F_PAGE_LABEL),
-                    chunk_seq=_first_int(doc, F_CHUNK_SEQ),
-                    line=_first_int(doc, F_LINE),
-                    mtime=_first_int(doc, F_MTIME),
-                    meta_blob=meta_blob_bytes,
-                    body_text=body_text,
-                    body_md=body_md_bytes.decode("utf-8") if body_md_bytes else "",
-                    memberships=_memberships_of(doc),
-                )
-            )
-        return out
+    def _candidates(
+        self,
+        query: str,
+        *,
+        window: int,
+        collection: str | list[str] | None,
+        metadata_filter: str | None = None,
+        source_scope: SourceScope | None = None,
+        fuzzy_distance: int = 0,
+        tag_filter: TagFilter | None = None,
+        min_files: int = 0,
+    ) -> CandidatePool:
+        """One pass's light hits; :func:`_collect` decides when paging stops."""
+        parsed = self._build_query(
+            query,
+            collection=collection,
+            source_scope=source_scope,
+            fuzzy_distance=fuzzy_distance,
+            tag_filter=tag_filter,
+        )
+        if parsed is None:
+            return CandidatePool([], exhausted=True, all_files=True)
+        # One generation for the whole search and doc sequence: a concurrent
+        # reload() swaps self._searcher, and DocAddresses are generation-specific.
+        return _collect(
+            self._searcher,
+            parsed,
+            window=window,
+            min_files=min_files,
+            keep=_meta_keep(metadata_filter),
+        )
 
     def _filtered_raw_hits(
         self,
@@ -675,44 +828,20 @@ class Searcher:
         metadata_filter: str | None,
         source_scope: SourceScope | None = None,
         fuzzy_distance: int = 0,
-        intent: str | None = None,
         tag_filter: TagFilter | None = None,
+        min_files: int = 0,
     ) -> list[Hit]:
-        """Return at least ``target`` hits, applying the optional metadata
-        filter post-Tantivy with oversample-and-retry."""
-        if metadata_filter is None:
-            return self._raw_hits(
-                query,
-                limit=target,
-                collection=collection,
-                source_scope=source_scope,
-                fuzzy_distance=fuzzy_distance,
-                intent=intent,
-                tag_filter=tag_filter,
-            )
-        from fnd.filter_dsl import compile_filter
-
-        predicate = compile_filter(metadata_filter)
-        oversample = 1
-        max_oversample = 50
-        while True:
-            raw = self._raw_hits(
-                query,
-                limit=target * oversample,
-                collection=collection,
-                source_scope=source_scope,
-                fuzzy_distance=fuzzy_distance,
-                intent=intent,
-                tag_filter=tag_filter,
-            )
-            survivors = [h for h in raw if _passes_meta_filter(h, predicate)]
-            if len(survivors) >= target:
-                return survivors
-            if oversample >= max_oversample:
-                return survivors
-            if len(raw) < target * oversample:
-                return survivors
-            oversample *= 2
+        """At least ``target`` light survivors of the optional metadata filter."""
+        return self._candidates(
+            query,
+            window=target,
+            collection=collection,
+            metadata_filter=metadata_filter,
+            source_scope=source_scope,
+            fuzzy_distance=fuzzy_distance,
+            tag_filter=tag_filter,
+            min_files=min_files,
+        ).hits
 
     def search(
         self,
@@ -728,7 +857,7 @@ class Searcher:
         intent: str | None = None,
         tag_filter: TagFilter | None = None,
     ) -> list[Hit]:
-        """Return one Hit per file (the file's best-scored chunk).
+        """Return one materialised Hit per file (the file's best-scored chunk).
 
         The default ranking is unified on fusion (RRF), the same weighted
         ordering the TUI uses: a doc matching every query term outranks one
@@ -749,30 +878,31 @@ class Searcher:
             fused = fusion_search(
                 self,
                 query=query,
-                limit=limit * 5,  # oversample: per-file dedup below thins this
+                limit=limit,
                 collection=collection,
                 metadata_filter=metadata_filter,
                 source_scope=source_scope,
-                intent=intent,
                 tag_filter=tag_filter,
             )
-            return _dedup_by_file(fused, limit)
-        raw = self._filtered_raw_hits(
-            query,
-            target=limit * 5,
-            collection=collection,
-            metadata_filter=metadata_filter,
-            source_scope=source_scope,
-            fuzzy_distance=fuzzy_distance,
-            intent=intent,
-            tag_filter=tag_filter,
-        )
-        if profile is not None:
-            from fnd.rerank import RankingProfile, rerank_hits
+            hits = _dedup_by_file(fused, limit)
+        else:
+            raw = self._filtered_raw_hits(
+                query,
+                target=candidate_window(limit),
+                collection=collection,
+                metadata_filter=metadata_filter,
+                source_scope=source_scope,
+                fuzzy_distance=fuzzy_distance,
+                tag_filter=tag_filter,
+                min_files=limit,
+            )
+            if profile is not None:
+                from fnd.rerank import RankingProfile, rerank_hits
 
-            assert isinstance(profile, RankingProfile)
-            raw = rerank_hits(raw, profile=profile, query=query, now=now)
-        return _dedup_by_file(raw, limit)
+                assert isinstance(profile, RankingProfile)
+                raw = rerank_hits(raw, profile=profile, query=query, now=now)
+            hits = _dedup_by_file(raw, limit)
+        return materialise_hits(hits, _snippet_spec(query), intent=intent)
 
     def _decode_chunk(self, searcher: object, address: object) -> FileChunk:
         """Decode a single chunk's stored fields at ``address`` into a
@@ -862,26 +992,27 @@ class Searcher:
         intent: str | None = None,
     ) -> list[FileGroup]:
         """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
-        section hits. ``source_scope`` narrows scope to chunks indexed
-        from a subset of the active collection's sources.
+        section hits, materialised. ``source_scope`` narrows scope to chunks
+        indexed from a subset of the active collection's sources.
         """
         if not query.strip():
             return []
         raw = self._filtered_raw_hits(
             query,
-            target=limit * 10,
+            target=candidate_window(limit),
             collection=collection,
             metadata_filter=metadata_filter,
             source_scope=source_scope,
             fuzzy_distance=fuzzy_distance,
-            intent=intent,
+            min_files=limit,
         )
         if profile is not None:
             from fnd.rerank import RankingProfile, rerank_hits
 
             assert isinstance(profile, RankingProfile)
             raw = rerank_hits(raw, profile=profile, query=query, now=now)
-        return group_by_file(raw, limit=limit, sections_per_file=sections_per_file)
+        groups = group_by_file(raw, limit=limit, sections_per_file=sections_per_file)
+        return materialise_groups(groups, _snippet_spec(query), intent=intent)
 
 
 def group_by_file(

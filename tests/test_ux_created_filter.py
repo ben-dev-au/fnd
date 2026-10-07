@@ -118,13 +118,13 @@ async def test_created_composes_into_the_query(
         seen: list[str] = []
         searcher = app._search.searcher
         assert searcher is not None
-        original = searcher._filtered_raw_hits
+        original = searcher._candidates
 
-        def spy(query: str, **kwargs: object) -> list[object]:
+        def spy(query: str, **kwargs: object) -> object:
             seen.append(query)
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
-        searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
+        searcher._candidates = spy  # type: ignore[method-assign]
         app._scope.filter_created = "week"
         await run_search(pilot, app, "glimmer")
         assert any("created:" in q for q in seen), seen

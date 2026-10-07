@@ -21,7 +21,7 @@ Strong-signal bypass adapted from tobi/qmd (MIT) — see README.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 from fnd.cascade import cascade_search
 from fnd.explain import CascadeTrace, SearchTrace, StrongSignalTrace
@@ -32,7 +32,15 @@ from fnd.fusion import (
     fusion_search,
     normalise_bm25,
 )
-from fnd.query import FileGroup, Hit, Searcher, SourceScope, group_by_file
+from fnd.query import (
+    CandidatePool,
+    FileGroup,
+    Hit,
+    Searcher,
+    SourceScope,
+    candidate_window,
+    group_by_file,
+)
 from fnd.render import keep_shown
 
 if TYPE_CHECKING:
@@ -109,42 +117,46 @@ def search_layered(
     if not query.strip():
         return ([], _empty_trace(query, intent)) if with_trace else []
 
-    chunk_pool = limit * 10
-
     # Step 1: literal probe. Doubles as the bypass-decision input AND
     # (when bypass fires) the result set. When bypass does NOT fire,
     # fusion reuses this as its precomputed lex ranking — no wasted
     # Tantivy round-trip.
-    probe = searcher._filtered_raw_hits(
+    window = candidate_window(limit)
+    probe = searcher._candidates(
         query,
-        target=chunk_pool,
+        window=window,
         collection=collection,
         metadata_filter=metadata_filter,
         source_scope=source_scope,
-        intent=intent,
         tag_filter=tag_filter,
+        min_files=limit,
     )
 
     # Step 2: strong-signal check. Disabled when intent is supplied —
     # the obvious BM25 match may not be what the caller wants.
-    ss_trace = _evaluate_strong_signal(probe, intent_present=bool(intent))
+    ss_trace = _evaluate_strong_signal(probe.hits, intent_present=bool(intent))
     fusion_trace = None
     cascade_trace: CascadeTrace | None = None
+    exhausted = [probe.exhausted]
+    all_files = [probe.all_files]
 
     if ss_trace.fired:
         # The shortcut skips fusion, so the query's other spelling (see
         # ``compound_table``) is appended here, after the outright match.
-        hits = probe + _compound_hits(
+        compound = _compound_hits(
             searcher,
             query,
-            probe,
-            target=chunk_pool,
+            probe.hits,
+            window=window,
             collection=collection,
             metadata_filter=metadata_filter,
             source_scope=source_scope,
-            intent=intent,
             tag_filter=tag_filter,
+            min_files=limit,
         )
+        hits = probe.hits + compound.hits
+        exhausted.append(compound.exhausted)
+        all_files.append(compound.all_files)
         regime = "strong-signal"
     else:
         # Step 3: fusion (default).
@@ -152,27 +164,27 @@ def search_layered(
             hits, fusion_trace = fusion_search(
                 searcher,
                 query=query,
-                limit=chunk_pool,
+                limit=limit,
                 collection=collection,
                 synonyms=synonyms,
                 metadata_filter=metadata_filter,
                 source_scope=source_scope,
-                precomputed_lex_ranking=probe,
-                intent=intent,
+                precomputed_lex=probe,
                 tag_filter=tag_filter,
                 with_trace=True,
             )
+            exhausted.extend(sq.exhausted for sq in fusion_trace.subqueries)
+            all_files.extend(sq.all_files for sq in fusion_trace.subqueries)
         else:
             hits = fusion_search(
                 searcher,
                 query=query,
-                limit=chunk_pool,
+                limit=limit,
                 collection=collection,
                 synonyms=synonyms,
                 metadata_filter=metadata_filter,
                 source_scope=source_scope,
-                precomputed_lex_ranking=probe,
-                intent=intent,
+                precomputed_lex=probe,
                 tag_filter=tag_filter,
             )
 
@@ -183,14 +195,13 @@ def search_layered(
                 cascade_hits, cascade_trace = cascade_search(
                     searcher,
                     query=query,
-                    threshold=chunk_pool,
-                    limit=chunk_pool,
+                    threshold=window,
+                    limit=limit,
                     collection=collection,
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
                     source_scope=source_scope,
                     tag_filter=tag_filter,
-                    intent=intent,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
                     min_term_chars=min_term_chars,
                     with_trace=True,
@@ -199,23 +210,26 @@ def search_layered(
                 cascade_hits = cascade_search(
                     searcher,
                     query=query,
-                    threshold=chunk_pool,
-                    limit=chunk_pool,
+                    threshold=window,
+                    limit=limit,
                     collection=collection,
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
                     source_scope=source_scope,
                     tag_filter=tag_filter,
-                    intent=intent,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
                     min_term_chars=min_term_chars,
                 )
             if len(cascade_hits) > len(hits):
                 hits = cascade_hits
                 regime = _cascade_regime_label(cascade_trace) if cascade_trace else "cascade"
+                if cascade_trace is not None:
+                    exhausted = [p.exhausted for p in cascade_trace.passes]
+                    all_files = [p.all_files for p in cascade_trace.passes]
 
     # Step 5: rerank + group. Identical for every regime so all three
-    # search paths produce identically-shaped FileGroups.
+    # search paths produce identically-shaped FileGroups. Hits stay light;
+    # the caller materialises the ones it shows.
     if profile is not None:
         from fnd.rerank import RankingProfile, rerank_hits
 
@@ -231,13 +245,30 @@ def search_layered(
 
     if with_trace:
         shown = {g.parent_id for g in groups}
+        if fusion_trace is not None:
+            # Every fused chunk has a contribution row; only the shown ones
+            # can be explained, and the rest would bloat the JSON.
+            shown_keys = {(h.parent_id, h.chunk_seq) for g in groups for h in g.hits}
+            fusion_trace = dataclasses.replace(
+                fusion_trace,
+                contributions=[
+                    c
+                    for c in fusion_trace.contributions
+                    if (c.parent_id, c.chunk_seq) in shown_keys
+                ],
+            )
         trace = SearchTrace(
             query=query,
             intent=intent,
             regime=regime,
-            files_truncated=len({h.parent_id for h in hits}) > len(groups),
+            # A pass pages until it holds more files than ``limit`` or has seen
+            # every matching one; one that stopped at its ceiling left files unseen.
+            files_truncated=(len({h.parent_id for h in hits}) > len(groups) or not all(all_files)),
+            # A pass that stopped paging left matching chunks unread, so a
+            # shown file's section count is a floor.
             sections_truncated=(
-                sum(len(g.hits) for g in groups) < sum(1 for h in hits if h.parent_id in shown)
+                not all(exhausted)
+                or sum(len(g.hits) for g in groups) < sum(1 for h in hits if h.parent_id in shown)
             ),
             strong_signal=ss_trace,
             fusion=fusion_trace,
@@ -248,16 +279,41 @@ def search_layered(
     return groups
 
 
-def _compound_hits(searcher: Searcher, query: str, found: list[Hit], **scope: Any) -> list[Hit]:
+def _compound_hits(
+    searcher: Searcher,
+    query: str,
+    found: list[Hit],
+    *,
+    window: int,
+    collection: str | list[str] | None,
+    metadata_filter: str | None,
+    source_scope: SourceScope | None,
+    tag_filter: TagFilter | None,
+    min_files: int,
+) -> CandidatePool:
     """Hits of the query's hyphenated or joined spelling that ``found`` lacks."""
     subs = [s for s in auto_subqueries(query, synonyms=None) if s.source == "compound"]
     if not subs:
-        return []
+        return CandidatePool([], exhausted=True, all_files=True)
+    pool = searcher._candidates(
+        subs[0].query,
+        window=window,
+        collection=collection,
+        metadata_filter=metadata_filter,
+        source_scope=source_scope,
+        tag_filter=tag_filter,
+        min_files=min_files,
+    )
     seen = {(h.parent_id, h.chunk_seq) for h in found}
-    raw = keep_shown(searcher._filtered_raw_hits(subs[0].query, **scope), query)
-    return [
-        dataclasses.replace(h, pass_index=1) for h in raw if (h.parent_id, h.chunk_seq) not in seen
-    ]
+    return CandidatePool(
+        [
+            dataclasses.replace(h, pass_index=1)
+            for h in keep_shown(pool.hits, query)
+            if (h.parent_id, h.chunk_seq) not in seen
+        ],
+        exhausted=pool.exhausted,
+        all_files=pool.all_files,
+    )
 
 
 def _evaluate_strong_signal(probe: list[Hit], *, intent_present: bool) -> StrongSignalTrace:

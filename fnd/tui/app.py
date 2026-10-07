@@ -2255,6 +2255,10 @@ class FNDApp(App[None]):
         if ev.node.tree.id in self._SIDEBAR_TREE_IDS:
             self._reflow_sidebar()
 
+    @on(Tree.NodeExpanded, "#results_pane")
+    def _materialise_expanded_file(self, ev: Tree.NodeExpanded[Any]) -> None:
+        self._results.on_file_expanded(ev.node)
+
     @on(Tree.NodeCollapsed)
     def _reflow_on_node_collapsed(self, ev: Tree.NodeCollapsed[Any]) -> None:
         if ev.node.tree.id in self._SIDEBAR_TREE_IDS:

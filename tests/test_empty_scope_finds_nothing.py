@@ -162,6 +162,6 @@ def test_the_recovery_pass_honours_an_empty_scope_too(two_collections: Path) -> 
     from fnd.query import Searcher
 
     searcher = Searcher(index_dir=two_collections)
-    hits = _fuzzy_pass(searcher, query="zebrafsh", limit=10, collection=[])
+    hits = _fuzzy_pass(searcher, query="zebrafsh", limit=10, collection=[]).hits
 
     assert hits == [], f"an empty scope let the recovery pass answer: {len(hits)} hits"

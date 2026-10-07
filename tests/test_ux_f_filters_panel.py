@@ -361,7 +361,7 @@ async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_in
 async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_index: Path) -> None:
     """Active filters get AND-combined with the lexical query before
     each fusion sub-query reaches the searcher. We spy at the lowest
-    layer (``_filtered_raw_hits``) since fusion issues multiple parallel
+    layer (``_candidates``) since fusion issues multiple parallel
     sub-queries — at least one of them must carry the kind/date filter
     clauses for the field-restriction to take effect."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
@@ -370,13 +370,13 @@ async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_inde
         captured_queries: list[str] = []
         searcher = app._search.searcher
         assert searcher is not None
-        original = searcher._filtered_raw_hits
+        original = searcher._candidates
 
-        def spy(query: str, **kwargs: object) -> list[object]:
+        def spy(query: str, **kwargs: object) -> object:
             captured_queries.append(query)
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
-        searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
+        searcher._candidates = spy  # type: ignore[method-assign]
         # Activate kind=md filter.
         app._scope.filter_kinds = ["md"]
         app._scope.filter_date = "week"
@@ -403,13 +403,13 @@ async def test_kind_multi_select_uses_or_group(
         captured_queries: list[str] = []
         searcher = app._search.searcher
         assert searcher is not None
-        original = searcher._filtered_raw_hits
+        original = searcher._candidates
 
-        def spy(query: str, **kwargs: object) -> list[object]:
+        def spy(query: str, **kwargs: object) -> object:
             captured_queries.append(query)
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
-        searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
+        searcher._candidates = spy  # type: ignore[method-assign]
         app._scope.filter_kinds = ["pdf", "md"]
         await run_search(pilot, app, "glimmer")
         joined = " || ".join(captured_queries)

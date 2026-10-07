@@ -1,6 +1,6 @@
 """The cascade's fuzzy pass must honour the Filters pane's field qualifiers.
 
-``_PrefixingSearcher`` re-attaches the filter prefix only on ``_raw_hits`` and
+``_PrefixingSearcher`` re-attaches the filter prefix only on ``_candidates`` and
 ``_filtered_raw_hits``; ``_fuzzy_pass`` reaches the inner searcher through
 ``__getattr__`` and re-derives filters from the query string it was handed,
 which carries no prefix.
