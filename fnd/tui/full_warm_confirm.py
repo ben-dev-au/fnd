@@ -14,9 +14,10 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import OptionList, Static
+from textual.widgets import OptionList
 
 from fnd.tui.preview import tuning
+from fnd.tui.ui_text import PlainOptionList, PlainStatic, set_border_title
 
 __all__ = ["FullWarmConfirmScreen", "estimate_capture_mb"]
 
@@ -75,9 +76,9 @@ class FullWarmConfirmScreen(ModalScreen[bool]):
             safety="Keep working while it runs. Press w again on this file to stop it.",
         )
         with Vertical(id="full_warm_box") as box:
-            box.border_title = "Warm this file completely?"
-            yield Static(body, id="full_warm_body")
-            yield OptionList(
+            set_border_title(box, "Warm this file completely?")
+            yield PlainStatic(body, id="full_warm_body")
+            yield PlainOptionList(
                 Option(Text("Warm it", style="bold green"), id="warm"),
                 Option("Cancel", id="cancel"),
                 id="full_warm_list",

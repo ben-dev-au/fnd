@@ -24,7 +24,6 @@ import asyncio
 import contextlib
 import datetime as dt
 import os
-import sys
 import tempfile
 import time
 import tomllib
@@ -55,6 +54,7 @@ from fnd.index import (
     _path_parent_id,
     collections_still_holding,
     commit_async,
+    echo_skip,
     prune_removed_files,
     read_file_metadata,
     unreadable_roots,
@@ -1127,8 +1127,7 @@ async def run_indexer(
                 # rendered UI — and the same skip already reaches the user
                 # through the file_error event and the failure log below.
                 if echo_skips:
-                    ts = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
-                    print(f"[fnd skip {ts}] {err}", file=sys.stderr)
+                    echo_skip(str(err))
                 # Persist the failure so the still-flat drill-in screen
                 # can show per-file reasons + retry buttons.
                 with contextlib.suppress(Exception):

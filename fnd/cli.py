@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -21,9 +22,11 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from fnd.cli_output import echo, echo_data
 from fnd.config import default_config_path, default_index_dir, is_all_collections
+from fnd.display_text import terminal_line
 from fnd.kinds import KINDS_IN_CATEGORY
-from fnd.launch_command import LaunchScope
+from fnd.launch_command import ROOT_FLAGS, SUBCOMMANDS, LaunchScope
 
 if TYPE_CHECKING:
     from fnd.cli_scope import FilterIssues
@@ -54,13 +57,6 @@ app.add_typer(extras_app, name="extras")
 app.add_typer(cache_app, name="cache")
 
 
-# Keep in sync with the @app.command() / app.add_typer() registrations below.
-_KNOWN_SUBCOMMANDS = frozenset(
-    {"version", "index", "tui", "search", "config", "collection", "extras", "cache"}
-)
-_ROOT_FLAGS = frozenset({"--help", "-h", "--install-completion", "--show-completion"})
-
-
 def _rewrite_default_command(argv: list[str]) -> list[str]:
     """Route bare `fnd` and `fnd <free-text>` to the `tui` subcommand.
 
@@ -71,7 +67,7 @@ def _rewrite_default_command(argv: list[str]) -> list[str]:
     if not argv:
         return ["tui"]
     head = argv[0]
-    if head in _ROOT_FLAGS or head in _KNOWN_SUBCOMMANDS:
+    if head in ROOT_FLAGS or head in SUBCOMMANDS:
         return argv
     return ["tui", *argv]
 
@@ -105,11 +101,11 @@ def main() -> None:
         # not start".
         from fnd.config import default_config_path
 
-        typer.echo(f"fnd: {default_config_path()} could not be loaded.", err=True)
+        echo(f"fnd: {default_config_path()} could not be loaded.", err=True)
         for problem in e.errors():
             where = ".".join(str(part) for part in problem["loc"])
-            typer.echo(f"  {where}: {problem['msg']}", err=True)
-        typer.echo("Edit it with `fnd config edit`, or check `fnd config validate`.", err=True)
+            echo(f"  {where}: {problem['msg']}", err=True)
+        echo("Edit it with `fnd config edit`, or check `fnd config validate`.", err=True)
         raise SystemExit(1) from e
 
 
@@ -124,12 +120,12 @@ def _migrate_config() -> None:
     try:
         applied = ensure_current()
     except ConfigTooNewError as e:
-        typer.echo(f"fnd: {e}", err=True)
+        echo(f"fnd: {e}", err=True)
         raise SystemExit(1) from e
     except Exception:
         return
     for step in applied:
-        typer.echo(f"fnd: config updated, {step[:1].lower()}{step[1:]}", err=True)
+        echo(f"fnd: config updated, {step[:1].lower()}{step[1:]}", err=True)
 
 
 # ── Top-level commands ────────────────────────────────────────────────────
@@ -140,7 +136,7 @@ def version() -> None:
     """Print fnd version."""
     from fnd import __version__
 
-    typer.echo(__version__)
+    echo(__version__)
 
 
 @app.command()
@@ -171,15 +167,16 @@ def index(
         tag_sources=tuple(defaults.tag_sources),
         tag_frontmatter_keys=tuple(defaults.tag_frontmatter_keys),
     )
-    typer.echo(f"indexed {written} chunks under {root} → collection {collection}")
+    echo(f"indexed {written} chunks under {root} → collection {collection}")
     if collection not in config.collections:
         # The chunks are searchable by name, but `collection list` reports no
         # such collection and nothing in the TUI can reach it, so there is no
         # way to reindex or remove it later.
-        typer.echo(
+        echo(
             f"fnd: {collection!r} is not in your config, so it will not appear in "
             f"`fnd collection list` or the sidebar. Add it with "
-            f"`fnd collection add {collection} --source {root}` to manage it.",
+            f"`{shlex.join(['fnd', 'collection', 'add', collection, '--source', str(root)])}` "
+            "to manage it.",
             err=True,
         )
 
@@ -432,7 +429,7 @@ def search(
     if limit < 1:
         # Tantivy takes it unchecked: 0 panics out of Rust with a build
         # path in the message, and a negative one overflows into usize.
-        typer.echo(f"--limit must be 1 or more, not {limit}", err=True)
+        echo(f"--limit must be 1 or more, not {limit}", err=True)
         raise typer.Exit(code=2)
 
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
@@ -482,7 +479,7 @@ def search(
         for hit in flat[:limit]:
             _print_hit(hit)
         if not (1 <= explain <= len(flat)):
-            typer.echo(
+            echo(
                 f"--explain {explain}: out of range (have {len(flat)} hits)",
                 err=True,
             )
@@ -495,15 +492,15 @@ def search(
             "chunk_seq": target.chunk_seq,
             "score": round(target.score, 4),
         }
-        typer.echo(json.dumps(payload, indent=2))
+        echo_data(json.dumps(payload, indent=2))
     except FilterError as e:
-        typer.echo(f"invalid filter: {e.message} (col {e.column})", err=True)
+        echo(f"invalid filter: {e.message} (col {e.column})", err=True)
         raise typer.Exit(code=1) from e
     except QuerySyntaxError as e:
-        typer.echo(e.message if not e.hint else f"{e.message}: {e.hint}", err=True)
+        echo(e.message if not e.hint else f"{e.message}: {e.hint}", err=True)
         raise typer.Exit(code=1) from e
     except QueryTooLargeError as e:
-        typer.echo(str(e), err=True)
+        echo(str(e), err=True)
         raise typer.Exit(code=1) from e
 
 
@@ -530,7 +527,7 @@ def _check_query_filters(query: str, cfg: Config, issues: FilterIssues) -> None:
 
 
 def _print_hit(hit: object) -> None:
-    """Render one hit row in the existing CLI format."""
+    """One hit as two lines: score, path and locator, then the snippet."""
     loc = ""
     page = getattr(hit, "page", 0)
     slide = getattr(hit, "slide", 0)
@@ -540,11 +537,11 @@ def _print_hit(hit: object) -> None:
     elif slide:
         loc = f":s.{slide}"
     elif heading_path:
-        loc = f" §{heading_path}"
+        loc = f" §{terminal_line(heading_path)}"
     score = getattr(hit, "score", 0.0)
     path = getattr(hit, "path", "")
     snippet = getattr(hit, "snippet", "")
-    typer.echo(f"{score:6.3f}  {path}{loc}\n        {snippet}")
+    echo(f"{score:6.3f}  {terminal_line(path)}{loc}\n        {terminal_line(snippet)}")
 
 
 # ── config sub-commands ───────────────────────────────────────────────────
@@ -556,13 +553,13 @@ def config_show() -> None:
     from fnd.config import load
 
     cfg = load()
-    typer.echo(cfg.model_dump_json(indent=2))
+    echo_data(cfg.model_dump_json(indent=2))
 
 
 @config_app.command("path")
 def config_path() -> None:
     """Print the path to the config TOML (whether or not it exists yet)."""
-    typer.echo(str(default_config_path()))
+    echo(str(default_config_path()))
 
 
 @config_app.command("edit")
@@ -580,7 +577,7 @@ def config_edit() -> None:
             path = app_data_dir() / "config.toml"
             path.parent.mkdir(parents=True, exist_ok=True)
         secure_write_text(path, starter_config())
-        typer.echo(f"wrote starter template to {path}")
+        echo(f"wrote starter template to {path}")
 
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
     rc = subprocess.call([editor, str(path)])
@@ -596,7 +593,7 @@ def config_validate() -> None:
 
     path = default_config_path()
     if not path.exists():
-        typer.echo(f"no config at {path}", err=True)
+        echo(f"no config at {path}", err=True)
         raise typer.Exit(code=1)
     try:
         cfg = load(path)
@@ -606,12 +603,12 @@ def config_validate() -> None:
         # user sees both the location (frontmatter_filter) and column.
         for err in e.errors():
             loc = ".".join(str(x) for x in err["loc"])
-            typer.echo(f"{loc}: {err['msg']}", err=True)
+            echo(f"{loc}: {err['msg']}", err=True)
         raise typer.Exit(code=1) from e
     except Exception as e:
-        typer.echo(f"invalid config: {e}", err=True)
+        echo(f"invalid config: {e}", err=True)
         raise typer.Exit(code=1) from e
-    typer.echo(
+    echo(
         f"✓ {path} valid; {len(cfg.collections)} collection(s): "
         f"{', '.join(sorted(cfg.collections)) or '(none)'}"
     )
@@ -624,9 +621,7 @@ def config_validate() -> None:
         vocab = collection_vocabulary(cfg)
         if vocab.match(want) is None:
             err = vocab.unknown(want, flag="defaults.collection")
-            typer.echo(
-                f"warning: defaults.collection = {want!r} ({err.hint or 'no such collection'})"
-            )
+            echo(f"warning: defaults.collection = {want!r} ({err.hint or 'no such collection'})")
 
 
 # ── collection sub-commands ───────────────────────────────────────────────
@@ -645,11 +640,11 @@ def collection_list() -> None:
         set(cfg.collections) if is_all_collections(want, known=set(cfg.collections)) else {want}
     )
     if not cfg.collections:
-        typer.echo("(no collections configured; run `fnd config edit`)")
+        echo("(no collections configured; run `fnd config edit`)")
         return
     for name, c in sorted(cfg.collections.items()):
         marker = " *" if name in default_names else "  "
-        typer.echo(f"{marker} {name}: {len(c.sources)} source(s)")
+        echo(f"{marker} {name}: {len(c.sources)} source(s)")
 
 
 @collection_app.command("add")
@@ -694,18 +689,18 @@ def collection_add(
     try:
         validate_collection_name(name)
     except InvalidCollectionNameError as e:
-        typer.echo(str(e), err=True)
+        echo(str(e), err=True)
         raise typer.Exit(code=1) from e
 
     if filter is not None:
         try:
             compile_filter(filter)
         except FilterError as e:
-            typer.echo(f"invalid filter: {e.message} (col {e.column})", err=True)
+            echo(f"invalid filter: {e.message} (col {e.column})", err=True)
             raise typer.Exit(code=1) from e
 
     if len(source) != 1:
-        typer.echo("--source must be specified exactly once per command", err=True)
+        echo("--source must be specified exactly once per command", err=True)
         raise typer.Exit(code=1)
 
     cfg_path = default_config_path()
@@ -732,10 +727,10 @@ def collection_add(
         existing = list(prior.sources) if prior else []
     overlap, overlap_contains = overlapping_source(existing, new_source)
     write_collection_source(config_path=cfg_path, collection_name=name, source=new_source)
-    typer.echo(f"added source {source[0]} to collection {name} in {cfg_path}")
+    echo(f"added source {source[0]} to collection {name} in {cfg_path}")
     if overlap:
         relation = "already covers" if overlap_contains else "is already inside"
-        typer.echo(
+        echo(
             f"fnd: this folder {relation} {overlap} in {name}; files "
             f"reached by both are indexed once.",
             err=True,
@@ -744,12 +739,12 @@ def collection_add(
     if not root.exists():
         # Indexing it yields nothing and says nothing, so a typo looks like a
         # working collection until the first search comes back empty.
-        typer.echo(
+        echo(
             f"fnd: {source[0]} does not exist; indexing it will find no files.",
             err=True,
         )
     elif root.is_symlink() and not follow_symlinks:
-        typer.echo(
+        echo(
             f"fnd: {source[0]} is a symlink and follow-symlinks is off, so this "
             f"source will index nothing. Re-add it with --follow-symlinks, or "
             f"point it at the real folder.",
@@ -790,7 +785,7 @@ def collection_reindex(
 
     cfg = load()
     if name is not None and collection is not None and name != collection:
-        typer.echo(f"-c: given twice, {collection!r} and {name!r}. Use one.", err=True)
+        echo(f"-c: given twice, {collection!r} and {name!r}. Use one.", err=True)
         raise typer.Exit(code=2)
     raw = collection if collection is not None else name
     # A typo here used to surface as a raw KeyError traceback.
@@ -819,12 +814,12 @@ def collection_reindex(
     unknown = [t for t in targets if t not in cfg.collections]
     if not targets or unknown:
         if not cfg.collections:
-            typer.echo("no collections configured; add one with `fnd collection add`", err=True)
+            echo("no collections configured; add one with `fnd collection add`", err=True)
         else:
-            typer.echo(f"-c: no collection named {unknown[0]!r}", err=True)
+            echo(f"-c: no collection named {unknown[0]!r}", err=True)
         raise typer.Exit(1)
     if len(targets) > 1:
-        typer.echo(f"indexing {len(targets)} collections: {', '.join(targets)}")
+        echo(f"indexing {len(targets)} collections: {', '.join(targets)}")
     total = 0
     for target in targets:
         # A run that could not read a source KEPT its files rather than
@@ -844,16 +839,14 @@ def collection_reindex(
                 progress_callback=_watch,
             )
         except IndexRunError as e:
-            typer.echo(f"error: {target} was not indexed. {e}", err=True)
+            echo(f"error: {target} was not indexed. {e}", err=True)
             raise typer.Exit(code=1) from e
-        typer.echo(f"indexed {written} chunks for collection {target}")
+        echo(f"indexed {written} chunks for collection {target}")
         for root in blocked:
-            typer.echo(
-                f"warning: could not read {root}; kept existing chunks for {target}", err=True
-            )
+            echo(f"warning: could not read {root}; kept existing chunks for {target}", err=True)
         total += written
     if len(targets) > 1:
-        typer.echo(f"indexed {total} chunks across {len(targets)} collections")
+        echo(f"indexed {total} chunks across {len(targets)} collections")
 
 
 # ---- extras ---------------------------------------------------------------
@@ -871,11 +864,11 @@ def extras_list() -> None:
     from fnd.extras import EXTRAS, is_extra_installed
 
     if not EXTRAS:
-        typer.echo("no extras defined")
+        echo("no extras defined")
         return
     for extra in EXTRAS.values():
         status = "installed" if is_extra_installed(extra) else "not installed"
-        typer.echo(f"{extra.name}  [{status}]  {extra.description}")
+        echo(f"{extra.name}  [{status}]  {extra.description}")
 
 
 @extras_app.command("status")
@@ -886,27 +879,27 @@ def extras_status() -> None:
     for extra in EXTRAS.values():
         installed = is_extra_installed(extra)
         if not installed:
-            typer.echo(f"{extra.name}: not installed")
+            echo(f"{extra.name}: not installed")
             continue
         disk = actual_disk_mb(extra)
-        typer.echo(f"{extra.name}: installed ({_format_disk(disk)})")
+        echo(f"{extra.name}: installed ({_format_disk(disk)})")
         for pkg in installed_packages(extra):
-            typer.echo(f"  - {pkg.display}")
+            echo(f"  - {pkg.display}")
 
 
 def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     total_mb = sum(p.disk_mb for p in extra.packages)
-    typer.echo(f"\nInstall '{extra.name}': {extra.description}\n")
-    typer.echo("Will install:")
+    echo(f"\nInstall '{extra.name}': {extra.description}\n")
+    echo("Will install:")
     for p in extra.packages:
-        typer.echo(f"  - {p.display}  (~{p.disk_mb} MB)")
-    typer.echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
-    typer.echo("ML model weights (a portion of the size above) download on first use.")
-    typer.echo("")
+        echo(f"  - {p.display}  (~{p.disk_mb} MB)")
+    echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
+    echo("ML model weights (a portion of the size above) download on first use.")
+    echo("")
     # For the pdf-structure extra, also disclose the indexing-time cost
     # the user will incur on the first big reindex after install.
     if extra.name == "pdf-structure":
-        typer.echo(
+        echo(
             "Indexing-time impact:\n"
             "  After installing, your next `fnd collection reindex` will spend\n"
             "  ~30s per PDF extracting structure (one-time per file; cached\n"
@@ -914,21 +907,21 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
             "  Subsequent reindexes only re-process changed files.\n"
             "  Indexing can run in the background and auto-resumes if interrupted.\n"
         )
-    typer.echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
+    echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
 
 
 def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     from fnd.extras import actual_disk_mb, installed_packages
 
-    typer.echo(f"\nUninstall '{extra.name}': {extra.description}\n")
-    typer.echo("Will remove:")
+    echo(f"\nUninstall '{extra.name}': {extra.description}\n")
+    echo("Will remove:")
     for p in installed_packages(extra):
-        typer.echo(f"  - {p.display}")
+        echo(f"  - {p.display}")
     for c in extra.cache_dirs:
         if c.exists():
-            typer.echo(f"  - cache: {c}")
-    typer.echo(f"\nApproximate disk recovered: {_format_disk(actual_disk_mb(extra))}")
-    typer.echo(
+            echo(f"  - cache: {c}")
+    echo(f"\nApproximate disk recovered: {_format_disk(actual_disk_mb(extra))}")
+    echo(
         "Already-indexed structured chunks remain in the index; previews keep\n"
         "working. New extractions revert to flat text. To fully revert existing\n"
         "collections, run `fnd collection reindex <name>` after uninstall.\n"
@@ -943,7 +936,7 @@ def _require_uv() -> None:
     import shutil
 
     if shutil.which("uv") is None:
-        typer.echo(
+        echo(
             "Structured extras are installed via `uv`, which isn't on your PATH.\n"
             "Install it with `brew install uv` (or see https://docs.astral.sh/uv/),\n"
             "then re-run this command.",
@@ -965,29 +958,29 @@ def extras_install(
 
     extra = EXTRAS.get(name)
     if extra is None:
-        typer.echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
+        echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
         raise typer.Exit(code=2)
 
     _print_install_disclosure(extra)
     cmds = install_commands(extra)
     if dry_run:
         for c in cmds:
-            typer.echo("would run: " + " ".join(c))
+            echo("would run: " + shlex.join(c))
         return
     _require_uv()
     if not yes and not typer.confirm("Continue?", default=False):
-        typer.echo("aborted")
+        echo("aborted")
         raise typer.Exit(code=1)
     # Flip default-groups before sync runs so the install persists
     # across subsequent ``uv sync`` calls.
     _toggle_default_group_for_extra(name, present=True)
     for c in cmds:
-        typer.echo("$ " + " ".join(c))
+        echo("$ " + shlex.join(c))
         rc, _stdout, stderr = run_command(c)
         if rc != 0:
-            typer.echo(f"command failed (exit {rc}):\n{stderr}", err=True)
+            echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
-    typer.echo(f"\nInstalled {name}. Run `fnd collection reindex <name>` to apply.")
+    echo(f"\nInstalled {name}. Run `fnd collection reindex <name>` to apply.")
 
 
 @extras_app.command("uninstall")
@@ -1001,7 +994,7 @@ def extras_uninstall(
 
     extra = EXTRAS.get(name)
     if extra is None:
-        typer.echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
+        echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
         raise typer.Exit(code=2)
 
     _print_uninstall_disclosure(extra)
@@ -1010,26 +1003,26 @@ def extras_uninstall(
     # filtered version that skips already-removed packages.
     if dry_run:
         for c in uninstall_commands(extra, assume_installed=True):
-            typer.echo("would run: " + " ".join(c))
+            echo("would run: " + shlex.join(c))
         return
     cmds = uninstall_commands(extra)
     if not cmds:
-        typer.echo(f"\n{name} is not currently installed; nothing to do.")
+        echo(f"\n{name} is not currently installed; nothing to do.")
         return
     _require_uv()
     if not yes and not typer.confirm("Continue?", default=False):
-        typer.echo("aborted")
+        echo("aborted")
         raise typer.Exit(code=1)
     # Drop default-groups membership first; uv sync --no-group then
     # removes the packages and leaves the project unsubscribed.
     _toggle_default_group_for_extra(name, present=False)
     for c in cmds:
-        typer.echo("$ " + " ".join(c))
+        echo("$ " + shlex.join(c))
         rc, _stdout, stderr = run_command(c)
         if rc != 0:
-            typer.echo(f"command failed (exit {rc}):\n{stderr}", err=True)
+            echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
-    typer.echo(f"\nUninstalled {name}.")
+    echo(f"\nUninstalled {name}.")
 
 
 def _toggle_default_group_for_extra(name: str, *, present: bool) -> None:
@@ -1080,11 +1073,11 @@ def cache_status() -> None:
     cache = ExtractionCache()
     root = default_cache_dir()
     if not root.exists():
-        typer.echo(f"PDF Texture Cache: {root}  (not yet created)")
+        echo(f"PDF Texture Cache: {root}  (not yet created)")
         return
-    typer.echo(f"PDF Texture Cache:  {root}")
-    typer.echo(f"saved texturings:   {cache.entry_count()}")
-    typer.echo(f"disk used:          {_human_bytes(cache.total_size_bytes())}")
+    echo(f"PDF Texture Cache:  {root}")
+    echo(f"saved texturings:   {cache.entry_count()}")
+    echo(f"disk used:          {_human_bytes(cache.total_size_bytes())}")
 
 
 @cache_app.command("clear")
@@ -1103,17 +1096,17 @@ def cache_clear(
 
     root = default_cache_dir()
     if not root.exists():
-        typer.echo("PDF Texture Cache is empty (no directory)")
+        echo("PDF Texture Cache is empty (no directory)")
         return
 
     if not yes:
-        typer.echo(f"About to clear the texture cache at {root}.")
-        typer.echo("Frees disk space; previews you've already built keep working.")
+        echo(f"About to clear the texture cache at {root}.")
+        echo("Frees disk space; previews you've already built keep working.")
         if not typer.confirm("Continue?", default=False):
-            typer.echo("aborted")
+            echo("aborted")
             raise typer.Exit(code=1)
     shutil.rmtree(root)
-    typer.echo(f"removed {root}")
+    echo(f"removed {root}")
 
 
 @cache_app.command("prune-orphans")
@@ -1132,22 +1125,22 @@ def cache_prune_orphans(
     from fnd.texture_maintenance import live_content_shas
 
     if not default_cache_dir().exists():
-        typer.echo("PDF Texture Cache is empty (no directory)")
+        echo("PDF Texture Cache is empty (no directory)")
         return
     cache = ExtractionCache()
-    typer.echo("Scanning sources to find live content (hashes every PDF)…")
+    echo("Scanning sources to find live content (hashes every PDF)…")
     live = live_content_shas(load())
     n = cache.count_orphans(live)
     if n == 0:
-        typer.echo("No orphaned texturings.")
+        echo("No orphaned texturings.")
         return
     if not yes:
-        typer.echo(f"About to remove {n} orphaned texturing(s); files no longer on disk.")
+        echo(f"About to remove {n} orphaned texturing(s); files no longer on disk.")
         if not typer.confirm("Continue?", default=False):
-            typer.echo("aborted")
+            echo("aborted")
             raise typer.Exit(code=1)
     removed = cache.prune_orphans(live)
-    typer.echo(f"removed {removed} orphaned texturing(s)")
+    echo(f"removed {removed} orphaned texturing(s)")
 
 
 @cache_app.command("prune")
@@ -1166,7 +1159,7 @@ def cache_prune(
 
     root = default_cache_dir()
     if not root.exists():
-        typer.echo("cache is empty (no directory)")
+        echo("cache is empty (no directory)")
         return
 
     current = texture_signature()
@@ -1186,28 +1179,28 @@ def cache_prune(
             else:
                 stale.append(entry)
 
-    typer.echo(f"current texture signature: {current}")
-    typer.echo(f"fresh entries (kept):        {fresh}")
-    typer.echo(f"stale entries (candidates):  {len(stale)}")
+    echo(f"current texture signature: {current}")
+    echo(f"fresh entries (kept):        {fresh}")
+    echo(f"stale entries (candidates):  {len(stale)}")
 
     if not stale:
         return
     if dry_run:
         for p in stale[:10]:
-            typer.echo(f"  would remove: {p.name}")
+            echo(f"  would remove: {p.name}")
         if len(stale) > 10:
-            typer.echo(f"  …and {len(stale) - 10} more")
+            echo(f"  …and {len(stale) - 10} more")
         return
 
     if not yes and not typer.confirm(f"Remove {len(stale)} stale entries?", default=False):
-        typer.echo("aborted")
+        echo("aborted")
         raise typer.Exit(code=1)
     for p in stale:
         try:
             p.unlink()
         except OSError as e:
-            typer.echo(f"failed to remove {p}: {e}", err=True)
-    typer.echo(f"removed {len(stale)} entries")
+            echo(f"failed to remove {p}: {e}", err=True)
+    echo(f"removed {len(stale)} entries")
 
 
 @cache_app.command("info")
@@ -1217,7 +1210,7 @@ def cache_info(path: Path) -> None:
     from fnd.extract.pdf import texture_signature
 
     if not path.exists():
-        typer.echo(f"file not found: {path}", err=True)
+        echo(f"file not found: {path}", err=True)
         raise typer.Exit(code=2)
 
     cache = ExtractionCache()
@@ -1225,8 +1218,8 @@ def cache_info(path: Path) -> None:
     sha = sha256_file(path)
     key = cache.build_key(content_sha256=sha, extractor_signature=sig)
     entry = cache.entry_path(key)
-    typer.echo(f"path:                 {path}")
-    typer.echo(f"sha256:               {sha[:16]}…")
-    typer.echo(f"texture signature:    {sig}")
-    typer.echo(f"cache entry:          {entry}")
-    typer.echo(f"status:               {'HIT' if entry.exists() else 'MISS'}")
+    echo(f"path:                 {path}")
+    echo(f"sha256:               {sha[:16]}…")
+    echo(f"texture signature:    {sig}")
+    echo(f"cache entry:          {entry}")
+    echo(f"status:               {'HIT' if entry.exists() else 'MISS'}")

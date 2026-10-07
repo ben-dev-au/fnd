@@ -17,7 +17,8 @@ from collections.abc import Callable
 
 from textual import events
 from textual.widget import Widget
-from textual.widgets import Static
+
+from fnd.tui.ui_text import PlainStatic
 
 #: Both panes mount their bar under this id; a screen holds at most one.
 CLEAR_BAR_ID = "clear_filters_bar"
@@ -52,7 +53,7 @@ def focus_clear_bar(tree: Widget) -> bool:
     return False
 
 
-class ClearFiltersBar(Static):
+class ClearFiltersBar(PlainStatic):
     can_focus = True
 
     def __init__(

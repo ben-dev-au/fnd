@@ -6,15 +6,15 @@ from typing import Any, ClassVar
 
 from textual import events
 from textual.binding import Binding, BindingType
-from textual.widgets import Tree
 
-from fnd.tui.widgets.arrow_expansion import ArrowsExpand, HomeToFirstRow
+from fnd.tui.ui_text import PlainTree
+from fnd.tui.widgets.arrow_expansion import HomeToFirstRow
 from fnd.tui.widgets.mark_label import CollectionMarkLabel
 
 __all__ = ["ScopeTree"]
 
 
-class ScopeTree(ArrowsExpand, HomeToFirstRow, CollectionMarkLabel, Tree[dict[str, Any]]):
+class ScopeTree(HomeToFirstRow, CollectionMarkLabel, PlainTree[dict[str, Any]]):
     """A ``Tree`` whose highlighted row survives a change of viewport.
 
     Every search re-lays the sidebar out (results arriving and leaving change

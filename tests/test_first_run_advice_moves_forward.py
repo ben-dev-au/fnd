@@ -42,6 +42,13 @@ def test_a_configured_collection_is_told_to_build_it(tmp_path: Path) -> None:
         assert "collection add" not in said
 
 
+def test_a_name_needing_quotes_is_advised_pasteably(tmp_path: Path) -> None:
+    config = Config(
+        collections={"Q3 [growth=5%]": CollectionConfig(sources=[SourceConfig(path=tmp_path)])}
+    )
+    assert "`fnd collection reindex 'Q3 [growth=5%]'`" in _next_step(config)
+
+
 def test_the_launch_path_carries_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End to end, so removing the argument at the call site fails here."""
     cfg_path = tmp_path / "config.toml"

@@ -5,6 +5,8 @@ Pure unit tests over ``SearchSnapshot`` — no app, no index.
 
 from __future__ import annotations
 
+import pytest
+
 from fnd.launch_command import LaunchCommandSerializer, SearchSnapshot
 
 
@@ -112,3 +114,31 @@ def test_full_command_ordering() -> None:
         == "fnd 'cabernet aging' -c wine --created week --modified month "
         "--kind pdf --tag red --not-tag draft --tag-match any"
     )
+
+
+def _parsed_query(command: str) -> str:
+    import shlex
+
+    import typer
+
+    from fnd import cli
+
+    argv = cli._rewrite_default_command(shlex.split(command)[1:])
+    tui = typer.main.get_group(cli.app).commands[argv[0]]
+    return " ".join(tui.make_context(argv[0], argv[1:]).params["query"])
+
+
+@pytest.mark.parametrize(
+    "query", ["-draft exam", "--help", "-c notes", "version", "index", "plain words"]
+)
+def test_the_command_hands_back_the_query_it_was_given(query: str) -> None:
+    assert _parsed_query(_cmd(query=query, full_collections=("notes",))) == query
+
+
+def test_the_reserved_words_are_the_cli_s() -> None:
+    import typer
+
+    from fnd import cli
+    from fnd.launch_command import SUBCOMMANDS
+
+    assert set(typer.main.get_group(cli.app).commands) == SUBCOMMANDS

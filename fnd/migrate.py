@@ -11,12 +11,14 @@ rebuild, so a fresh upgrade isn't a roadblock.
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from enum import Enum
 from pathlib import Path
 
 import typer
 
+from fnd.cli_output import echo
 from fnd.config import Config
 from fnd.index import build_index_from_config
 from fnd.schema import SCHEMA_VERSION
@@ -79,7 +81,9 @@ def _next_step(config: Config, *, invoked: str = "") -> str:
         return (
             f"No collections yet. Add one with {add}, or run `fnd tui` and choose Add Collection."
         )
-    listed = ", ".join(f"`fnd collection reindex {name}`" for name in names[:3])
+    listed = ", ".join(
+        f"`{shlex.join(['fnd', 'collection', 'reindex', name])}`" for name in names[:3]
+    )
     more = " (and your other collections)" if len(names) > 3 else ""
     return f"Build it with {listed}{more}."
 
@@ -104,11 +108,11 @@ def prompt_and_rebuild_or_exit(
     if status is SchemaStatus.READY:
         return
     if status is SchemaStatus.EMPTY:
-        typer.echo(f"no index at {index_dir}. {_next_step(config, invoked=invoked)}", err=True)
+        echo(f"no index at {index_dir}. {_next_step(config, invoked=invoked)}", err=True)
         raise typer.Exit(code=1)
 
     # STALE.
-    typer.echo(
+    echo(
         f"index at {index_dir} has schema v{existing}; current is v{SCHEMA_VERSION}.",
         err=True,
     )
@@ -119,7 +123,7 @@ def prompt_and_rebuild_or_exit(
         interactive = is_tty
 
     if not interactive:
-        typer.echo(
+        echo(
             "Re-run with `fnd collection reindex <name> --rebuild` "
             "for each collection in your config, then retry.",
             err=True,
@@ -127,7 +131,7 @@ def prompt_and_rebuild_or_exit(
         raise typer.Exit(code=1)
 
     if not config.collections:
-        typer.echo(
+        echo(
             "no collections configured. Run `fnd collection add <name> "
             "--source <path>` then `fnd collection reindex <name>`.",
             err=True,
@@ -135,11 +139,11 @@ def prompt_and_rebuild_or_exit(
         raise typer.Exit(code=1)
 
     if not typer.confirm("Rebuild all collections now?", default=True):
-        typer.echo("aborted. Re-run when you're ready to rebuild.", err=True)
+        echo("aborted. Re-run when you're ready to rebuild.", err=True)
         raise typer.Exit(code=1)
 
     for name, cc in sorted(config.collections.items()):
-        typer.echo(f"Rebuilding collection {name}…")
+        echo(f"Rebuilding collection {name}…")
         n = build_index_from_config(
             config=cc,
             collection=name,
@@ -148,4 +152,4 @@ def prompt_and_rebuild_or_exit(
             tag_sources=tuple(config.defaults.tag_sources),
             tag_frontmatter_keys=tuple(config.defaults.tag_frontmatter_keys),
         )
-        typer.echo(f"  {n} chunks indexed.")
+        echo(f"  {n} chunks indexed.")

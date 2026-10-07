@@ -6,13 +6,13 @@ Single-process, single-writer.
 from __future__ import annotations
 
 import datetime as _dt
-import sys
 from collections.abc import Collection, Iterable, Sequence
 from pathlib import Path
 
 from tantivy import Document, Index, IndexWriter, Query, Schema
 
 from fnd.config import CollectionConfig
+from fnd.display_text import terminal_line
 from fnd.extract import Chunk, ExtractError, extract, no_text_reason
 from fnd.fsmeta import path_is_absent
 from fnd.index_freshness import Ledger
@@ -119,10 +119,13 @@ async def commit_async(writer: IndexWriter) -> None:
         await asyncio.sleep(delay)
 
 
-def _skip_stamp() -> str:
-    """ISO-8601 UTC second-precision timestamp for the [fnd skip ...]
-    prefix; matches the form used by the async indexer runner."""
-    return _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
+def echo_skip(message: str) -> None:
+    """One ``[fnd skip <UTC stamp>]`` line on stderr; ``message`` names files
+    and errors, so it is kept to one :func:`~fnd.display_text.terminal_line`."""
+    from fnd.cli_output import echo
+
+    stamp = _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
+    echo(f"[fnd skip {stamp}] {terminal_line(message)}", err=True)
 
 
 def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
@@ -346,12 +349,12 @@ def build_index(
         except ExtractError as err:
             # Extraction failed: leave the prior document, and any sibling
             # collection's membership on it, untouched.
-            print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
+            echo_skip(str(err))
             continue
         if not docs:
             # No text and no error is treated like a failure: keep what is
             # there rather than delete on a possibly transient empty read.
-            print(f"[fnd skip {_skip_stamp()}] {no_text_reason(path)}", file=sys.stderr)
+            echo_skip(no_text_reason(path))
             continue
         writer.delete_documents_by_query(_parent_delete_query(index.schema, parent_id))
         for doc in docs:
@@ -434,10 +437,10 @@ def build_index_from_config(
                 )
             except ExtractError as err:
                 # Leave the prior document and sibling memberships untouched.
-                print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
+                echo_skip(str(err))
                 continue
             if not docs:
-                print(f"[fnd skip {_skip_stamp()}] {no_text_reason(path)}", file=sys.stderr)
+                echo_skip(no_text_reason(path))
                 continue
             writer.delete_documents_by_query(_parent_delete_query(index.schema, parent_id))
             for doc in docs:
@@ -461,17 +464,13 @@ def build_index_from_config(
             commit(writer)
         else:
             blocked = ", ".join(str(r) for r in unreadable_roots(roots))
-            print(
-                f"[fnd skip {_skip_stamp()}] source unreadable ({blocked}); "
-                f"kept existing chunks for collection {collection}",
-                file=sys.stderr,
+            echo_skip(
+                f"source unreadable ({blocked}); kept existing chunks for collection {collection}"
             )
         if unreadable_dirs:
             blocked = ", ".join(str(d) for d in unreadable_dirs)
-            print(
-                f"[fnd skip {_skip_stamp()}] could not read {blocked}; "
-                f"kept existing chunks there for collection {collection}",
-                file=sys.stderr,
+            echo_skip(
+                f"could not read {blocked}; kept existing chunks there for collection {collection}"
             )
     writer.wait_merging_threads()
     return written

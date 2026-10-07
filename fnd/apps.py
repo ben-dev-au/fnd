@@ -261,9 +261,9 @@ def _emit_notice(message: str) -> None:
     if _notice_sink is not None:
         _notice_sink(message)
         return
-    import sys
+    from fnd.cli_output import echo
 
-    print(message, file=sys.stderr)
+    echo(message, err=True)
 
 
 # ── Template rendering ────────────────────────────────────────────────────

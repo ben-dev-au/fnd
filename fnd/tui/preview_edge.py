@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Literal
 
 from textual.content import Content
 
+from fnd.display_text import display_line
+
 if TYPE_CHECKING:
     from fnd.tui.collection_marks import Mark
 
@@ -33,6 +35,7 @@ EDGE_GLYPH = "─"
 
 def marked_name(name: str, mark: Mark | None) -> Content:
     """A collection's name in its colour, its shape first so a shortened name keeps it."""
+    name = display_line(name)
     if mark is None:
         return Content(name)
     text = f"{mark.shape} {name}" if mark.shape else name

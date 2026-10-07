@@ -25,7 +25,9 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button
+
+from fnd.tui.ui_text import PlainStatic
 
 # macOS Settings URL — opens straight to the Accessibility privacy pane
 # (Sequoia and earlier). Stable since macOS 13.
@@ -89,15 +91,15 @@ class AccessibilityPermissionScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="ax_modal"):
-            yield Static("Accessibility permission needed", id="ax_title")
-            yield Static(
+            yield PlainStatic("Accessibility permission needed", id="ax_title")
+            yield PlainStatic(
                 f"fnd just tried to {self._action_desc}, but macOS blocked the "
                 "automation step because the app that launched fnd isn't in "
                 "Accessibility. The file still opens; you just won't jump to "
                 "the right page until permission is granted.",
                 id="ax_body",
             )
-            yield Static(
+            yield PlainStatic(
                 "1. Press 'o' (or click below) to open System Settings.\n"
                 "2. Find the app you launched fnd from (Terminal, iTerm, "
                 "VS Code, etc.) and toggle it on.\n"
@@ -108,7 +110,7 @@ class AccessibilityPermissionScreen(ModalScreen[None]):
                 yield Button("Open System Settings", id="ax_open_btn", variant="primary")
                 yield Button("Try again", id="ax_retry_btn")
                 yield Button("Dismiss", id="ax_dismiss_btn")
-            yield Static(
+            yield PlainStatic(
                 "Tip: macOS asks once per app. After granting, you won't see "
                 "this dialog again for that launcher.",
                 id="ax_hint",

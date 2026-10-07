@@ -293,6 +293,13 @@ class TestIndexingIntoAnUnconfiguredCollection:
         assert "not in your config" in err, err
         assert "collection add ghost" in err, "it must name the way to fix it"
 
+    def test_the_fix_it_names_is_pasteable(self, tmp_path: Path) -> None:
+        src = tmp_path / "my src"
+        src.mkdir()
+        (src / "a.md").write_text("ghosty\n")
+        _out, err = _run(tmp_path, "index", str(src), "--collection", "my ghost")
+        assert f"fnd collection add 'my ghost' --source '{src}'" in err, err
+
     def test_a_configured_collection_says_nothing(self, tmp_path: Path) -> None:
         src = tmp_path / "src"
         src.mkdir()

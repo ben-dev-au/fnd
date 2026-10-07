@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -38,7 +39,9 @@ from textual.widgets import OptionList, ProgressBar, Static, Tree
 
 from fnd.cloud_files import FetchWait
 from fnd.config import CollectionConfig
+from fnd.display_text import display_line
 from fnd.index_runner import IndexState, ProgressEvent, run_indexer
+from fnd.tui.ui_text import PlainOptionList, PlainStatic, PlainTree, set_border_title
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -85,7 +88,7 @@ def invalidate_todo_count_cache() -> None:
     flat_pdf_scan.invalidate_all()
 
 
-def _stuck_suffix() -> str:
+def _stuck_suffix() -> Text:
     """If the current page hasn't progressed in much longer than the
     session avg, append a yellow "stuck Ns on this page" tag so the
     user can tell a wedged file from a merely slow one. Threshold is
@@ -96,21 +99,21 @@ def _stuck_suffix() -> str:
 
     since = live_progress.seconds_since_last_beat()
     if since <= 0:
-        return ""
+        return Text()
     pages, page_secs = live_progress.session_snapshot()
     avg = (page_secs / pages) if pages > 0 else 0.0
     threshold = max(30.0, 10.0 * avg) if avg > 0 else 60.0
     if since < threshold:
-        return ""
-    return f"   [yellow]· stuck {int(since)}s[/]"
+        return Text()
+    return Text(f"   · stuck {int(since)}s", style="yellow")
 
 
 def _format_current_line(
     *,
     wait: FetchWait | None,
     current_path: str,
-    stuck_suffix: str,
-) -> str:
+    stuck_suffix: Text | str,
+) -> Text:
     """The modal's one-line "what is happening right now".
 
     A cloud fetch blocks the worker that asked for it, so no progress event
@@ -119,22 +122,23 @@ def _format_current_line(
     between a legitimate download and an app the user reads as frozen.
     """
     if wait is not None:
-        return (
-            f"[dim]Fetching from {wait.provider}:[/] {_short_name(wait.path)}"
-            f"   [yellow]· waiting {int(wait.seconds_waiting())}s[/]"
+        return Text.assemble(
+            (f"Fetching from {display_line(wait.provider)}:", "dim"),
+            f" {_short_name(wait.path)}",
+            (f"   · waiting {int(wait.seconds_waiting())}s", "yellow"),
         )
     return _current_line(current_path, stuck_suffix)
 
 
-def _current_line(current_path: str, stuck_suffix: str = "") -> str:
+def _current_line(current_path: str, stuck_suffix: Text | str = "") -> Text:
     """The "what is happening right now" line, or nothing.
 
     `_short_name("")` is `?`, which reads as a file the modal cannot name. On a
     finished run there is no current file, so the line says nothing at all.
     """
     if not current_path:
-        return ""
-    return f"[dim]Current:[/] {_short_name(current_path)}{stuck_suffix}"
+        return Text()
+    return Text.assemble(("Current:", "dim"), f" {_short_name(current_path)}", stuck_suffix)
 
 
 def fmt_per_page(session_pages: int, session_page_seconds: float) -> str:
@@ -240,17 +244,16 @@ class IndexerScreen(ModalScreen[None]):
         self._last_todo_count: int | None = None
 
     def compose(self) -> ComposeResult:
-        from textual.widgets import OptionList
         from textual.widgets.option_list import Option
 
         with Vertical(id="indexer_box") as box:
-            box.border_title = self._title_text()
+            set_border_title(box, self._title_text())
             # Per-collection summary tree. Top-level nodes are finished
             # collections; expanding one reveals its stats inline so the
             # user doesn't have to leave the modal to inspect them.
             # Mirrors the file/matches expand pattern in the main
             # search Results pane.
-            history_tree: Tree[str] = Tree("Completed", id="indexer_history_tree")
+            history_tree: Tree[str] = PlainTree[str]("Completed", id="indexer_history_tree")
             history_tree.show_root = True
             # Two, as the sidebar and results trees use: the default four put
             # the texturising line past the panel edge, cut mid-word.
@@ -261,10 +264,10 @@ class IndexerScreen(ModalScreen[None]):
             history_tree.root.collapse()
             history_tree.add_class("hidden")
             yield history_tree
-            yield Static("Starting…", id="indexer_status")
+            yield PlainStatic("Starting…", id="indexer_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="indexer_progress")
-            yield Static("", id="indexer_current_file")
-            yield Static("", id="indexer_pages_label", classes="hidden")
+            yield PlainStatic("", id="indexer_current_file")
+            yield PlainStatic("", id="indexer_pages_label", classes="hidden")
             yield ProgressBar(
                 total=1,
                 show_eta=False,
@@ -272,23 +275,23 @@ class IndexerScreen(ModalScreen[None]):
                 id="indexer_pages_progress",
                 classes="hidden",
             )
-            yield Static("", id="indexer_timing")
-            yield Static("", id="indexer_indexed_line")
-            yield Static("", id="indexer_texture_line", classes="hidden")
+            yield PlainStatic("", id="indexer_timing")
+            yield PlainStatic("", id="indexer_indexed_line")
+            yield PlainStatic("", id="indexer_texture_line", classes="hidden")
             # Background + Cancel are always available; Summary appears
             # once any collection has finished in this chain; Done
             # appears only when the whole chain has finished. Both are
             # added dynamically via _sync_action_options.
             with Vertical(id="indexer_actions_box") as actions_box:
-                actions_box.border_title = "Actions"
-                yield OptionList(
+                set_border_title(actions_box, "Actions")
+                yield PlainOptionList(
                     Option("Run in background", id="background"),
                     Option("Cancel", id="cancel"),
                     id="indexer_actions",
                 )
         # A modal screen is see-through, so without its own footer the app's
         # shows under it: `/`, `:`, `?` and `q`, none of which work here.
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def _title_text(self) -> str:
         if self._chain_total > 1:
@@ -310,7 +313,7 @@ class IndexerScreen(ModalScreen[None]):
         self._chain_total = chain_total
         self._chain_index = chain_index
         with contextlib.suppress(Exception):
-            self.query_one("#indexer_box", Vertical).border_title = self._title_text()
+            set_border_title(self.query_one("#indexer_box", Vertical), self._title_text())
 
     async def on_mount(self) -> None:
         # Snapshot any progress events already buffered so we don't
@@ -416,7 +419,7 @@ class IndexerScreen(ModalScreen[None]):
             label.remove_class("hidden")
             bar.remove_class("hidden")
             shown_done = min(pages_done, pages_total)
-            label.update(f"[dim]Pages:[/]   {shown_done} / {pages_total}")
+            label.update(Text.assemble(("Pages:", "dim"), f"   {shown_done} / {pages_total}"))
             bar.update(total=pages_total, progress=shown_done)
         else:
             label.add_class("hidden")
@@ -430,10 +433,16 @@ class IndexerScreen(ModalScreen[None]):
         per_page = fmt_per_page(pages, page_secs)
         # `?` is honest while pages are still being counted and noise on a run
         # that has none to count: a corpus with no PDFs never gets an average.
-        average = "" if per_page == "?" else f"    [dim]·[/]    [dim]Avg:[/] {per_page}"
+        average = (
+            Text()
+            if per_page == "?"
+            else Text.assemble("    ", ("·", "dim"), "    ", ("Avg:", "dim"), f" {per_page}")
+        )
         with contextlib.suppress(Exception):
             timing = self.query_one("#indexer_timing", Static)
-            timing.update(f"[dim]Elapsed:[/] {fmt_duration(elapsed_seconds)}{average}")
+            timing.update(
+                Text.assemble(("Elapsed:", "dim"), f" {fmt_duration(elapsed_seconds)}", average)
+            )
 
     def _render_timing_from_event(self, ev: Any) -> None:
         self._render_timing(getattr(ev, "elapsed_s", 0.0))
@@ -646,23 +655,29 @@ class IndexerScreen(ModalScreen[None]):
             # cloud-backed folder can take minutes, and a static
             # "Scanning sources…" is indistinguishable from a hang.
             scanned = f"   {ev.files_total} files" if ev.files_total else ""
-            status.update(f"[dim]Scanning sources…[/]{scanned}")
+            status.update(Text.assemble(("Scanning sources…", "dim"), scanned))
             bar.update(total=100, progress=0)
             current.update("")
             self._render_timing(ev.elapsed_s)
             return
         if ev.kind == "started":
             self._refresh_title()
-            status.update(f"[dim]Files:[/]   0 / {ev.files_total}")
+            status.update(Text.assemble(("Files:", "dim"), f"   0 / {ev.files_total}"))
             bar.update(total=max(1, ev.files_total), progress=0)
         elif ev.kind == "file_complete":
-            status.update(f"[dim]Files:[/]   {ev.files_done} / {ev.files_total}")
+            status.update(
+                Text.assemble(("Files:", "dim"), f"   {ev.files_done} / {ev.files_total}")
+            )
             bar.update(progress=ev.files_done)
         elif ev.kind == "cancelled":
-            status.update("[yellow]Cancelled.[/] State saved; re-run to resume.")
+            status.update(
+                Text.assemble(("Cancelled.", "yellow"), " State saved; re-run to resume.")
+            )
             self._refresh_todo_after_run()
         elif ev.kind == "done":
-            status.update(f"[green]Done.[/]   {ev.files_done} / {ev.files_total} files")
+            status.update(
+                Text.assemble(("Done.", "green"), f"   {ev.files_done} / {ev.files_total} files")
+            )
             self._refresh_todo_after_run()
 
         current.update(_current_line(ev.current_file))
@@ -818,7 +833,7 @@ class IndexerScreen(ModalScreen[None]):
             shutdown_pool()
         with contextlib.suppress(Exception):
             self.query_one("#indexer_status", Static).update(
-                "[yellow]Cancelling…[/] waiting for current file to abort."
+                Text.assemble(("Cancelling…", "yellow"), " waiting for current file to abort.")
             )
 
     async def action_skip_cloud(self) -> None:
@@ -865,7 +880,9 @@ class IndexerScreen(ModalScreen[None]):
             _kill_pool_workers(pool)
             shutdown_pool()
         with contextlib.suppress(Exception):
-            self.query_one("#indexer_status", Static).update("[yellow]Skipping current file…[/]")
+            self.query_one("#indexer_status", Static).update(
+                Text("Skipping current file…", style="yellow")
+            )
 
     def action_show_failed(self) -> None:
         """Open the still-flat / failed PDFs drill-in for the current
@@ -986,7 +1003,7 @@ class ChainStepSummary:
 def _short_name(path: str) -> str:
     if not path:
         return "?"
-    name = Path(path).name
+    name = display_line(Path(path).name)
     return name if len(name) <= 68 else name[:65] + "…"
 
 
@@ -999,50 +1016,57 @@ def _format_indexed_line(
     unreadable: tuple[str, ...] = (),
     *,
     compact: bool = False,
-) -> str:
+) -> Text:
     """Short enough to survive a 75%-wide modal at 80 columns.
 
     `12 newly indexed    340 already indexed    2 removed` overflows and
     paints the last count as a bare `2`. A non-breaking space does not help:
     Rich wraps on it too.
     """
-    warnings = []
+    warnings: list[Text] = []
     # First, because it changes what every other number on the line means: a
     # folder the run could not list contributed nothing and was NOT pruned.
     if unreadable:
         n = len(unreadable)
-        warnings.append(f"[yellow]⚠ {n} folder{'s' if n != 1 else ''} unreadable[/]")
+        warnings.append(Text(f"⚠ {n} folder{'s' if n != 1 else ''} unreadable", style="yellow"))
     if failed > 0:
-        warnings.append(f"[yellow]⚠ {failed} failed[/]")
+        warnings.append(Text(f"⚠ {failed} failed", style="yellow"))
     # `N removed` is true of this collection and false of the corpus while a
     # folder listed under two collections still holds the file.
     if still_in:
-        warnings.append(f"[yellow]⚠ still in {', '.join(still_in)}[/]")
+        names = ", ".join(display_line(name) for name in still_in)
+        warnings.append(Text(f"⚠ still in {names}", style="yellow"))
     # A run that adds nothing and removes three read as "nothing happened".
-    changed = [f"{newly} new"] + ([f"{removed} removed"] if removed > 0 else [])
+    changed = [Text(f"{newly} new")] + ([Text(f"{removed} removed")] if removed > 0 else [])
+    already_text = Text(f"{already} already")
     if compact:
         # The tree indents these rows and CLIPS them (measured: 54 columns at
         # both 60 and 80), so the clip eats `already` before a warning or the
         # label, which alone tells this row from the PDF one below it.
-        return "[dim]Files[/] " + " · ".join([*warnings, *changed, f"{already} already"])
-    return "[dim]Indexed:[/]     " + "    ".join(
-        [*changed[:1], f"{already} already", *changed[1:], *warnings]
+        return Text.assemble(
+            ("Files", "dim"), " ", Text(" · ").join([*warnings, *changed, already_text])
+        )
+    return Text.assemble(
+        ("Indexed:", "dim"),
+        "     ",
+        Text("    ").join([*changed[:1], already_text, *changed[1:], *warnings]),
     )
 
 
 def _format_texturising_line(
     newly: int, already: int, still_flat: int, *, compact: bool = False
-) -> str:
+) -> Text:
     """Short for the same reason as :func:`_format_indexed_line`.
 
     These lines also appear inside the Completed tree, which indents them and
     CLIPS rather than wrapping: at 80 columns the long form loses
     `⚠ 1 still flat` entirely, with no scrollbar to hint at it.
     """
-    flat = [f"[yellow]⚠ {still_flat} still flat[/]"] if still_flat > 0 else []
+    flat = [Text(f"⚠ {still_flat} still flat", style="yellow")] if still_flat > 0 else []
+    counts = [Text(f"{newly} new"), Text(f"{already} already")]
     if compact:
-        return "[dim]PDFs[/] " + " · ".join([*flat, f"{newly} new", f"{already} already"])
-    return "[dim]Texturising:[/] " + "    ".join([f"{newly} new", f"{already} already", *flat])
+        return Text.assemble(("PDFs", "dim"), " ", Text(" · ").join([*flat, *counts]))
+    return Text.assemble(("Texturising:", "dim"), " ", Text("    ").join([*counts, *flat]))
 
 
 # ---- App-side helpers ---------------------------------------------------

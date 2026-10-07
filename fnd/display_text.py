@@ -1,14 +1,18 @@
-"""Normalise arbitrary text into a form safe for single-line, fixed-width
-display (results-row labels, CLI snippets).
+"""Make arbitrary text safe to write to a terminal: two policies, one per sink.
 
-Extracted PDF / office body text carries layout artefacts — tabs, hard line
-breaks, zero-width joiners, bidi overrides — whose *rendered* width disagrees
-with the cell width Rich measures: a raw ``\\t`` measures zero cells yet a
-terminal expands it to the next tab stop. In a bordered, fixed-width pane that
-mismatch over-runs the content region and corrupts the border. This module is
-the single place that guarantee lives, shared by the snippet builder
-(:mod:`fnd.query`) and the results-row label builder (:mod:`fnd.tui`) so both
-layers agree without either importing the other.
+File names, headings, extracted body text, config values and error messages
+reach the screen from sources fnd does not control. ``ESC``, ``BEL`` and the C1
+controls start escape sequences that can write the clipboard or forge a link,
+``\\r`` overwrites a line, and bidi controls reorder what the reader sees.
+
+* ``display_*`` fits a fixed-width TUI cell: a raw ``\\t`` measures zero cells
+  yet a terminal expands it, shearing a bordered row, so every separator becomes
+  one space and every control or format character is dropped. The TUI reaches
+  it through :mod:`fnd.tui.ui_text`.
+* ``terminal_*`` is for CLI text a user reads, copies or pipes: everything
+  printable is kept verbatim (a path must stay the real path), and only what
+  acts on the terminal is shown, as a visible ``\\x1b``-style escape. The CLI
+  reaches it through :mod:`fnd.cli_output`.
 """
 
 from __future__ import annotations
@@ -16,28 +20,52 @@ from __future__ import annotations
 import re
 import unicodedata
 
-__all__ = ["sanitise_display_text"]
+__all__ = ["display_block", "display_line", "terminal_block", "terminal_line"]
 
-# Whitespace that isn't a plain space — tab / newline / CR / form-feed /
-# vertical-tab plus the Unicode separators (incl. the 2-cell ideographic space
-# U+3000) — maps to a single plain space, one for one, so intentional space
-# runs (a label's ``loc  snippet`` gap) survive untouched.
+# Whitespace that isn't a plain space maps to one space, one for one, so an
+# intentional run (a label's ``loc  snippet`` gap) survives.
 _NON_SPACE_WHITESPACE = re.compile(r"[^\S ]")
 
-# Categories dropped outright once whitespace is mapped: C0/C1 controls (Cc)
-# and format characters (Cf) — zero-width space/joiner, soft hyphen, BOM and
-# the bidi overrides — none of which belong in a display cell.
+# Exactly the boundaries ``str.splitlines`` honours, so a block's lines agree
+# with every consumer that splits it.
+_LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
+
 _STRIP_CATEGORIES = frozenset({"Cc", "Cf"})
 
+# What acts on a terminal or hides text: C0/C1 controls except tab, line breaks,
+# the bidi controls (CVE-2021-42574) and the invisible tag block.
+_LINE_HAZARD = re.compile(
+    r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e"
+    r"\u2066-\u2069\U000e0000-\U000e007f]"
+)
 
-def sanitise_display_text(text: str) -> str:
-    """Return ``text`` safe for single-line, fixed-width display: no line
-    breaks, control, zero-width, or bidi characters, so every kept character
-    occupies exactly the cell width it is measured at."""
+
+def display_line(text: str) -> str:
+    """``text`` as one line of printable characters and plain spaces, each
+    occupying the cell width it is measured at."""
     text = _NON_SPACE_WHITESPACE.sub(" ", text)
-    # Fast path: once separators are spaces, a printable string has no Cc/Cf
-    # left to strip (``str.isprintable`` is false for exactly those, and any
-    # surviving wide/private-use glyph is border-safe and kept).
+    # Once separators are spaces, only Cc/Cf can make a string unprintable.
     if text.isprintable():
         return text
     return "".join(ch for ch in text if unicodedata.category(ch) not in _STRIP_CATEGORIES)
+
+
+def display_block(text: str) -> str:
+    """``text`` with each line break as one ``\\n`` and each line a
+    :func:`display_line`."""
+    return "\n".join(display_line(line) for line in _LINE_BREAK.split(text))
+
+
+def _escape(match: re.Match[str]) -> str:
+    return ascii(match.group())[1:-1]
+
+
+def terminal_line(text: str) -> str:
+    """``text`` verbatim on one line, except control, line-break and hidden
+    format characters, which show as visible escapes."""
+    return _LINE_HAZARD.sub(_escape, text)
+
+
+def terminal_block(text: str) -> str:
+    """:func:`terminal_line` per line, each line break kept as one ``\\n``."""
+    return "\n".join(terminal_line(line) for line in _LINE_BREAK.split(text))

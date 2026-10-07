@@ -20,11 +20,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Static
 
 from fnd import paths
 from fnd.config import CollectionConfig
 from fnd.tui.editing import Role
+from fnd.tui.ui_text import PlainOptionList, PlainStatic, set_border_title
 from fnd.walk import walk_sources
 
 # Average per-PDF extraction cost when the cache is cold and the user
@@ -133,7 +133,6 @@ class FirstReindexWarningScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
-        from textual.widgets import OptionList
         from textual.widgets.option_list import Option
 
         from fnd.tui.cost_estimate import has_calibration_data
@@ -153,9 +152,9 @@ class FirstReindexWarningScreen(ModalScreen[bool]):
             safety="Keep searching while it works. Auto-resumes if you quit.",
         )
         with Vertical(id="first_reindex_box") as box:
-            box.border_title = "First structured-PDF run"
-            yield Static(body, id="first_reindex_body")
-            yield OptionList(
+            set_border_title(box, "First structured-PDF run")
+            yield PlainStatic(body, id="first_reindex_body")
+            yield PlainOptionList(
                 Option(Text("Start", style="bold green"), id="start"),
                 Option("Cancel", id="cancel"),
                 id="first_reindex_list",

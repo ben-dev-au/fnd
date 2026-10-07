@@ -62,12 +62,12 @@ def test_the_done_event_carries_what_was_dropped(corpus: Path, tmp_index_dir: Pa
 
 
 def test_the_line_says_so() -> None:
-    assert "1 removed" in _format_indexed_line(0, 1, 0, 1)
+    assert "1 removed" in _format_indexed_line(0, 1, 0, 1).plain
 
 
 def test_a_run_that_removed_nothing_stays_quiet() -> None:
     """The control: an ordinary update must not grow a "0 removed" chip."""
-    assert "removed" not in _format_indexed_line(2, 9, 0, 0)
+    assert "removed" not in _format_indexed_line(2, 9, 0, 0).plain
 
 
 def test_a_rebuild_counts_what_did_not_come_back(corpus: Path, tmp_index_dir: Path) -> None:

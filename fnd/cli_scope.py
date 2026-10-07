@@ -16,11 +16,13 @@ either the user's own or ones the user accepted.
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from typing import TYPE_CHECKING
 
 import typer
 
+from fnd.cli_output import echo
 from fnd.config import is_all_collections
 from fnd.vocabulary import collection_vocabulary
 
@@ -187,25 +189,25 @@ def resolve_or_exit(issues: FilterIssues, *, is_tty: bool | None = None) -> None
     all_fixable = len(fixable) == len(problems)
     if not all_fixable or not _interactive(is_tty):
         for err in problems:
-            typer.echo(_describe(err), err=True)
+            echo(_describe(err), err=True)
         if all_fixable:
-            retry = " ".join(f"{e.flag} {e.correction}" for e in fixable)
-            typer.echo(f"Re-run with: {retry}", err=True)
+            retry = shlex.join(arg for e in fixable for arg in (e.flag or "", e.correction or ""))
+            echo(f"Re-run with: {retry}", err=True)
         raise typer.Exit(code=2)
 
     if len(problems) == 1:
         err = problems[0]
-        typer.echo(f"{err.message}.", err=True)
+        echo(f"{err.message}.", err=True)
         prompt = f"Did you mean {err.correction!r}?"
     else:
-        typer.echo(f"{len(problems)} filter values weren't recognised:", err=True)
+        echo(f"{len(problems)} filter values weren't recognised:", err=True)
         width = max(len(f"{e.flag} {e.value}") for e in problems)
         for err in problems:
-            typer.echo(f"  {f'{err.flag} {err.value}':<{width}}  → {err.correction!r}", err=True)
+            echo(f"  {f'{err.flag} {err.value}':<{width}}  → {err.correction!r}", err=True)
         prompt = "Use these instead?"
 
     if not typer.confirm(prompt, default=True):
-        typer.echo("aborted", err=True)
+        echo("aborted", err=True)
         raise typer.Exit(code=2)
 
 

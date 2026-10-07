@@ -16,6 +16,7 @@ from rich.cells import cell_len
 from textual.widgets import Tree
 
 from fnd.config import is_all_collections
+from fnd.display_text import display_line
 from fnd.fsmeta import path_is_absent
 from fnd.kinds import CATEGORIES, CATEGORY_BY_ID, KIND_BY_ID, KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope, SearchSnapshot
@@ -27,6 +28,7 @@ from fnd.tui.results_labels import (
     _styled_state_row,
     state_colour,
 )
+from fnd.tui.ui_text import set_border_title
 from fnd.tui.widgets.clear_bar import clear_label
 
 if TYPE_CHECKING:
@@ -630,7 +632,7 @@ class ScopeController:
                             "source_id": source_id,
                         },
                     )
-        tree.border_title = self._panel_title(names)
+        set_border_title(tree, self._panel_title(names))
         self._app._results.relabel_rows(marks_only=True)
         # The collections list changed length — reflow the sidebar heights.
         self._app._reflow_sidebar()
@@ -655,7 +657,7 @@ class ScopeController:
         mark = marks.mark(name)
         shape_cells = 1 + len(mark.shape) if mark and mark.shape else 0
         label = prefix + _branch_row(
-            name, value, compact, max(0, budget - len(prefix) - shape_cells), column=0
+            display_line(name), value, compact, max(0, budget - len(prefix) - shape_cells), column=0
         )
         styled = _legend_label(label, len(prefix), mark)
         at = styled.plain.rfind(MARKER)
@@ -884,10 +886,10 @@ class ScopeController:
         also queues a sidebar reflow, and that gesture reflows synchronously."""
         title = self.collapsed_marker("filters_pane") + self._filters_title
         try:
-            self._app.query_one("#filters_pane").border_title = title
+            set_border_title(self._app.query_one("#filters_pane"), title)
         except Exception:
             with contextlib.suppress(Exception):
-                self._app.query_one("#filters_panel_tree", Tree).border_title = title
+                set_border_title(self._app.query_one("#filters_panel_tree", Tree), title)
 
     # ── File-type in-place repaint (no rebuild → cursor never jumps) ───────
 
@@ -1644,7 +1646,7 @@ class ScopeController:
             return
         cfg = self._app._config
         names = sorted(cfg.collections.keys()) if cfg else []
-        tree.border_title = self._panel_title(names)
+        set_border_title(tree, self._panel_title(names))
 
     def on_collection_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
         data = ev.node.data if isinstance(ev.node.data, dict) else {}

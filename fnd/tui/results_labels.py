@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 
-from fnd.display_text import sanitise_display_text
+from fnd.display_text import display_line
 from fnd.tui.collection_marks import mark_style
 
 if TYPE_CHECKING:
@@ -126,7 +126,7 @@ def _styled_state_row(marker: str, rest: str, colour: str) -> Any:
     """
     from rich.text import Text
 
-    text = Text(f"{marker}{rest}")
+    text = Text(f"{marker}{display_line(rest)}")
     if colour:
         text.stylize(_marker_style(colour), 0, len(marker))
     return text
@@ -218,7 +218,7 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     # any source — snippet, heading crumb, filename — can never over-run the row
     # and corrupt the pane border. Snippets are already cleaned at their source
     # (fnd.query._make_snippet); this covers the locator/filename paths too.
-    text = sanitise_display_text(text)
+    text = display_line(text)
     label = Text()
     if max_score > 0 and score > 0:
         label.append(f"{score:5.2f}", style=_score_style(score, max_score))

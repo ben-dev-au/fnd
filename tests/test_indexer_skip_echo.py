@@ -14,8 +14,11 @@ from pathlib import Path
 import pytest
 
 from fnd.config import CollectionConfig, SourceConfig
+from fnd.display_text import terminal_line
 from fnd.extract import ExtractError
+from fnd.index import echo_skip
 from fnd.index_runner import run_indexer
+from tests import _hostile_text
 
 
 def _always_fails(path: object, **_kw: object) -> object:
@@ -58,3 +61,12 @@ async def test_cli_path_still_reports_on_stderr(
     errors = await _run(tmp_path, echo=True)
     assert errors
     assert "[fnd skip" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("raw", _hostile_text.ALL)
+def test_a_skip_is_one_terminal_line(raw: str, capsys: pytest.CaptureFixture[str]) -> None:
+    echo_skip(f"could not read {raw}")
+    err = capsys.readouterr().err
+    prefix, message = err.removesuffix("\n").split("] ", 1)
+    assert prefix.startswith("[fnd skip ")
+    assert message == terminal_line(f"could not read {raw}")

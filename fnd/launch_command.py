@@ -19,6 +19,13 @@ import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+#: The words ``fnd`` takes as a subcommand or root flag rather than a query;
+#: ``tests/test_launch_command_serialize.py`` holds this to the Typer app.
+SUBCOMMANDS = frozenset(
+    {"version", "index", "tui", "search", "config", "collection", "extras", "cache"}
+)
+ROOT_FLAGS = frozenset({"--help", "-h", "--install-completion", "--show-completion"})
+
 
 @dataclass(frozen=True)
 class LaunchScope:
@@ -80,14 +87,18 @@ class LaunchCommandSerializer:
         # Builders return raw tokens; shlex.join quotes every one uniformly, so
         # a value with a space (a spaced collection name, an odd kind) can't
         # silently split the pasted command and no builder can forget to quote.
-        args = [
-            "fnd",
-            *self._positional(),
+        options = [
             *self._collection_args(),
             *self._date_args(),
             *self._kind_args(),
             *self._tag_args(),
         ]
+        positional = self._positional()
+        if positional and (positional[0].startswith("-") or positional[0] in SUBCOMMANDS):
+            # Read as an option or a subcommand otherwise; "--" ends both.
+            args = ["fnd", *options, "--", *positional]
+        else:
+            args = ["fnd", *positional, *options]
         return LaunchCommand(command=shlex.join(args), caveats=self._caveats)
 
     def _positional(self) -> list[str]:

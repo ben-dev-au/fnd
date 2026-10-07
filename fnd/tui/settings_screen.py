@@ -39,6 +39,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import Screen
@@ -46,7 +47,7 @@ from textual.widget import Widget
 from textual.widgets import Input, OptionList, Static, TextArea
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from fnd.display_text import sanitise_display_text
+from fnd.display_text import display_line
 from fnd.fsmeta import path_is_absent
 from fnd.tui.actions import Keymap, load_keymap
 from fnd.tui.editing import (
@@ -78,8 +79,9 @@ from fnd.tui.menu import (
     section_label,
     walk_all_sections,
 )
-from fnd.tui.widgets import DetailStrip
+from fnd.tui.ui_text import PlainOptionList, PlainStatic, set_border_title, ui_text
 from fnd.tui.widgets.clear_bar import RETURN_TO_DEFAULTS, ClearFiltersBar
+from fnd.tui.widgets.detail_strip import DetailStrip
 from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem, ToggleTree
 
 if TYPE_CHECKING:
@@ -240,7 +242,7 @@ def build_confirm_body(
     return text
 
 
-class ConfirmList(OptionList):
+class ConfirmList(PlainOptionList):
     """A confirm dialog's Yes/Cancel list, which does not wrap.
 
     The safe row is the default AND the last one, and a wrapping two-item list
@@ -461,10 +463,10 @@ def _render_row(
     # a tag can also arrive from a hand-edited config, and a tab measures zero
     # cells, so one would shear the row it is painted into.
     pending_segments = [
-        (sanitise_display_text(seg), style)
+        (display_line(seg), style)
         for seg, style in (_trailing_segments(item, app) if not breadcrumb else [])
     ]
-    label_to_render = sanitise_display_text(item.label)
+    label_to_render = display_line(item.label)
     if width is not None and pending_segments:
         affordance_len = sum(
             len(seg_text) for seg_text, seg_style in pending_segments if "dim" not in seg_style
@@ -692,7 +694,7 @@ def _render_header(item: MenuItem, width: int | None) -> Text:
     Accent colour throughout (rule + label). The rule fills the row to
     the same right edge content rows reach so the buffer between text
     and the bordered subsection's right edge stays consistent."""
-    label_part = f" {sanitise_display_text(item.label)} "
+    label_part = f" {display_line(item.label)} "
     if width is not None:
         # `used` already includes the leading ─; tail should just fill
         # whatever budget remains. The previous `- 1` over-subtracted
@@ -802,10 +804,10 @@ class EditBar(Horizontal):
         self._validation_timer: Any = None
 
     def compose(self) -> ComposeResult:
-        yield Static("", classes="-edit-label")
-        yield Static("", classes="-edit-hint")
+        yield PlainStatic("", classes="-edit-label")
+        yield PlainStatic("", classes="-edit-hint")
         yield Input(id="editor_input", placeholder="")
-        yield Static("", classes="-edit-error")
+        yield PlainStatic("", classes="-edit-error")
 
     def open(self, item: MenuItem, current_value: str) -> None:
         self._item = item
@@ -1107,7 +1109,7 @@ class SettingsList(Widget, can_focus=True):
                     current_container = body
                 else:
                     sub = Vertical(classes="subsection")
-                    sub.border_title = target_sub
+                    set_border_title(sub, target_sub)
                     body.mount(sub)
                     current_container = sub
                 current_subsection = target_sub
@@ -1119,7 +1121,7 @@ class SettingsList(Widget, can_focus=True):
                     cls += " -hint-section"
             elif in_hint_section:
                 cls += " -hint-section"
-            row = Static("", classes=cls)
+            row = PlainStatic("", classes=cls)
             current_container.mount(row)
             self._rows.append(row)
         self.call_after_refresh(self._init_cursor)
@@ -1419,7 +1421,7 @@ class SettingsScreen(Screen[None]):
             else f"Settings & Commands › {' › '.join(self._breadcrumb)}"
         )
         with Vertical(id="settings_box") as box:
-            box.border_title = title
+            set_border_title(box, title)
             # Naming the key, as the filter browser's box does: these screens
             # can open with the LIST focused, where a typed letter runs its
             # command: `q` on the Keybindings sheet quits the app.
@@ -1428,11 +1430,11 @@ class SettingsScreen(Screen[None]):
             yield DetailStrip()
             if not self._breadcrumb:
                 # Root-only version + build identifier; sub-screens omit it.
-                yield Static("", id="settings_status")
+                yield PlainStatic("", id="settings_status")
             # Inside the panel: this one is inset, so a screen-docked bar
             # painted at column 0, detached from the row it was editing.
             yield EditBar()
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         lst = self.query_one(SettingsList)
@@ -1534,7 +1536,6 @@ class SettingsScreen(Screen[None]):
             strip.set(
                 first.description or "",
                 self._row_metadata(first),
-                markup=first.description_markup,
             )
 
     # ── Footer ──────────────────────────────────────────────────
@@ -1795,7 +1796,6 @@ class SettingsScreen(Screen[None]):
             strip.set(
                 item.description or "",
                 self._row_metadata(item),
-                markup=item.description_markup,
             )
         # Hint bar may need a "Shift+⏎ Reveal" append/strip depending on row.
         self._refresh_hint_bar()
@@ -2032,9 +2032,9 @@ class PickerScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = self._item.label
-            yield OptionList(id="picker_list")
-        yield Static("", id="footer_hints")
+            set_border_title(box, self._item.label)
+            yield PlainOptionList(id="picker_list")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self._choices = (
@@ -2413,7 +2413,7 @@ class _SourceFields(Screen[None]):
         if not rule:
             return
         source = " (inherited)" if inherited else ""
-        shown = sanitise_display_text(rule)
+        shown = display_line(rule)
         width = max(20, self.size.width - 12)
         if len(shown) > width:
             shown = shown[: width - 1] + "…"
@@ -2554,15 +2554,15 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
             else f"Collections › {self._collection_name} › Sources › New source"
         )
         with Vertical(id="settings_box") as box:
-            box.border_title = title
+            set_border_title(box, title)
             yield SettingsList()
-            yield Static("", id="form_sample_sep", classes="form_separator")
+            yield PlainStatic("", id="form_sample_sep", classes="form_separator")
             yield TextArea("", id="frontmatter_sample")
-            yield Static("(no sample)", id="match_status")
-            yield Static("", id="form_error", classes="-hidden")
+            yield PlainStatic("(no sample)", id="match_status")
+            yield PlainStatic("", id="form_error", classes="-hidden")
             yield DetailStrip()
         yield EditBar()
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     @on(SettingsList.Highlighted)
     def _on_field_highlighted(self, ev: SettingsList.Highlighted) -> None:
@@ -2573,7 +2573,7 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
         if item is None:
             strip.clear()
             return
-        strip.set(item.description or "", item.hint or "", markup=item.description_markup)
+        strip.set(item.description or "", item.hint or "")
 
     def _show_error(self, message: str) -> None:
         err = self.query_one("#form_error", Static)
@@ -3122,18 +3122,18 @@ class AddCollectionWizard(_SourceFields, DocumentScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = "Add Collection"
+            set_border_title(box, "Add Collection")
             yield SettingsList()
-            yield Static("", id="form_sample_sep", classes="form_separator")
+            yield PlainStatic("", id="form_sample_sep", classes="form_separator")
             yield TextArea("", id="frontmatter_sample")
-            yield Static("(no sample)", id="match_status")
-            yield Static("", id="wizard_error", classes="-hidden")
+            yield PlainStatic("(no sample)", id="match_status")
+            yield PlainStatic("", id="wizard_error", classes="-hidden")
             yield DetailStrip()
             # Inside the panel: this one is centred with an auto width, so a
             # screen-docked bar painted at the far left, detached from the row
             # it was editing.
             yield EditBar()
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def _show_error(self, message: str) -> None:
         """Render an inline validation error in the wizard's #wizard_error
@@ -3280,7 +3280,7 @@ class AddCollectionWizard(_SourceFields, DocumentScreen):
             strip.clear()
             return
         meta = item.hint or ""
-        strip.set(item.description or "", meta, markup=item.description_markup)
+        strip.set(item.description or "", meta)
 
     @on(TextArea.Changed, "#frontmatter_sample")
     def _on_sample_changed(self, _ev: TextArea.Changed) -> None:
@@ -3436,9 +3436,9 @@ class RenameCollectionScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = f"Collections › {self._old_name} › Rename"
+            set_border_title(box, f"Collections › {self._old_name} › Rename")
             yield Input(value=self._old_name, id="new_collection_name")
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self.query_one("#new_collection_name", Input).focus()
@@ -3592,8 +3592,8 @@ class DeleteCollectionScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = f"Collections › {self._name} › Delete"
-            yield Static(
+            set_border_title(box, f"Collections › {self._name} › Delete")
+            yield PlainStatic(
                 build_confirm_body(
                     outcome=(
                         f"Collection '{self._name}' removed from config; "
@@ -3621,13 +3621,13 @@ class DeleteCollectionScreen(Screen[None]):
             # mid-run (that races the rendered tree).
             from textual.widgets import LoadingIndicator
 
-            yield Static(
+            yield PlainStatic(
                 f"Deleting '{self._name}' from the search index…",
                 id="deleting_status",
                 classes="-hidden",
             )
             yield LoadingIndicator(id="deleting_spinner", classes="-hidden")
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         enter = open_confirm_list(self, land_on="no")
@@ -3816,16 +3816,16 @@ class CacheMaintenanceConfirm(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = self._title
-            yield Static(self._summary, id="confirm_summary")
+            set_border_title(box, self._title)
+            yield PlainStatic(self._summary, id="confirm_summary")
             if self._irreversible:
-                yield Static("⚠  Cannot be undone.", id="confirm_irreversible")
+                yield PlainStatic("⚠  Cannot be undone.", id="confirm_irreversible")
             yield ConfirmList(
                 Option(Text(self._confirm_label, style="bold"), id="yes"),
                 Option("Cancel", id="no"),
                 id="confirm_list",
             )
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         enter = open_confirm_list(self, land_on="no")
@@ -3938,7 +3938,7 @@ class UpdateAllConfirm(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = f"Collections › Update all ({len(self._names)})"
+            set_border_title(box, f"Collections › Update all ({len(self._names)})")
             text = Text()
             text.append("Queue     ", style="dim")
             # List the collections so the user can see exactly what
@@ -3965,7 +3965,7 @@ class UpdateAllConfirm(Screen[None]):
                 )
             text.append("Order     ", style="dim")
             text.append("Sequential. Each shows its own progress; queue advances on completion.\n")
-            yield Static(text, id="confirm_summary")
+            yield PlainStatic(text, id="confirm_summary")
             n = len(self._names)
             confirm = "Yes, update it" if n == 1 else f"Yes, update all {n} collections"
             yield ConfirmList(
@@ -3973,7 +3973,7 @@ class UpdateAllConfirm(Screen[None]):
                 Option("Cancel", id="no"),
                 id="confirm_list",
             )
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         enter = open_confirm_list(self, land_on="no")
@@ -4114,8 +4114,8 @@ class StructuredPdfConfirmScreen(Screen[None]):
             else "Indexing › PDF Texturising › Install engine"
         )
         with Vertical(id="settings_box") as box:
-            box.border_title = title
-            yield Static(self._summary_text(), id="confirm_summary")
+            set_border_title(box, title)
+            yield PlainStatic(self._summary_text(), id="confirm_summary")
             confirm_label = (
                 "Yes, uninstall the texturising engine"
                 if self._installed
@@ -4126,7 +4126,7 @@ class StructuredPdfConfirmScreen(Screen[None]):
                 Option("Cancel", id="no"),
                 id="confirm_list",
             )
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def _summary_text(self) -> Text:
         from fnd.extras import actual_disk_mb
@@ -4280,11 +4280,11 @@ class UnsavedChangesScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = "Unsaved changes"
+            set_border_title(box, "Unsaved changes")
             # Subject-agnostic: the subjects mix singular and plural.
-            yield Static(f"Unsaved changes to {self._subject}.", classes="warning")
+            yield PlainStatic(f"Unsaved changes to {self._subject}.", classes="warning")
             if self._blocked:
-                yield Static(f"Cannot save yet: {self._blocked}", classes="warning")
+                yield PlainStatic(f"Cannot save yet: {self._blocked}", classes="warning")
             options = (
                 [Option(Text(f"Save and {self._verb}", style="bold"), id="save")]
                 if self._on_save
@@ -4295,7 +4295,7 @@ class UnsavedChangesScreen(Screen[None]):
                 Option(KEEP_EDITING, id="stay"),
             ]
             yield ConfirmList(*options, id="confirm_list")
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         # Always the row that changes nothing: Esc opened this, and Esc means out.
@@ -4391,14 +4391,14 @@ class RebuildConfirmScreen(Screen[None]):
             "unless you are re-texturising after an engine upgrade."
         )
         with Vertical(id="settings_box") as box:
-            box.border_title = f"Collections › {name} › {self._crumb}"
-            yield Static(body, classes="warning")
+            set_border_title(box, f"Collections › {name} › {self._crumb}")
+            yield PlainStatic(body, classes="warning")
             yield ConfirmList(
                 Option(Text(self._confirm_label or f"Yes, rebuild {name}", style="bold"), id="yes"),
                 Option(self._decline_label, id="no"),
                 id="confirm_list",
             )
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         enter = open_confirm_list(self, land_on="no")
@@ -4504,12 +4504,13 @@ class DeleteSourceScreen(Screen[None]):
         cfg, index, problem = self._locate()
         name = self._collection_name
         with Vertical(id="settings_box") as box:
-            box.border_title = (
+            set_border_title(
+                box,
                 f"Collections › {name} › Sources › "
-                f"Source {(self._source_index if index is None else index) + 1} › Delete"
+                f"Source {(self._source_index if index is None else index) + 1} › Delete",
             )
             if problem:
-                yield Static(
+                yield PlainStatic(
                     f"{problem}\n\nNothing was removed. Press Esc and reopen Sources "
                     "to see the file as it is now.",
                     classes="warning",
@@ -4526,7 +4527,7 @@ class DeleteSourceScreen(Screen[None]):
                 discarded = (
                     "\nUnsaved edits to this source are discarded too." if self._discarding else ""
                 )
-                yield Static(
+                yield PlainStatic(
                     f"Remove this source from {name!r}?\n"
                     f"Path: {self._source_path}\n\n"
                     "The files on disk are untouched.\n"
@@ -4539,7 +4540,7 @@ class DeleteSourceScreen(Screen[None]):
                     Option("Cancel", id="no"),
                     id="confirm_list",
                 )
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         enter = open_confirm_list(self, land_on="no")
@@ -4620,8 +4621,8 @@ class CloneSourcePickCollectionScreen(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         cfg = app._config  # type: ignore[attr-defined]
         with Vertical(id="settings_box") as box:
-            box.border_title = f"Collections › {self._target} › Sources › Clone from…"
-            yield Static(
+            set_border_title(box, f"Collections › {self._target} › Sources › Clone from…")
+            yield PlainStatic(
                 "Pick a collection to clone a source from. The source is "
                 f"deep-copied into {self._target!r} (edits won't propagate).",
                 classes="info",
@@ -4636,8 +4637,8 @@ class CloneSourcePickCollectionScreen(Screen[None]):
                     options.append(Option(label, id=name))
             if not options:
                 options.append(Option("(no other collections)", id="__empty__"))
-            yield OptionList(*options, id="clone_list")
-        yield Static("", id="footer_hints")
+            yield PlainOptionList(*options, id="clone_list")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self.query_one("#clone_list", OptionList).focus()
@@ -4705,10 +4706,10 @@ class CloneSourcePickSourceScreen(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         cfg = app._config  # type: ignore[attr-defined]
         with Vertical(id="settings_box") as box:
-            box.border_title = (
-                f"Collections › {self._target} › Sources › Clone from {self._source_coll}"
+            set_border_title(
+                box, f"Collections › {self._target} › Sources › Clone from {self._source_coll}"
             )
-            yield Static(
+            yield PlainStatic(
                 f"Pick a source from {self._source_coll!r} to deep-copy into {self._target!r}.",
                 classes="info",
             )
@@ -4729,12 +4730,14 @@ class CloneSourcePickSourceScreen(Screen[None]):
                     label = f"{i + 1}. {base}  ·  {types}  ·  {_display_path(str(src.path))}"
                     # Wrapped, a long path reads as another source in the list.
                     options.append(
-                        Option(Text(label, no_wrap=True, overflow="ellipsis"), id=str(i))
+                        Option(
+                            Text(display_line(label), no_wrap=True, overflow="ellipsis"), id=str(i)
+                        )
                     )
             if not options:
                 options.append(Option("(collection has no sources)", id="__empty__"))
-            yield OptionList(*options, id="clone_list")
-        yield Static("", id="footer_hints")
+            yield PlainOptionList(*options, id="clone_list")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self.query_one("#clone_list", OptionList).focus()
@@ -5067,7 +5070,7 @@ class StillFlatDrillIn(Screen[None]):
         if self._collection_filter:
             title += f" - {self._collection_filter}"
         with Vertical(id="settings_box") as box:
-            box.border_title = title
+            set_border_title(box, title)
             # ``can_focus=False`` keeps the scroll container out of the
             # focus chain so the screen-level Up/Down bindings fire
             # for row navigation - the default focusable VerticalScroll
@@ -5076,7 +5079,7 @@ class StillFlatDrillIn(Screen[None]):
             scroll = VerticalScroll(id="still_flat_body")
             scroll.can_focus = False
             yield scroll
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self._refresh()
@@ -5141,7 +5144,7 @@ class StillFlatDrillIn(Screen[None]):
             body = self.query_one("#still_flat_body", VerticalScroll)
             for child in list(body.children):
                 child.remove()
-            body.mount(Static(text, id="empty_state"))
+            body.mount(PlainStatic(text, id="empty_state"))
 
     def _render_rows(self, rows: list[tuple[str, str, str, str | None]]) -> None:
         import contextlib as _ctx
@@ -5157,18 +5160,20 @@ class StillFlatDrillIn(Screen[None]):
             for child in list(body.children):
                 child.remove()
             if not self._rows:
-                body.mount(Static("Nothing to fix - every PDF is textured.", id="empty_state"))
+                body.mount(PlainStatic("Nothing to fix - every PDF is textured.", id="empty_state"))
                 return
             for i, (col, path, reason, recorded_at) in enumerate(self._rows):
                 cls = "row -cursor" if i == self._cursor else "row"
                 body.mount(
-                    Static(
+                    PlainStatic(
                         self._format_row(i, col, path, reason, recorded_at),
                         classes=cls,
                     )
                 )
 
-    def _format_row(self, i: int, col: str, path: str, reason: str, recorded_at: str | None) -> str:
+    def _format_row(
+        self, i: int, col: str, path: str, reason: str, recorded_at: str | None
+    ) -> Content:
         """Multi-line row: filename, then status chip + collection +
         date + page-if-known on a second line, then the wrapped reason
         in dim text. Page info is parsed out of the failure log's
@@ -5182,7 +5187,11 @@ class StillFlatDrillIn(Screen[None]):
         # Status chip - "failed" when a failure record exists,
         # "still flat" otherwise. Failed gets a red ✗; still-flat
         # gets a yellow ⚠.
-        chip = "[red]✗ failed[/]" if recorded_at is not None else "[yellow]⚠ still flat[/]"
+        chip = (
+            ui_text("[red]✗ failed[/]")
+            if recorded_at is not None
+            else ui_text("[yellow]⚠ still flat[/]")
+        )
 
         # Pull "[last page beat: N/M]" out of the reason so we can
         # render the page hint separately and clean the reason text.
@@ -5195,17 +5204,14 @@ class StillFlatDrillIn(Screen[None]):
 
         # Meta line: status, collection, date (only for actual
         # failure records; cache-flat files have no recorded run).
-        # Bare ``col`` would be eaten by Rich markup as ``[col]`` so
-        # we render the collection name as a plain dim chip.
-        meta_bits = [chip, f"[dim]{col}[/]"]
+        meta_bits = [chip, ui_text("[dim]$col[/]", col=col)]
         if recorded_at:
-            meta_bits.append(f"[dim]{_format_recorded_at(recorded_at)}[/]")
-        meta_str = "  ·  ".join(meta_bits) + page_part
+            meta_bits.append(ui_text("[dim]$at[/]", at=_format_recorded_at(recorded_at)))
+        meta = Content("     ") + Content("  ·  ").join(meta_bits) + page_part
 
-        header = f"{cursor} [bold]{name}[/]"
-        meta = f"     {meta_str}"
-        body = f"     [dim]{clean_reason}[/]"
-        return f"{header}\n{meta}\n{body}"
+        header = ui_text("$cursor [bold]$name[/]", cursor=cursor, name=name)
+        body = ui_text("     [dim]$reason[/]", reason=clean_reason)
+        return Content("\n").join([header, meta, body])
 
     def action_move(self, delta: int) -> None:
         if not self._rows:
@@ -5368,10 +5374,10 @@ class FilterTextScreen(PartScreen):
         from fnd.filters.text_form import render
 
         with Vertical(id="settings_box") as box:
-            box.border_title = self._title
+            set_border_title(box, self._title)
             yield TextArea(render(self._spec), id="filter_text")
-            yield Static("", id="filter_status")
-        yield Static("", id="footer_hints")
+            yield PlainStatic("", id="filter_status")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self.query_one("#filter_text", TextArea).focus()
@@ -5644,11 +5650,11 @@ class RuleTextScreen(PartScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = self._title
+            set_border_title(box, self._title)
             yield TextArea(self._value, id="rule_text")
-            yield Static("", id="rule_status")
-            yield Static(_RULE_HELP, id="rule_help")
-        yield Static("", id="footer_hints")
+            yield PlainStatic("", id="rule_status")
+            yield PlainStatic(_RULE_HELP, id="rule_help")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self.query_one("#rule_text", TextArea).focus()
@@ -5715,11 +5721,11 @@ class GlobTextScreen(PartScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = self._title
+            set_border_title(box, self._title)
             yield TextArea(", ".join(self._value), id="glob_text")
-            yield Static("", id="glob_status")
-            yield Static(_GLOB_HINT, id="glob_help")
-        yield Static("", id="footer_hints")
+            yield PlainStatic("", id="glob_status")
+            yield PlainStatic(_GLOB_HINT, id="glob_help")
+        yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
         self.query_one("#glob_text", TextArea).focus()
@@ -5921,15 +5927,15 @@ class FilterBrowserScreen(Screen[None]):
         from fnd.filters.tree_model import LEGEND
 
         with Vertical(id="settings_box") as box:
-            box.border_title = self._title
-            yield Static(LEGEND, id="filter_legend")
+            set_border_title(box, self._title)
+            yield PlainStatic(LEGEND, id="filter_legend")
             yield Input(placeholder=_SEARCH_PLACEHOLDER_WITH_KEY, id="filter_search")
             yield ClearFiltersBar(
                 "", id="clear_filters_bar", on_clear=self.action_clear_all, focus_id="filter_tree"
             )
             yield ToggleTree("Filters", id="filter_tree")
-            yield Static("", id="filter_summary")
-        yield Static("", id="footer_hints")
+            yield PlainStatic("", id="filter_summary")
+        yield PlainStatic("", id="footer_hints")
 
     @on(ToggleTree.ActionSelected, "#filter_tree")
     def _on_rule_selected(self, ev: ToggleTree.ActionSelected) -> None:
@@ -6225,9 +6231,9 @@ class FilterBrowserScreen(Screen[None]):
         with contextlib.suppress(Exception):
             box = self.query_one("#settings_box", Vertical)
             if self._query and not any_rows:
-                box.border_title = f"{self._title}: no rows match {self._query!r}"
+                set_border_title(box, f"{self._title}: no rows match {self._query!r}")
             else:
-                box.border_title = self._title
+                set_border_title(box, self._title)
 
     def _can_return_to_defaults(self) -> bool:
         """Whether this screen has defaults to go back to, and has left them.

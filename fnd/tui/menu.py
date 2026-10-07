@@ -115,10 +115,6 @@ class MenuItem:
     id: str
     label: str
     description: str = ""
-    # Render ``description`` as Rich markup (colour). Off by default so
-    # arbitrary text (paths, globs, notes) shows literally; opt in only for
-    # hand-authored descriptions that use ``[colour]…[/]`` tags.
-    description_markup: bool = False
     kind: str = KIND_SUBMENU
 
     # HEADER: 1 = top-level group, 2 = sub-group.

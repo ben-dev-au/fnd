@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Final
 
 from tantivy import Index, Query, Schema
 
-from fnd.display_text import sanitise_display_text
+from fnd.display_text import display_line
 from fnd.extract.base import Block
 from fnd.matching import MatchSpec
 from fnd.query_errors import QuerySyntaxError
@@ -310,7 +310,7 @@ def _snippet_anchors(body_text: str, spec: MatchSpec) -> list[tuple[int, str]]:
 
 
 def _window(body_text: str, pos: int, half: int) -> str:
-    return sanitise_display_text(body_text[max(0, pos - half) : pos + half]).strip()
+    return display_line(body_text[max(0, pos - half) : pos + half]).strip()
 
 
 def _region_needles(spec: MatchSpec) -> list[str]:
@@ -399,7 +399,7 @@ def _make_snippet(
     body_text = _scan_region(body_text, spec)
     anchors = _snippet_anchors(body_text, spec)
     if not anchors:
-        return sanitise_display_text(body_text[:ctx]).strip()
+        return display_line(body_text[:ctx]).strip()
 
     half = ctx // 2
     lower = body_text.lower()

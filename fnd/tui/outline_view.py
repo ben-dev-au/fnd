@@ -21,12 +21,12 @@ import contextlib
 import time
 from typing import TYPE_CHECKING, Any
 
-from rich.markup import escape
 from textual.css.query import NoMatches
 
 from fnd.tui.outline_model import Outline, OutlineEntry, build_outline
 from fnd.tui.preview import tuning
 from fnd.tui.preview.presenter import decode_abandonable
+from fnd.tui.ui_text import set_border_title
 from fnd.tui.widgets.outline_tree import OutlineTree
 
 if TYPE_CHECKING:
@@ -77,12 +77,12 @@ class OutlineView:
         count = len(tree.outline.entries) if tree is not None else 0
         marker = self._app._scope.collapsed_marker(PANE_ID)
         noun = "heading" if count == 1 else "headings"
-        return escape(marker + (f"Outline: {count} {noun}" if count else "Outline"))
+        return marker + (f"Outline: {count} {noun}" if count else "Outline")
 
     def _refresh_title(self) -> None:
         tree = self._tree()
         if tree is not None:
-            tree.border_title = self.title()
+            set_border_title(tree, self.title())
 
     # ── what the tree shows ──────────────────────────────────────────────
 
