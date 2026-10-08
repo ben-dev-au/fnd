@@ -10,22 +10,17 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from fnd.extract.base import Block, Chunk
+from fnd.extract.base import Block, Chunk, file_parent_id
 from fnd.fsmeta import read_file_times
+from fnd.text_canon import decode
 
 WINDOW_CHARS = 1000
 OVERLAP_CHARS = 200
 
 
-def _make_parent_id(path: Path) -> str:
-    import hashlib
-
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
-
-
 def extract(path: Path) -> Iterator[Chunk]:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    parent_id = _make_parent_id(path)
+    text = decode(path.read_bytes())
+    parent_id = file_parent_id(path)
     times = read_file_times(path)
 
     if not text.strip():

@@ -7,6 +7,7 @@ the per-collection state file path, and the c:"…" DSL shorthand.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,7 +52,10 @@ def test_backslash_path_round_trips_through_toml(
     regression: a raw ``path = "C:\\Users\\..."`` fails to parse)."""
     cfg = tmp_path / "config.toml"
     # Outside every home: a path under one is written `~/...` with forward slashes.
-    win_path = Path(r"D:\Users\corpus\notes")
+    # Anchored on POSIX too, where an unanchored path resolves against the cwd.
+    win_path = Path(
+        r"D:\Users\corpus\notes" if sys.platform == "win32" else r"/D:\Users\corpus\notes"
+    )
     write_collection_source(
         config_path=cfg, collection_name="notes", source=SourceConfig(path=win_path)
     )

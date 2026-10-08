@@ -142,6 +142,20 @@ _DOCS: list[tuple[str, _Doc]] = [
     # Hyphenated plain word beside a wildcard in a proximity: the analyzer splits
     # ``cross-entropy`` into two tokens, so the regex phrase must too.
     ("wpx-hyphen", {"body": "the cross-entropy loss function is standard"}),
+    # Ordinary text that is query syntax to tantivy's parser.
+    ("apos", {"body": "don't panic before the meeting"}),
+    ("apos-name", {"body": "the O'Reilly handbook"}),
+    ("clock", {"body": "meet at 10:30 tomorrow"}),
+    ("todo", {"body": "TODO: fix the parser"}),
+    ("pct", {"body": "a 50% discount applies"}),
+    ("url", {"body": "see https://example.com/page for details"}),
+    (
+        "accent",
+        {
+            "body": "caf\N{LATIN SMALL LETTER E WITH ACUTE} cr\N{LATIN SMALL LETTER E WITH GRAVE}me menu"
+        },
+    ),
+    ("year-doc", {"body": "release 2024 notes"}),
     (
         "fm-sec-lec",
         {
@@ -434,9 +448,84 @@ _CASES: list[_Case] = [
 ]
 
 
+# Text the query boundary must take as written: punctuation tantivy's parser
+# treats as syntax, typographic quotes, decomposed accents and invisible
+# characters, and the shapes that once panicked the engine.
+_BOUNDARY_CASES: list[_Case] = [
+    ("apostrophe", "don't", lambda r: "apos" in r, _OK),
+    ("apostrophe-name", "O'Reilly", lambda r: "apos-name" in r, _OK),
+    (
+        "apostrophe-before-filter",
+        "diffusion don't kind:pdf",
+        lambda r: "kind-pdf" in r and "apos" not in r and "kind-docx" not in r,
+        _OK,
+    ),
+    ("colon-time", "10:30", lambda r: "clock" in r, _OK),
+    ("colon-label", "TODO: fix", lambda r: "todo" in r, _OK),
+    ("colon-quoted", 'TODO:"fix the"', lambda r: "todo" in r and "apos" not in r, _OK),
+    ("percent", "50%", lambda r: "pct" in r, _OK),
+    ("url", "https://example.com/page", lambda r: "url" in r, _OK),
+    ("decomposed-accent", "cafe\N{COMBINING ACUTE ACCENT}", lambda r: "accent" in r, _OK),
+    (
+        "curly-phrase",
+        "\N{LEFT DOUBLE QUOTATION MARK}cross entropy loss\N{RIGHT DOUBLE QUOTATION MARK}",
+        lambda r: "phrase-ok" in r and "phrase-reversed" not in r and "cross-only" not in r,
+        _OK,
+    ),
+    ("zero-width", "cro\N{ZERO WIDTH SPACE}ss AND loss", lambda r: "all3" in r, _OK),
+    ("pure-negative", "NOT regression", lambda r: "stem-sing" in r and "has-reg" not in r, _OK),
+    (
+        "quoted-one-wildcard",
+        '"crypto*"',
+        lambda r: {"wc-crypto", "wc-graphy", "wc-graphic"} <= r and "wc-other" not in r,
+        _OK,
+    ),
+    ("proximity-one-wildcard", "{1}crypto*", lambda r: "wc-crypto" in r, _OK),
+    ("regex-class", "/cr[y]pto/", lambda r: "wc-crypto" in r and "wc-other" not in r, _OK),
+    ("regex-count", "/[0-9]{4}/", lambda r: "year-doc" in r, _OK),
+    (
+        "kind-category-in-a-boolean",
+        "diffusion AND (kind:documents OR kind:md)",
+        lambda r: {"kind-pdf", "kind-docx", "kind-md"} <= r,
+        _OK,
+    ),
+    (
+        "kind-category-group",
+        "diffusion kind:(documents md)",
+        lambda r: {"kind-pdf", "kind-docx", "kind-md"} <= r,
+        _OK,
+    ),
+    ("text-field-with-apostrophe", "title:don't OR entropy", lambda r: "stem-sing" in r, _OK),
+    (
+        "range-exclusive",
+        "page:{5 TO 25} content",
+        lambda r: "pg-15" in r and "pg-5" not in r and "pg-25" not in r,
+        _OK,
+    ),
+    (
+        "range-half-open-in-a-boolean",
+        "page:[5 TO 25} OR entropy",
+        lambda r: {"pg-5", "pg-15", "stem-sing"} <= r and "pg-25" not in r,
+        _OK,
+    ),
+    (
+        "text-field-sloppy-phrase",
+        'title:"architecture transformer"~2 OR entropy',
+        lambda r: "fld-title" in r,
+        _OK,
+    ),
+    (
+        "kind-category",
+        "kind:documents diffusion",
+        lambda r: {"kind-pdf", "kind-docx"} <= r and "kind-md" not in r,
+        _OK,
+    ),
+]
+
+
 def _params() -> list[object]:
     out: list[object] = []
-    for name, query, pred, broken in _CASES:
+    for name, query, pred, broken in [*_CASES, *_BOUNDARY_CASES]:
         for path in ("single", "layered"):
             marks = (
                 (pytest.mark.xfail(strict=True, reason=f"{name}: unimplemented on {path} (P3)"),)

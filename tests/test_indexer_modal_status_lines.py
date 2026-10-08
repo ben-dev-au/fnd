@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from fnd.tui.indexer_modal import _format_indexed_line, _format_texturising_line
+import sys
+
+import pytest
+
+from fnd.display_text import display_line
+from fnd.tui.indexer_modal import _current_line, _format_indexed_line, _format_texturising_line
+from tests import _hostile_text
 
 
 def test_indexed_line_drops_failed_tail_when_zero() -> None:
-    out = _format_indexed_line(newly=5, already=8, failed=0)
+    out = _format_indexed_line(newly=5, already=8, failed=0).plain
     # Not "newly indexed"/"already indexed": the long form overflows a
     # 75%-wide modal at 80 columns and clips the last count to a bare digit.
     # The label above them reads "Indexed:".
@@ -17,12 +23,12 @@ def test_indexed_line_drops_failed_tail_when_zero() -> None:
 
 
 def test_indexed_line_shows_failed_when_nonzero() -> None:
-    out = _format_indexed_line(newly=5, already=8, failed=1)
+    out = _format_indexed_line(newly=5, already=8, failed=1).plain
     assert "⚠ 1 failed" in out
 
 
 def test_texturising_line_drops_still_flat_when_zero() -> None:
-    out = _format_texturising_line(newly=4, already=2, still_flat=0)
+    out = _format_texturising_line(newly=4, already=2, still_flat=0).plain
     # Shortened with the Indexed line: the long form clipped inside the
     # Completed tree, which indents and does not wrap.
     assert "4 new" in out
@@ -32,7 +38,7 @@ def test_texturising_line_drops_still_flat_when_zero() -> None:
 
 
 def test_texturising_line_shows_still_flat_when_nonzero() -> None:
-    out = _format_texturising_line(newly=4, already=2, still_flat=1)
+    out = _format_texturising_line(newly=4, already=2, still_flat=1).plain
     assert "⚠ 1 still flat" in out
 
 
@@ -55,7 +61,9 @@ def test_todo_scope_mid_chain_is_all_collections() -> None:
 def test_current_line_shows_the_ordinary_file_when_nothing_is_being_fetched() -> None:
     from fnd.tui.indexer_modal import _format_current_line
 
-    out = _format_current_line(wait=None, current_path="/a/b/Week 7 Notes.md", stuck_suffix="")
+    out = _format_current_line(
+        wait=None, current_path="/a/b/Week 7 Notes.md", stuck_suffix=""
+    ).plain
     assert "Current:" in out
     assert "Week 7 Notes.md" in out
     assert "Fetching" not in out
@@ -76,10 +84,18 @@ def test_current_line_names_the_provider_and_wait_while_fetching() -> None:
     )
     out = _format_current_line(
         wait=wait, current_path="/a/b/other.md", stuck_suffix="   · stuck 3s"
-    )
+    ).plain
     assert "Fetching from iCloud Drive" in out
     assert "Week 7 Notes.md" in out
     assert "waiting 9s" in out
     # The fetch owns the line — the unrelated per-page stall tag would be
     # misleading while the extractor hasn't even been handed the file.
     assert "stuck" not in out
+
+
+@pytest.mark.parametrize("raw", _hostile_text.ALL)
+def test_a_file_or_collection_name_shows_literally(raw: str) -> None:
+    # A backslash is a separator on Windows, so there it cannot be in a name.
+    name = raw.replace("/", "_").replace("\\", "_" if sys.platform == "win32" else "\\")
+    assert _current_line(f"/a/{name}.md").plain == f"Current: {display_line(name)}.md"
+    assert f"still in {display_line(raw)}" in _format_indexed_line(0, 1, 0, 1, (raw,)).plain

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from rich.style import Style as RichStyle
 
+from fnd.display_text import display_line
 from fnd.tui.progress.bar import (
     FILL_GLYPH,
     TRACK_GLYPH,
@@ -22,6 +23,7 @@ from fnd.tui.progress.bar import (
 )
 from fnd.tui.progress.facility import ProgressFacility, ProgressSession
 from fnd.tui.progress.model import OperationKind, OperationPlan, Phase
+from tests import _hostile_text
 from tests._progress_stubs import FakeClock, StubBar, StubProgressApp
 
 # ── rendering ────────────────────────────────────────────────────
@@ -687,3 +689,12 @@ def test_the_backstops_scale_with_the_class_of_work() -> None:
             f"{plan.operation_id}: the watchdog beats its own stall cap, "
             "so the stall path is dead code"
         )
+
+
+@pytest.mark.parametrize("raw", _hostile_text.ALL)
+def test_a_label_is_painted_as_one_display_line(raw: str) -> None:
+    painted = "".join(
+        seg.text for seg in progress_line_segments(width=200, fraction=0.5, label=raw)
+    )
+    assert display_line(raw) in painted
+    assert painted == display_line(painted)

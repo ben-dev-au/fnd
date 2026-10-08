@@ -5,8 +5,8 @@ Three layers:
 * ``BUILTIN_APPS`` — frozen registry of ship-default apps (``system``,
   ``preview``, ``skim``, ``pdf_expert``, ``obsidian``, ``vscode``). Each
   entry has its own ``handler`` closure that constructs an argv or URL,
-  validates inputs, and dispatches via :func:`subprocess.run` (never a
-  shell).
+  validates inputs, and dispatches through :mod:`fnd.launcher` (never a
+  shell; output discarded, never raising).
 * :func:`load_user_apps` — turns ``[apps.<id>]`` TOML tables into ``App``
   records whose handlers do pure :py:meth:`str.format` substitution into
   the user's argv or URL template. Mutually-exclusive ``argv``/``url`` is
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import re
 import shutil
-import subprocess
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -211,17 +210,7 @@ def _probe_ax_trusted() -> bool:
 
     if sys.platform != "darwin":
         return False
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", _AX_PROBE_SCRIPT],
-            capture_output=True,
-            text=True,
-            timeout=5.0,
-            check=False,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    return proc.returncode == 0
+    return launcher.capture(["osascript", "-e", _AX_PROBE_SCRIPT], timeout=5.0) == 0
 
 
 def ax_trusted() -> bool:
@@ -261,9 +250,9 @@ def _emit_notice(message: str) -> None:
     if _notice_sink is not None:
         _notice_sink(message)
         return
-    import sys
+    from fnd.cli_output import echo
 
-    print(message, file=sys.stderr)
+    echo(message, err=True)
 
 
 # ── Template rendering ────────────────────────────────────────────────────
@@ -300,53 +289,35 @@ def _render_vars(req: OpenRequest) -> dict[str, str]:
     }
 
 
+# A locator in a template: ``:{line}``, with an optional ``:col`` after it.
+_LOCATOR: Final[re.Pattern[str]] = re.compile(r":\{(line|page|slide)\}(?::\d+)?")
+
+
 def _render_argv(template: list[str], req: OpenRequest) -> list[str]:
-    """Substitute placeholders token-by-token. Tokens that resolve to a
-    locator suffix (``:<empty>``) get the trailing locator stripped — keeps
-    ``code -g <path>:<line>:1`` from devolving into ``code -g <path>::1``
-    when ``line`` is unknown."""
+    """Substitute placeholders token by token. A locator whose position is
+    unknown is dropped from the TEMPLATE before substitution, so ``code -g
+    {path}:{line}:1`` becomes ``code {path}`` and a path's own ``:`` is kept."""
     vars_ = _render_vars(req)
     out: list[str] = []
+    collapsed = False
     for token in template:
-        rendered = token.format(**vars_)
-        # Strip trailing empty locator segments: "path::1" → "path"
-        rendered = _strip_empty_locator(rendered)
-        out.append(rendered)
-    # If the locator argument collapsed to just the path AND the previous
-    # token was a goto flag like "-g", drop the flag too — invoking
-    # ``code -g <path>`` works but is a useless cosmetic mismatch with the
-    # template's intent.
-    if len(out) >= 3 and out[-2] in {"-g", "--goto"} and not _has_locator_chars(out[-1]):
+        kept = _LOCATOR.sub(lambda m: m.group(0) if vars_[m.group(1)] else "", token)
+        collapsed = kept != token
+        out.append(kept.format(**vars_))
+    # ``-g`` names a locator the last token no longer carries.
+    if collapsed and len(out) >= 3 and out[-2] in {"-g", "--goto"}:
         del out[-2]
     return out
 
 
-def _has_locator_chars(token: str) -> bool:
-    """True if ``token`` looks like ``path:line[:col]`` (has at least one
-    ``:line``-style numeric segment after the path)."""
-    parts = token.rsplit(":", 2)
-    return len(parts) >= 2 and any(p.isdigit() and p for p in parts[1:])
-
-
-_DROP_EMPTY_LOC_RE: Final[re.Pattern[str]] = re.compile(r"::+\d*$")
-_DROP_TRAILING_COLON_RE: Final[re.Pattern[str]] = re.compile(r":$")
-
-
-def _strip_empty_locator(s: str) -> str:
-    """Collapse trailing locator segments that represent missing positions.
-
-    * ``path::1``  (line empty, col=1)        → ``path``
-    * ``path::``   (line and col empty)       → ``path``
-    * ``path:``    (line empty, no col)       → ``path``
-    * ``path:42:1`` (line present, col=1)     → unchanged
-    """
-    s = _DROP_EMPTY_LOC_RE.sub("", s)
-    s = _DROP_TRAILING_COLON_RE.sub("", s)
-    return s
-
-
 def _render_url(template: str, req: OpenRequest) -> str:
-    return template.format(**_render_vars(req))
+    """A URL template, every placeholder percent-encoded: in a URL ``{x}`` is
+    ``{x_pct}``, so a heading holding ``&`` or ``#`` cannot add a parameter.
+    ``{path}`` keeps its ``/``, as a URL path (``vscode://file{path}``) needs."""
+    vars_ = _render_vars(req)
+    encoded = {k: vars_.get(f"{k}_pct", v) for k, v in vars_.items()}
+    encoded["path"] = urllib.parse.quote(launcher.url_path(req.path), safe="/:")
+    return template.format(**encoded)
 
 
 # ── Built-in handlers ─────────────────────────────────────────────────────
@@ -457,7 +428,7 @@ def _handle_preview(req: OpenRequest) -> int:
     Send ``page_label`` when the PDF has one; fall back to the physical page
     for label-less PDFs (where the two coincide)."""
     # `open` follows symlinks itself, so the raw path is fine for opening.
-    open_rc = subprocess.run(["open", "-a", "Preview", str(req.path)], check=False).returncode
+    open_rc = launcher.run(["open", "-a", "Preview", str(req.path)])
     if req.page <= 0:
         return open_rc
     if not ax_trusted():
@@ -468,10 +439,7 @@ def _handle_preview(req: OpenRequest) -> int:
     # script's exact-path match only lands if we hand it the realpath too.
     target = str(req.path.resolve())
     goto = (req.page_label or "").strip() or str(req.page)
-    return subprocess.run(
-        ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, goto],
-        check=False,
-    ).returncode
+    return launcher.run(["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, goto])
 
 
 def _handle_pdf_expert(req: OpenRequest) -> int:
@@ -485,7 +453,7 @@ def _handle_pdf_expert(req: OpenRequest) -> int:
     Expert on Mac doesn't expose a documented page-locator entry
     point). Users who want page-jump should pick Skim or Preview.
     """
-    return subprocess.run(["open", "-a", "PDF Expert", str(req.path)], check=False).returncode
+    return launcher.run(["open", "-a", "PDF Expert", str(req.path)])
 
 
 _HEADING_BREADCRUMB_SEP: Final[str] = " > "
@@ -558,21 +526,19 @@ def _resolve_match_line(
     """
     if not query or from_line < 1:
         return from_line
-    terms = {m.group(0).lower() for m in _WORD_TOKEN_RE.finditer(query)}
+    from fnd.text_canon import canonical, decode
+
+    terms = {m.group(0).lower() for m in _WORD_TOKEN_RE.finditer(canonical(query))}
     if not terms:
         return from_line
     try:
-        with path.open("r", encoding="utf-8") as f:
-            for offset, raw in enumerate(f):
-                if offset + 1 < from_line:
-                    continue
-                if offset + 1 - from_line >= max_scan_lines:
-                    break
-                low = raw.lower()
-                if any(m.group(0).lower() in terms for m in _WORD_TOKEN_RE.finditer(low)):
-                    return offset + 1
-    except (OSError, UnicodeDecodeError):
+        lines = decode(path.read_bytes()).split("\n")
+    except OSError:
         return from_line
+    # Decoded as the index decoded it, so line numbers and words agree with the chunk.
+    for offset, raw in enumerate(lines[from_line - 1 : from_line - 1 + max_scan_lines]):
+        if any(m.group(0) in terms for m in _WORD_TOKEN_RE.finditer(raw.lower())):
+            return from_line + offset
     return from_line
 
 
@@ -636,7 +602,7 @@ def _handle_vscode(req: OpenRequest) -> int:
     """``code -g <path>:<line>:1`` when ``line`` is known; ``code <path>``
     otherwise. Same handler used for md / txt / fallback."""
     argv = ["code", "-g", f"{req.path}:{req.line}:1"] if req.line > 0 else ["code", str(req.path)]
-    return subprocess.run(argv, check=False).returncode
+    return launcher.run(argv)
 
 
 def _handle_zathura(req: OpenRequest) -> int:
@@ -646,7 +612,7 @@ def _handle_zathura(req: OpenRequest) -> int:
         if req.page > 0
         else ["zathura", str(req.path)]
     )
-    return subprocess.run(argv, check=False).returncode
+    return launcher.run(argv)
 
 
 def _handle_okular(req: OpenRequest) -> int:
@@ -656,7 +622,7 @@ def _handle_okular(req: OpenRequest) -> int:
         if req.page > 0
         else ["okular", str(req.path)]
     )
-    return subprocess.run(argv, check=False).returncode
+    return launcher.run(argv)
 
 
 def _handle_sumatra(req: OpenRequest) -> int:
@@ -665,7 +631,7 @@ def _handle_sumatra(req: OpenRequest) -> int:
     if exe is None:  # available() gates this; defensive fall-through only
         return launcher.open_path(req.path)
     argv = [exe, "-page", str(req.page), str(req.path)] if req.page > 0 else [exe, str(req.path)]
-    return subprocess.run(argv, check=False).returncode
+    return launcher.run(argv)
 
 
 # ── Built-in registry ─────────────────────────────────────────────────────
@@ -824,10 +790,6 @@ def _validate_user_app(app_id: str, raw: dict[str, Any]) -> _UserAppSpec:
         if not isinstance(url_raw, str) or not url_raw:
             raise ValueError(f"app {app_id!r}: url must be a non-empty string")
         url = url_raw
-    # Dry-run the template against a stub OpenRequest so placeholder
-    # typos ({ptha} for {path}) surface at config load — not at open
-    # time, where the resulting KeyError gets surfaced as an ugly
-    # "Open failed: KeyError: 'ptha'" toast in the OpenWithScreen.
     _validate_template(app_id, argv=argv, url=url)
     return _UserAppSpec(
         id=app_id,
@@ -844,33 +806,16 @@ def _validate_template(
     argv: tuple[str, ...] | None,
     url: str | None,
 ) -> None:
-    """Dry-run-format the template against a fully-populated stub
-    OpenRequest. Re-raise the placeholder name as a ValueError so the
-    config-load error message points users at the typo."""
-    stub = OpenRequest(
-        path=Path("/stub/path"),
-        kind="md",
-        page=1,
-        slide=1,
-        heading_path="Stub > Section",
-        line=1,
-        query="stub",
-        vault="StubVault",
-        file_in_vault="stub.md",
-        source_path=Path("/stub"),
-    )
+    """Refuse a template the opener cannot fill, naming the app."""
+    from fnd.config_types import check_argv, check_template
+
     try:
         if argv is not None:
-            _render_argv(list(argv), stub)
+            check_argv(list(argv))
         if url is not None:
-            _render_url(url, stub)
-    except KeyError as e:
-        # e.args[0] is the missing placeholder name.
-        bad = e.args[0] if e.args else "?"
-        raise ValueError(
-            f"app {app_id!r}: template references unknown placeholder {{{bad}}}. "
-            f"See docs/apps.md for the variable list."
-        ) from None
+            check_template(url)
+    except ValueError as e:
+        raise ValueError(f"app {app_id!r}: {e}. See docs/apps.md for the variable list.") from None
 
 
 def _make_user_handler(spec: _UserAppSpec) -> Callable[[OpenRequest], int]:
@@ -878,7 +823,7 @@ def _make_user_handler(spec: _UserAppSpec) -> Callable[[OpenRequest], int]:
         argv_template = list(spec.argv)
 
         def _run_argv(req: OpenRequest) -> int:
-            return subprocess.run(_render_argv(argv_template, req), check=False).returncode
+            return launcher.run(_render_argv(argv_template, req))
 
         return _run_argv
     assert spec.url is not None  # exclusivity enforced above

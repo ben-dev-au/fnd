@@ -13,13 +13,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from rich.text import Text
 
 from fnd.tui.indexer_modal import _format_indexed_line
 
 
 def _plain(*args: object, **kw: object) -> str:
-    return Text.from_markup(_format_indexed_line(*args, **kw)).plain  # type: ignore[arg-type]
+    return _format_indexed_line(*args, **kw).plain  # type: ignore[arg-type]
 
 
 def test_the_line_names_an_unreadable_source() -> None:

@@ -12,25 +12,21 @@ Two shapes, keyed by kind:
 from __future__ import annotations
 
 import csv
-import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 
 from fnd.extract._fences import fenced
 from fnd.extract._tables import gfm_table
 from fnd.extract._text import line_windows
-from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import FileTimes, read_file_times
 from fnd.kinds import KIND_BY_ID, kind_for_suffix
+from fnd.text_canon import decode
 
 WINDOW_LINES = 200
 OVERLAP_LINES = 10
 ROWS_PER_CHUNK = 50
 _DELIMITER = {"csv": ",", "tsv": "\t"}
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def extract(path: Path) -> Iterator[Chunk]:
@@ -46,11 +42,11 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     kind = kind_for_suffix(path.suffix)
     if kind is None:
         return
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = decode(path.read_bytes())
     if not text.strip():
         return
     times = read_file_times(path)
-    parent_id = _parent_id(path)
+    parent_id = file_parent_id(path)
     if kind in _DELIMITER:
         yield from _tabular(text, path, kind, times, parent_id)
     else:

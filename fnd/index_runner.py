@@ -24,7 +24,6 @@ import asyncio
 import contextlib
 import datetime as dt
 import os
-import sys
 import tempfile
 import time
 import tomllib
@@ -55,11 +54,13 @@ from fnd.index import (
     _path_parent_id,
     collections_still_holding,
     commit_async,
+    echo_skip,
     prune_removed_files,
     read_file_metadata,
     unreadable_roots,
 )
 from fnd.index_freshness import Ledger, indexed_with
+from fnd.text_canon import canonical
 from fnd.walk import walk_sources
 
 EventKind = Literal[
@@ -173,7 +174,7 @@ class IndexState:
             raise ValueError("malformed state file (missing [state] table)")
         s = cast(dict[str, Any], raw)
         return cls(
-            collection=str(s.get("collection", "")),
+            collection=canonical(str(s.get("collection", ""))),
             started_at=str(s.get("started_at", "")),
             total_files=int(s.get("total_files", 0) or 0),
             pdfs_total=int(s.get("pdfs_total", 0) or 0),
@@ -204,8 +205,15 @@ def state_dir() -> Path:
 
 
 def state_file_for(collection: str) -> Path:
-    """Where the in-flight state for ``collection`` lives."""
-    return state_dir() / f"{collection}.state.toml"
+    """Where the in-flight state for ``collection`` lives. A state an earlier
+    build saved under the raw name moves here, or resuming would never clear it."""
+    path = state_dir() / f"{paths.safe_filename(collection)}.state.toml"
+    legacy = state_dir() / f"{collection}.state.toml"
+    if legacy != path and not path.exists():
+        with contextlib.suppress(OSError, ValueError):
+            if legacy.is_file():
+                legacy.replace(path)
+    return path
 
 
 def saved_states() -> list[tuple[Path, IndexState]]:
@@ -224,8 +232,19 @@ def saved_states() -> list[tuple[Path, IndexState]]:
         return out
     for path in candidates:
         state = load_state(path)
-        if state is not None:
-            out.append((path, state))
+        if state is None:
+            continue
+        # A run saved under a name since spelt differently moves to the name now
+        # used, or a finished run would clear only the new file.
+        want = state_file_for(state.collection)
+        if path != want and not want.exists():
+            with contextlib.suppress(OSError):
+                path.replace(want)
+        # state_file_for may itself have moved this file there; a different file
+        # already at `want` is its own state, never this one's new home.
+        if not path.exists() and want.exists():
+            path = want
+        out.append((path, state))
     out.sort(key=lambda pair: pair[1].last_update or pair[1].started_at, reverse=True)
     return out
 
@@ -249,7 +268,7 @@ def save_state(state_path: Path, state: IndexState) -> None:
     fd, tmp = tempfile.mkstemp(dir=state_path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
-            tomli_w.dump(state.to_toml_dict(), f)
+            tomli_w.dump(paths.storable(state.to_toml_dict()), f)
         os.replace(tmp, state_path)
     except Exception:
         with contextlib.suppress(OSError):
@@ -1127,8 +1146,7 @@ async def run_indexer(
                 # rendered UI — and the same skip already reaches the user
                 # through the file_error event and the failure log below.
                 if echo_skips:
-                    ts = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
-                    print(f"[fnd skip {ts}] {err}", file=sys.stderr)
+                    echo_skip(str(err))
                 # Persist the failure so the still-flat drill-in screen
                 # can show per-file reasons + retry buttons.
                 with contextlib.suppress(Exception):

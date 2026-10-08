@@ -49,7 +49,9 @@ from tantivy import Schema, SchemaBuilder
 # not once per collection: F_COLLECTION is multi-valued (the set a file belongs
 # to) and F_MEMBERSHIP carries compound (collection, source) tokens for exact
 # source scope. The bump forces the one reindex that collapses divergent copies.
-SCHEMA_VERSION: Final[int] = 10
+# v11 (2026-10-08): canonical text in every indexed field (fnd.text_canon), so
+# the index holds what canonical queries ask for; one decoding for every text kind.
+SCHEMA_VERSION: Final[int] = 11
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"

@@ -71,6 +71,7 @@ class Verdict:
 
 def indexed_with(collection: CollectionConfig, defaults: Defaults) -> dict[str, Any]:
     """The inputs a run of ``collection`` indexes with, as plain JSON values."""
+    from fnd.tags import frontmatter_key
     from fnd.walk import resolve_skip_dirs
 
     sources = [
@@ -91,7 +92,9 @@ def indexed_with(collection: CollectionConfig, defaults: Defaults) -> dict[str, 
         "selection": {"sources": sources, "junk_dirs": sorted(resolve_skip_dirs(defaults))},
         "extraction": {
             # Keys are matched case-insensitively, so case alone is no change.
-            "tag_frontmatter_keys": sorted({k.lower() for k in defaults.tag_frontmatter_keys}),
+            "tag_frontmatter_keys": sorted(
+                {frontmatter_key(k) for k in defaults.tag_frontmatter_keys}
+            ),
             "tag_sources": sorted(defaults.tag_sources),
         },
     }

@@ -25,13 +25,16 @@ from __future__ import annotations
 import re
 import threading
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import pairwise
 
 import snowballstemmer
 
-from fnd.stopwords import STOPWORDS
+from fnd import regex_terms
+from fnd.query_spans import literal_spans, map_outside
+from fnd.stopwords import STOPWORDS, is_all_stopwords
 from fnd.synonyms import SynonymTable, expand
 
 # Canonical doc-text word scanner — the single source of truth for how every
@@ -113,6 +116,22 @@ def _glob_capture_regex(glob: str) -> str:
     return "".join(
         "(.*)" if c == "*" else "(.)" if c == "?" else re.escape(c) for c in glob.lower()
     )
+
+
+def _split_shapes(query: str) -> str:
+    """``query`` with every phrase double-quoted and every ``/regex/`` one
+    whitespace-free token, so this module's splits agree with
+    :mod:`fnd.query_spans` on where each begins and ends."""
+    out = query
+    for span in reversed(literal_spans(query)):
+        text = query[span.start : span.end]
+        if span.kind == "regex":
+            # No token holds whitespace, so ``\s`` matches exactly what the space did.
+            text = re.sub(r"\s", r"\\s", text)
+        elif text.startswith("'"):
+            text = '"' + text[1:-1].replace('"', " ") + '"'
+        out = out[: span.start] + text + out[span.end :]
+    return out
 
 
 def _phrase_word_lists(query: str) -> list[list[str]]:
@@ -342,12 +361,14 @@ class MatchSpec:
         from fnd.query_dsl import _expand_proximity_aliases  # local import: avoid cycle
         from fnd.render import _terms_from_query  # local import: avoid cycle
 
+        query = _split_shapes(query)
+
         # Proximity groups. Reuse the DSL's own expansion so ``{N} a b``,
         # ``a NEAR/N b`` and a typed ``"a b"~N`` all resolve to the same
         # ``"…"~N`` form the matcher sees — no drift. A group is a phrase with
         # slop > 0; its words also feed the loose term set below so every
         # occurrence is found (proximity only splits full vs dim at render time).
-        expanded_query = _expand_proximity_aliases(query)
+        expanded_query = map_outside(query, _expand_proximity_aliases, kinds={"regex"})
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
         for pm in _PROX_PHRASE.finditer(expanded_query):
@@ -483,7 +504,8 @@ class MatchSpec:
                 pair_phrases.append((_stem(a), _stem(b)))
         phrases = phrases + tuple(pair_phrases)
 
-        terms = _terms_from_query(bare_query)
+        # An all-stopword query is searched whole (fnd.stopwords), so it paints.
+        terms = _terms_from_query(bare_query) or (loose_words if is_all_stopwords(query) else [])
         if not terms and not phrases and not wildcards and not regexes and not proximity_groups:
             return cls()
         # Search runs no auto-fuzzy or synonym pass on such a query (fnd.cascade, fnd.fusion).
@@ -575,6 +597,15 @@ class MatchSpec:
         )
 
 
+def prime(spec: MatchSpec, words: Iterable[str]) -> None:
+    """Resolve ``spec``'s regexes over ``words`` in one batch, so the per-word
+    checks that follow are cache hits (see :mod:`fnd.regex_terms`)."""
+    if spec.regexes:
+        stems = {_stem(w) for w in words}
+        for pattern in spec.regexes:
+            regex_terms.matching(pattern, stems)
+
+
 def word_matches(word: str, spec: MatchSpec) -> bool:
     """True if ``word`` matches ``spec`` under any of the search's pass
     semantics: exact-stem (literal / phrase / synonym), wildcard / glob,
@@ -588,12 +619,8 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
     for pattern in (glob_to_regex(g) for g in spec.wildcards):
         if re.fullmatch(pattern, s) is not None:
             return True
-    for pattern in spec.regexes:
-        try:
-            if re.fullmatch(pattern, s, re.IGNORECASE) is not None:
-                return True
-        except re.error:
-            continue
+    if any(regex_terms.matches(pattern, s) for pattern in spec.regexes):
+        return True
     return any(fuzzy_reaches(s, q_stem, max_d) for q_stem, max_d in spec.fuzzy_per_stem)
 
 
@@ -610,12 +637,8 @@ def match_color(word: str, spec: MatchSpec) -> int:
         elif kind == "wildcard":
             if re.fullmatch(glob_to_regex(key), s) is not None:
                 return i
-        elif kind == "regex":
-            try:
-                if re.fullmatch(key, s, re.IGNORECASE) is not None:
-                    return i
-            except re.error:
-                continue
+        elif kind == "regex" and regex_terms.matches(key, s):
+            return i
     return 0
 
 

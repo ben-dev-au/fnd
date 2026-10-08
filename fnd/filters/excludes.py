@@ -47,10 +47,3 @@ def retype(excludes: Sequence[str], typed: Sequence[str]) -> tuple[str, ...]:
     on, _old = split_presets(excludes)
     shipped = set(_globs_of(on))
     return tuple(dict.fromkeys([*(g for g in excludes if g in shipped), *typed]))
-
-
-def invalid_glob(glob: str) -> bool:
-    """Whether ``glob`` cannot compile, so it would exclude nothing."""
-    from fnd.globs import _config_regex  # pyright: ignore[reportPrivateUsage]
-
-    return _config_regex(glob) is None

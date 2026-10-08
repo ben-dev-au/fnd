@@ -13,18 +13,18 @@ valid config) never has to deal with a half-valid state.
 from __future__ import annotations
 
 import datetime as _dt
-import os
-import subprocess
 import tomllib
 from pathlib import Path
 from typing import Literal
 
 from pydantic import ValidationError
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Static
+
+from fnd.tui.ui_text import PlainStatic, PlainToastApp, ui_text
 
 
 def _format_error(exc: Exception, config_path: Path) -> str:
@@ -43,6 +43,21 @@ def _format_error(exc: Exception, config_path: Path) -> str:
 def _backup_name(config_path: Path) -> Path:
     stamp = _dt.datetime.now(tz=_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     return config_path.with_name(f"{config_path.name}.bak-{stamp}")
+
+
+def _editor_refusal(path: Path, rc: int) -> str:
+    """Why the editor did not open, naming the command and the real reason."""
+    import shlex
+
+    from fnd import launcher
+
+    editor = shlex.join(launcher.editor_argv(path)[:-1])
+    if rc == launcher.LAUNCH_REFUSED:
+        return (
+            f"Did not start the editor {editor!r}: {launcher.REFUSED_REASON}. Set "
+            "$VISUAL to an editor that is not a batch file, such as an .exe's full path."
+        )
+    return f"Could not start the editor {editor!r}. Set $VISUAL or $EDITOR to one on your PATH."
 
 
 class _ResetConfirmScreen(Screen[bool]):
@@ -70,14 +85,14 @@ class _ResetConfirmScreen(Screen[bool]):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static("[bold]Reset config?[/]"),
-            Static(
+            PlainStatic(ui_text("[bold]Reset config?[/]")),
+            PlainStatic(
                 f"This will move your current file to a backup\n"
                 f"  {_backup_name(self._config_path).name}\n"
                 f"and write a fresh template at\n"
                 f"  {self._config_path.name}"
             ),
-            Static("[y] yes   [N/Esc] no", classes="footer_hint"),
+            PlainStatic("[y] yes   [N/Esc] no", classes="footer_hint"),
             id="reset_confirm_box",
         )
 
@@ -143,21 +158,21 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="recovery_box"):
-            yield Static("FND could not load your config.", id="recovery_title")
-            yield Static(
+            yield PlainStatic("FND could not load your config.", id="recovery_title")
+            yield PlainStatic(
                 f"File: {self._config_path}\nPick an action below to fix or reset it.",
                 id="recovery_intro",
             )
-            yield Static(self._error_text, id="recovery_error")
-            yield Static("[1] Open in $EDITOR", classes="recovery_choice")
-            yield Static(
+            yield PlainStatic(self._error_text, id="recovery_error")
+            yield PlainStatic("[1] Open in $EDITOR", classes="recovery_choice")
+            yield PlainStatic(
                 "[2] Reset to defaults (current file backed up)", classes="recovery_choice"
             )
-            yield Static(
+            yield PlainStatic(
                 "[3] Quit fnd" if self._standalone else "[3] Dismiss",
                 classes="recovery_choice",
             )
-            yield Static(
+            yield PlainStatic(
                 "Press 1, 2, or 3, or e / r / q.",
                 id="recovery_hints",
             )
@@ -165,7 +180,8 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
     # ── Actions ──────────────────────────────────────────────────────
 
     def action_open_editor(self) -> None:
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+        from fnd import launcher
+
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         if not self._config_path.exists():
             from fnd._perms import secure_write_text
@@ -173,7 +189,10 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
 
             secure_write_text(self._config_path, starter_config())
         with self.app.suspend():
-            subprocess.call([editor, str(self._config_path)])
+            rc = launcher.edit(self._config_path)
+        if rc in (launcher.LAUNCH_FAILED, launcher.LAUNCH_REFUSED):
+            self.notify(_editor_refusal(self._config_path, rc), severity="error", timeout=8)
+            return
         try:
             from fnd.config import load
 
@@ -218,7 +237,7 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
         self.dismiss("exit")
 
 
-class ConfigRecoveryApp(App[None]):
+class ConfigRecoveryApp(PlainToastApp):
     """Standalone wrapper used at TUI startup before the main app exists.
 
     Pushes the reusable :class:`ConfigRecoveryScreen` and exits when the user

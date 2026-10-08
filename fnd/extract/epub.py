@@ -14,7 +14,6 @@ EPUB2/EPUB3 and prefix variations real files ship.
 
 from __future__ import annotations
 
-import hashlib
 import posixpath
 import zipfile
 from collections.abc import Iterator
@@ -27,15 +26,11 @@ from fnd.extract._html import parse, walk_html
 from fnd.extract._ooxml import reject_if_zip_bomb
 from fnd.extract._sectioner import HeadingSectioner
 from fnd.extract._xml import parse_xml
-from fnd.extract.base import Chunk, ExtractError
+from fnd.extract.base import Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import read_file_times
 from fnd.kinds import kind_for_suffix
 
 _XHTML_MEDIA = {"application/xhtml+xml", "text/html"}
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _lname(tag: object) -> str:
@@ -99,7 +94,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
                 href_by_id[iid] = (item.get("href", ""), item.get("media-type", ""))
 
         sec = HeadingSectioner(
-            parent_id=_parent_id(path),
+            parent_id=file_parent_id(path),
             path=path,
             times=times,
             kind=kind,

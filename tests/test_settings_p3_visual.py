@@ -215,7 +215,7 @@ async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
     """Spec: Visual system › Detail strip — populates on focus change."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
-    from fnd.tui.widgets import DetailStrip
+    from fnd.tui.widgets.detail_strip import DetailStrip
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
@@ -231,7 +231,7 @@ async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
         # pause on a loaded runner (the strip then reads empty, not wrong).
         await wait_until(
             pilot,
-            lambda: "preferences" in strip._description.lower(),
+            lambda: "preferences" in str(strip._description).lower(),
             message="DetailStrip never showed the Preferences description",
         )
         # Move cursor to Collections.
@@ -239,7 +239,7 @@ async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
         lst.action_move(1)
         await wait_until(
             pilot,
-            lambda: "collection" in strip._description.lower(),
+            lambda: "collection" in str(strip._description).lower(),
             message="DetailStrip never updated to the Collections description",
         )
 
@@ -738,9 +738,10 @@ class TestARowNamesAGlobThatCannotReachAFolder:
         assert "⚠" in row
         assert "'src/**'" in row, row
 
-    def test_a_trailing_slash_is_no_better(self, tmp_path: Path) -> None:
+    def test_a_trailing_slash_means_the_folder(self, tmp_path: Path) -> None:
+        """The model stores ``build/`` as ``build/**``, so there is nothing to warn about."""
         (tmp_path / "build").mkdir()
-        assert "⚠" in self._row(tmp_path, excludes=["build/"])
+        assert "⚠" not in self._row(tmp_path, excludes=["build/"])
 
     def test_the_working_glob_says_nothing(self, tmp_path: Path) -> None:
         """The control: the form it recommends must not warn about itself."""

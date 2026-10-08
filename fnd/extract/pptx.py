@@ -10,7 +10,6 @@ plain-text Block list for the snippet pipeline.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -21,12 +20,8 @@ from pptx.shapes.base import BaseShape
 from pptx.slide import Slide
 
 from fnd.extract._ooxml import reject_if_zip_bomb
-from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import read_file_times
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _shape_text(shape: BaseShape) -> str:
@@ -155,7 +150,7 @@ def extract(path: Path) -> Iterator[Chunk]:
 
 
 def _extract_inner(path: Path) -> Iterator[Chunk]:
-    parent_id = _parent_id(path)
+    parent_id = file_parent_id(path)
     times = read_file_times(path)
     try:
         prs = Presentation(str(path))

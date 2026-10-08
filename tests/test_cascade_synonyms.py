@@ -254,3 +254,28 @@ def test_format_hit_label_shows_per_pass_glyph() -> None:
     assert "⊕" not in exact_label
     assert "~" in _format_hit_label(_make(1))
     assert "⊕" in _format_hit_label(_make(2))
+
+
+def test_a_derived_pass_the_engine_refuses_degrades_to_nothing(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Like fusion's: the literal hits stand when the synonym or compound
+    rewrite of the query is one the engine cannot run."""
+    from fnd.query_errors import QueryEngineError
+
+    root = tmp_path / "papers"
+    root.mkdir(parents=True)
+    (root / "a.md").write_text("# Notes\nMSSM drop-down here.\n", encoding="utf-8")
+    build_index(roots=[tmp_path], index_dir=tmp_index_dir, collection="default")
+    s = Searcher(index_dir=tmp_index_dir)
+    real = s._filtered_raw_hits
+
+    def _refuses_rewrites(query: str, **kwargs: object) -> list[Hit]:
+        if query != "MSSM dropdown":
+            raise QueryEngineError
+        return real(query, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(s, "_filtered_raw_hits", _refuses_rewrites)
+    table = SynonymTable.from_groups([["MSSM", "minimal supersymmetric standard model"]])
+    hits = cascade_search(s, query="MSSM dropdown", threshold=99, synonyms=table)
+    assert [Path(h.path).name for h in hits] == ["a.md"]

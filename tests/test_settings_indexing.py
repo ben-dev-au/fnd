@@ -168,7 +168,7 @@ async def test_indexing_detail_strip_populated(built_index: Path, cfg: Config) -
     """The auto-resume row has a description; detail strip mirrors it."""
     from fnd.tui.menu import SECTION_INDEXING
     from fnd.tui.settings_screen import SettingsList, open_settings_section
-    from fnd.tui.widgets import DetailStrip
+    from fnd.tui.widgets.detail_strip import DetailStrip
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:

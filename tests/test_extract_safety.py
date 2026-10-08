@@ -82,12 +82,15 @@ def test_pdf_garbage_input_becomes_extract_error(tmp_path: Path) -> None:
         list(pdf.extract(f))
 
 
-def test_markdown_invalid_utf8_becomes_extract_error(tmp_path: Path) -> None:
+def test_markdown_that_is_not_utf8_is_read_as_windows_1252(tmp_path: Path) -> None:
+    """One decoding for every text kind; a legacy file is text, not a failure."""
     f = tmp_path / "bad.md"
-    # Lone continuation byte — invalid UTF-8.
-    f.write_bytes(b"# hi\n\x80\x80\x80\n")
-    with pytest.raises(ExtractError, match="utf-8"):
-        list(markdown.extract(f))
+    f.write_bytes(b"# hi\n\x93quoted\x94 caf\xe9\n")
+    (chunk,) = markdown.extract(f)
+    assert (
+        "\N{LEFT DOUBLE QUOTATION MARK}quoted\N{RIGHT DOUBLE QUOTATION MARK} caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+        in chunk.body
+    )
 
 
 def test_pdf_encrypted_rejected(tmp_path: Path) -> None:

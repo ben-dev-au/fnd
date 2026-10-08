@@ -20,10 +20,36 @@ from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
+from fnd.config_types import (
+    AppArgv,
+    AppTemplate,
+    CollectionName,
+    Duration,
+    Glob,
+    SettingKey,
+    SourcePath,
+    TagList,
+    TagSelection,
+    TagSource,
+    clamp_numbers,
+    clamped_settings,
+    collection_key,
+    collection_name_hazard,
+    composed_names,
+)
 from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_SPECS, split_type_globs
 from fnd.paths import app_data_dir  # re-exported: many modules import it from here
+from fnd.text_canon import fold
 
 _APP_NAME = "fnd"
 
@@ -210,7 +236,7 @@ def is_all_collections(value: str | None, *, known: Collection[str] = ()) -> boo
     """
     if not value or value in known:
         return False
-    return value.strip().casefold() == ALL_COLLECTIONS
+    return fold(value.strip()) == ALL_COLLECTIONS
 
 
 class _ConfigModel(BaseModel):
@@ -222,6 +248,11 @@ class _ConfigModel(BaseModel):
     """
 
     model_config = ConfigDict(use_attribute_docstrings=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _clamp_numbers(cls, data: Any) -> Any:
+        return clamp_numbers(cls, data)
 
 
 def _known_kinds(values: list[str] | None) -> list[str] | None:
@@ -269,14 +300,14 @@ class DefaultFilters(_ConfigModel):
     """Honour .fndignore files. Same syntax as .gitignore, but they apply to fnd
     alone, so they exclude something from search without excluding it from git."""
 
-    excludes: list[str] = Field(default_factory=lambda: list(EXCLUDES_PRESETS["hidden"]["globs"]))
+    excludes: list[Glob] = Field(default_factory=lambda: list(EXCLUDES_PRESETS["hidden"]["globs"]))
     """Glob patterns whose files are never indexed; a folder a `name/**` glob
     covers is pruned unopened. Every source inherits these unless it sets its own."""
 
-    include_tags: list[str] | dict[str, list[str]] = Field(default_factory=list)
+    include_tags: TagSelection = Field(default_factory=list)
     """Index only files carrying one of these tags. Empty means no tag is needed."""
 
-    exclude_tags: list[str] | dict[str, list[str]] = Field(default_factory=lambda: ["no_index"])
+    exclude_tags: TagSelection = Field(default_factory=lambda: ["no_index"])
     """Skip files carrying any of these tags. Reads OS file tags and a note's YAML
     `tags:`. A folder's own tag is not inherited."""
 
@@ -284,10 +315,10 @@ class DefaultFilters(_ConfigModel):
     """Restrict to these file types, e.g. ["md", "pdf"]. Empty means every
     supported type."""
 
-    min_size: int | None = None
+    min_size: int | None = Field(default=None, ge=0)
     """Skip files smaller than this many bytes. Unset means no floor."""
 
-    max_size: int | None = None
+    max_size: int | None = Field(default=None, ge=0)
     """Skip files larger than this many bytes. Unset means no ceiling."""
 
     created_after: dt.date | None = None
@@ -340,12 +371,12 @@ class SourceFilters(_ConfigModel):
 
     respect_gitignore: bool | None = None
     respect_fndignore: bool | None = None
-    excludes: list[str] | None = None
-    include_tags: list[str] | dict[str, list[str]] | None = None
-    exclude_tags: list[str] | dict[str, list[str]] | None = None
+    excludes: list[Glob] | None = None
+    include_tags: TagSelection | None = None
+    exclude_tags: TagSelection | None = None
     kinds: list[str] | None = None
-    min_size: int | None = None
-    max_size: int | None = None
+    min_size: int | None = Field(default=None, ge=0)
+    max_size: int | None = Field(default=None, ge=0)
     created_after: dt.date | None = None
     created_before: dt.date | None = None
     modified_after: dt.date | None = None
@@ -421,11 +452,11 @@ class SourceConfig(_ConfigModel):
     :class:`Config` model_validator; sources can't see siblings.
     """
 
-    path: Path
+    path: SourcePath
     """Folder to index. `~` is expanded; a relative path resolves against
     the working directory at load time."""
 
-    includes: list[str] = Field(default_factory=list)
+    includes: list[Glob] = Field(default_factory=list)
     """Glob patterns a file must match to be indexed. Empty means every
     supported type. Matched against the path relative to this source root."""
 
@@ -532,11 +563,6 @@ class SourceConfig(_ConfigModel):
             return self._resolved_filters
         return resolve_filters(self.filters, DefaultFilters())
 
-    @field_validator("path", mode="before")
-    @classmethod
-    def _expand_path(cls, v: object) -> object:
-        return Path(str(v)).expanduser()
-
     @field_validator("frontmatter_filter")
     @classmethod
     def _validate_filter(cls, v: str | None) -> str | None:
@@ -605,10 +631,10 @@ class CollectionConfig(_ConfigModel):
     roots: list[Path] = Field(default_factory=list)
     """Legacy flat shape. Still accepted, reconciled into sources below."""
 
-    includes: list[str] = Field(default_factory=list)
+    includes: list[Glob] = Field(default_factory=list)
     """Applied to every source in this collection that sets none of its own."""
 
-    excludes: list[str] = Field(default_factory=list)
+    excludes: list[Glob] = Field(default_factory=list)
     """Applied to every source in this collection that sets none of its own."""
 
     follow_symlinks: bool = False
@@ -626,7 +652,7 @@ class CollectionConfig(_ConfigModel):
         return [Path(str(p)).expanduser() for p in v]
 
     @model_validator(mode="after")
-    def _normalise_sources(self) -> CollectionConfig:
+    def _normalise_sources(self, info: ValidationInfo) -> CollectionConfig:
         # sources were explicitly provided alongside roots; only valid if roots
         # is already empty (idempotent re-validation path is handled below).
         if self.sources and self.roots:
@@ -645,12 +671,16 @@ class CollectionConfig(_ConfigModel):
             raise ValueError("collection mixes legacy 'roots' with 'sources'; pick one")
         if not self.sources and self.roots:
             # Promote legacy flat shape into a single implicit source.
+            # The load's context, so a relative root resolves where a source's would.
             implicit = [
-                SourceConfig(
-                    path=root,
-                    includes=list(self.includes),
-                    filters=_legacy_filters(self.excludes),
-                    follow_symlinks=self.follow_symlinks,
+                SourceConfig.model_validate(
+                    {
+                        "path": root,
+                        "includes": list(self.includes),
+                        "filters": _legacy_filters(self.excludes),
+                        "follow_symlinks": self.follow_symlinks,
+                    },
+                    context=info.context,
                 )
                 for root in self.roots
             ]
@@ -674,21 +704,21 @@ class RankingProfileConfig(_ConfigModel):
     ignored at runtime: tantivy hardcodes them upstream.
     """
 
-    recency_boost: float = 0.0
+    recency_boost: float = Field(default=0.0, ge=0)
     """How much a recent modification time lifts a result. 0 ignores mtime
     entirely; higher values favour recent files more strongly."""
 
-    recency_half_life: str = "365d"  # parsed via _parse_duration
+    recency_half_life: Duration = "365d"
     """Age at which the recency boost has decayed by half, e.g. "365d", "12w"."""
 
     filetype_boosts: dict[str, float] = Field(default_factory=dict)
     """Per-type score multipliers, e.g. { md = 1.0, pdf = 0.85 }. A type not
     named here scores at 1.0."""
 
-    phrase_proximity: float = 0.0
+    phrase_proximity: float = Field(default=0.0, ge=0)
     """Extra proximity boost applied after ranking. 0 disables it."""
 
-    proximity_max_window: int = 50
+    proximity_max_window: int = Field(default=50, ge=1)
     """Word distance within which two query terms count as near each other
     for the proximity boost."""
 
@@ -719,11 +749,11 @@ class AppConfig(_ConfigModel):
     """File types this app opens, e.g. ["md"]. Used to resolve the Open
     shortcut when a source or default names this app."""
 
-    argv: list[str] | None = None
+    argv: AppArgv | None = None
     """Command line to launch, as a list. Supports template variables such
     as {path} and {page}. Omit to open via the URL scheme instead."""
 
-    url: str | None = None
+    url: AppTemplate | None = None
     """URL scheme template to open instead of a command line, e.g. an
     `obsidian://` link. One of argv or url must be set."""
 
@@ -757,22 +787,22 @@ class Defaults(_ConfigModel):
     """Collection searched when `--collection` is omitted; "all" means every one.
     Seeds scope only until you tick collections in the sidebar."""
 
-    tag_sources: list[Literal["frontmatter", "os"]] = ["frontmatter", "os"]
+    tag_sources: list[TagSource] = ["frontmatter", "os"]
     """Which tag sources feed the Tags filter. Removing one applies at once;
     re-adding one leaves collections with outdated tags until a rebuild re-reads them."""
 
-    tag_frontmatter_keys: list[str] = []
+    tag_frontmatter_keys: TagList = []
     """Extra frontmatter keys treated as tags, e.g. `Course:`. Values namespace
     under the key (course/algebra). Changing them leaves tags outdated until a
     rebuild."""
 
-    result_limit: int = DEFAULT_RESULT_LIMIT
+    result_limit: int = Field(default=DEFAULT_RESULT_LIMIT, ge=1, le=1000)
     """How many result rows a search returns. Lower it to speed up a slow query."""
 
-    preview_chunks: int = 5
+    preview_chunks: int = Field(default=5, ge=1, le=50)
     """Chunks of a file shown in the preview pane around the match."""
 
-    debounce_ms: int = 200
+    debounce_ms: int = Field(default=200, ge=0, le=2000)
     """Idle delay after typing before the search runs, in milliseconds.
     0 searches on every keystroke."""
 
@@ -780,27 +810,27 @@ class Defaults(_ConfigModel):
     """Trailing summaries on Settings rows: always_show, smart (only rows with
     content), or always_ellipsis."""
 
-    sections_score_threshold: float = 0.5
+    sections_score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     """Keep a section when its score is at least this fraction of the file's best.
     1.0 keeps only the top one."""
 
-    sections_per_file_max: int = 200
+    sections_per_file_max: int = Field(default=200, ge=1, le=2000)
     """Hard cap on sections kept per file, whatever the score threshold
     admits. A safety net against one huge file filling the results."""
 
-    preview_decode_workers: int = 4
+    preview_decode_workers: int = Field(default=4, ge=1, le=16)
     """Threads used to decode preview chunks. 1 is serial; raise for very large
     PDFs."""
 
-    preview_warm_margin: int = 2
+    preview_warm_margin: int = Field(default=2, ge=0, le=20)
     """Chunks warmed either side of a match, so a jump lands with context ready. 0
     warms matches only."""
 
-    preview_load_debounce_ms: int = 150
+    preview_load_debounce_ms: int = Field(default=150, ge=0, le=1000)
     """Idle delay before a cursor move loads a preview, in milliseconds. 0 loads
     instantly."""
 
-    preview_prefetch_count: int = 4
+    preview_prefetch_count: int = Field(default=4, ge=0, le=50)
     """Top result files decoded in the background after a search, so opening them
     is instant. 0 disables it."""
 
@@ -808,7 +838,7 @@ class Defaults(_ConfigModel):
     """Auto-fuzzy matching in the cascade fallback. When False, only per-term
     ``~N`` modifiers in the query trigger fuzzy expansion."""
 
-    fuzzy_min_term_chars: int = 3
+    fuzzy_min_term_chars: int = Field(default=3, ge=0, le=10)
     """Shortest stem auto-fuzzy applies to. Shorter terms stay exact."""
 
     indexer_auto_resume: bool = False
@@ -819,7 +849,7 @@ class Defaults(_ConfigModel):
     """Write PDF structure cache entries while indexing. Off reads the cache but
     adds nothing, for a faster refresh."""
 
-    cloud_fetch_timeout_s: int = 60
+    cloud_fetch_timeout_s: int = Field(default=60, ge=1, le=3600)
     """Seconds to wait for a cloud-only file to download before skipping it. Raise
     it on a slow link."""
 
@@ -856,7 +886,7 @@ class Config(_ConfigModel):
     defaults: Defaults = Field(default_factory=Defaults)
     """App-wide settings and the filters every source inherits."""
 
-    collections: dict[str, CollectionConfig] = Field(default_factory=dict)
+    collections: dict[CollectionName, CollectionConfig] = Field(default_factory=dict)
     """Named groups of source folders, searched together."""
 
     ranking: dict[str, RankingProfileConfig] = Field(default_factory=dict)
@@ -869,6 +899,31 @@ class Config(_ConfigModel):
     app_defaults: dict[str, str] = Field(default_factory=dict)
     """Default app per file type, e.g. `md = "obsidian"`. Missing types use the
     system default."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _composed_collection_names(cls, data: Any) -> Any:
+        """A name an earlier build stored decomposed (pasted from Finder) is
+        stored composed, as queries and the index spell it; never refused."""
+        renamed = composed_names(data)
+        if not renamed:
+            return data
+        data = dict(data)
+        data["collections"] = {renamed.get(k, k): v for k, v in data["collections"].items()}
+        defaults = data.get("defaults")
+        if isinstance(defaults, dict) and defaults.get("collection") in renamed:
+            data["defaults"] = {**defaults, "collection": renamed[defaults["collection"]]}
+        return data
+
+    @model_validator(mode="after")
+    def _distinct_collection_names(self) -> Config:
+        """Names differing only by case share one state file on APFS and NTFS."""
+        seen: dict[str, str] = {}
+        for name in self.collections:
+            other = seen.setdefault(collection_key(name), name)
+            if other != name:
+                raise ValueError(f"collections {other!r} and {name!r} differ only by case")
+        return self
 
     @model_validator(mode="after")
     def _resolve_source_filters(self) -> Config:
@@ -1021,6 +1076,9 @@ def validate_collection_name(name: str) -> str:
         raise InvalidCollectionNameError(
             f"collection name {name!r} contains forbidden character(s): {shown}"
         )
+    hazard = collection_name_hazard(name)
+    if hazard:
+        raise InvalidCollectionNameError(hazard)
     # Windows reserves device names (CON, PRN, …) for ANY file whose stem (the
     # part before the first dot) matches, so ``CON`` → ``CON.state.toml``
     # can't be created. Reject only on Windows so an existing macOS/Linux config
@@ -1033,7 +1091,7 @@ def validate_collection_name(name: str) -> str:
     # ``all`` is the pseudo-name for "every collection" in ``-c`` and in
     # ``defaults.collection``; a real one would make those ambiguous. Only
     # blocked at write time, so an older config that already has one loads.
-    if name.casefold() == ALL_COLLECTIONS:
+    if fold(name) == ALL_COLLECTIONS:
         raise InvalidCollectionNameError(
             f"collection name {name!r} is reserved; it means 'every collection' in "
             "`--collection` and `defaults.collection`"
@@ -1061,6 +1119,11 @@ def parse_duration_seconds(s: str) -> int:
 # ── Loaders ─────────────────────────────────────────────────────────────────
 
 
+def _context(config_path: Path) -> dict[str, Path]:
+    """What a field needs from where the config lives: relative paths resolve there."""
+    return {"config_dir": config_path.expanduser().absolute().parent}
+
+
 def load(path: Path | None = None) -> Config:
     """Load and validate the config TOML. If the file is missing, return a
     Config with no collections; the caller decides whether to error.
@@ -1076,7 +1139,7 @@ def load(path: Path | None = None) -> Config:
         return Config()
     raw = tomllib.loads(p.read_text(encoding="utf-8"))
     check_version(raw)
-    return Config.model_validate(raw)
+    return Config.model_validate(raw, context=_context(p))
 
 
 def ensure_current(config_path: Path | None = None) -> list[str]:
@@ -1097,10 +1160,15 @@ def ensure_current(config_path: Path | None = None) -> list[str]:
     text = p.read_text(encoding="utf-8")
     raw = tomllib.loads(text)
     version, applied = migrate(raw)
-    config = Config.model_validate(raw)
+    config = Config.model_validate(raw, context=_context(p))
     rendered = render_config(config, preserved=extract_preserved(text), version=version)
     if rendered == text or tomllib.loads(rendered) == tomllib.loads(text):
         return []
+    applied = [
+        *applied,
+        *clamped_settings(raw, config),
+        *(f"Store the collection name {new!r} composed" for new in composed_names(raw).values()),
+    ]
     _refuse_lossy(rendered, config, raw)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     # The backup carries the same source paths and filter expressions as the
@@ -1137,7 +1205,7 @@ def _rewrite(config_path: Path, mutate: Callable[[dict[str, Any]], None]) -> Con
     raw: dict[str, Any] = tomllib.loads(text) if text else {}
     version, _applied = migrate(raw)
     mutate(raw)
-    config = Config.model_validate(raw)
+    config = Config.model_validate(raw, context=_context(config_path))
     rendered = render_config(config, preserved=extract_preserved(text), version=version)
     _refuse_lossy(rendered, config, raw)
     secure_mkdir(config_path.parent)
@@ -1232,9 +1300,10 @@ def write_collection(
     _rewrite(config_path, mutate)
 
 
-def _apply_setting(raw: dict[str, Any], dotted_path: str, value: object) -> None:
-    """One dotted-path edit against the raw mapping."""
-    parts = [p for p in dotted_path.split(".") if p]
+def _apply_setting(raw: dict[str, Any], key: str | SettingKey, value: object) -> None:
+    """One edit against the raw mapping. A string key is a dotted schema path;
+    a key holding a user-chosen name must be a tuple, as the name may hold a dot."""
+    parts = [p for p in key.split(".") if p] if isinstance(key, str) else list(key)
     if not parts:
         raise ValueError("dotted_path must contain at least one segment")
     *parents, leaf = parts
@@ -1275,7 +1344,7 @@ class ConfigChangedError(RuntimeError):
     """Raised when the file moved on since the editor read it."""
 
 
-def write_settings(*, config_path: Path, values: dict[str, object]) -> Config:
+def write_settings(*, config_path: Path, values: dict[str | SettingKey, object]) -> Config:
     """Apply several dotted-path settings in one read-modify-write.
 
     One filter set is thirteen keys. Writing them one at a time meant a
@@ -1290,7 +1359,7 @@ def write_settings(*, config_path: Path, values: dict[str, object]) -> Config:
     return _rewrite(config_path, mutate)
 
 
-def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Config:
+def write_setting(*, config_path: Path, dotted_path: str | SettingKey, value: object) -> Config:
     """Update a single field in the config by dotted path.
 
     Examples of ``dotted_path``:
@@ -1374,3 +1443,22 @@ def delete_collection(*, config_path: Path, name: str, renamed_to: str | None = 
 
     _rewrite(config_path, mutate)
     return stale_default
+
+
+def rename_collection(*, config_path: Path, old: str, new: str) -> None:
+    """Move ``[collections.<old>]`` to ``new`` in one write, so a case-only rename
+    never holds both names at once; ``defaults.collection`` follows it."""
+    validate_collection_name(new)
+
+    def mutate(raw: dict[str, Any]) -> None:
+        tables = raw.get("collections")
+        if not isinstance(tables, dict) or old not in tables:
+            raise KeyError(f"unknown collection {old!r}")
+        if new in tables:
+            raise ValueError(f"collection {new!r} already exists")
+        tables[new] = tables.pop(old)  # pyright: ignore[reportUnknownMemberType]
+        table = raw.get("defaults")
+        if isinstance(table, dict) and table.get("collection") == old:  # pyright: ignore[reportUnknownMemberType]
+            table["collection"] = new
+
+    _rewrite(config_path, mutate)

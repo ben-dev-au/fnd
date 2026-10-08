@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -24,10 +25,10 @@ from typing import TYPE_CHECKING, Final
 
 from tantivy import Index, Query, Schema
 
-from fnd.display_text import sanitise_display_text
+from fnd.display_text import display_line
 from fnd.extract.base import Block
-from fnd.matching import MatchSpec
-from fnd.query_errors import QuerySyntaxError
+from fnd.matching import DOC_WORD_RE, MatchSpec, prime, word_matches
+from fnd.query_errors import QueryEngineError, QueryError
 from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-export (back-compat)
 from fnd.query_plan import enforce_query_bounds
 
@@ -129,16 +130,6 @@ def scope_arms(
     return arms
 
 
-# Content tokens that parse_query can't handle on the body field and which we
-# resolve against the stemmed dictionary ourselves:
-#   _WILDCARD_RE  trailing prefix wildcard ``crypto*``  → BM25 prefix_variants
-#   _FUZZY_RE     ``term~N`` fuzzy                       → BM25 fuzzy_variants
-#   _REGEX_RE     ``/pattern/``                          → RegexQuery
-#   _GLOB_RE      any ``*``/``?`` (infix/leading)        → RegexQuery
-_WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")
-_FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")
-_REGEX_RE: Final = re.compile(r"^/(.+)/$")
-_GLOB_RE: Final = re.compile(r"[*?]")
 # Below this many chunks/file the thread-pool overhead outweighs the
 # decode parallelism — fall back to serial decode regardless of the
 # requested ``max_workers``.
@@ -310,7 +301,14 @@ def _snippet_anchors(body_text: str, spec: MatchSpec) -> list[tuple[int, str]]:
 
 
 def _window(body_text: str, pos: int, half: int) -> str:
-    return sanitise_display_text(body_text[max(0, pos - half) : pos + half]).strip()
+    """The text within ``half`` of ``pos``, cut only between words: a cut word
+    reads as a different one, and would be matched as one."""
+    lo, hi = max(0, pos - half), min(len(body_text), pos + half)
+    while 0 < lo < hi and body_text[lo - 1].isalnum() and body_text[lo].isalnum():
+        lo += 1
+    while lo < hi < len(body_text) and body_text[hi - 1].isalnum() and body_text[hi].isalnum():
+        hi -= 1
+    return display_line(body_text[lo:hi]).strip()
 
 
 def _region_needles(spec: MatchSpec) -> list[str]:
@@ -356,15 +354,13 @@ def _scan_region(body_text: str, spec: MatchSpec) -> str:
         first = re.search(r"(?<![^\W_])(?:" + alternation + ")", body_text, re.IGNORECASE)
         if first:
             hits.append(first.start())
-    if not hits:
-        # Only a regex-only query needs the patterns run here; the matcher
-        # runs them over every word of this body anyway, so the cost is
-        # the one it already carries.
-        for pattern in spec.regexes:
-            with contextlib.suppress(re.error):
-                found = re.search(pattern, body_text, re.IGNORECASE)
-                if found:
-                    hits.append(found.start())
+    if not hits and spec.regexes:
+        # A regex-only query: the first word the highlighter will paint.
+        words = list(DOC_WORD_RE.finditer(body_text))
+        prime(spec, (m.group(0) for m in words))
+        first_word = next((m for m in words if word_matches(m.group(0), spec)), None)
+        if first_word is not None:
+            hits.append(first_word.start())
     if not hits:
         return body_text[:_SNIPPET_REGION_CHARS]
     start = max(0, min(hits) - _SNIPPET_REGION_CHARS // 2)
@@ -399,7 +395,7 @@ def _make_snippet(
     body_text = _scan_region(body_text, spec)
     anchors = _snippet_anchors(body_text, spec)
     if not anchors:
-        return sanitise_display_text(body_text[:ctx]).strip()
+        return display_line(body_text[:ctx]).strip()
 
     half = ctx // 2
     lower = body_text.lower()
@@ -455,16 +451,33 @@ def _dedup_by_file(hits: list[Hit], limit: int) -> list[Hit]:
     return out
 
 
-def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
-    """Parse via Tantivy, converting its raw ``ValueError`` syntax errors into a
-    typed :class:`QuerySyntaxError` so callers never crash on a malformed query."""
+@contextlib.contextmanager
+def _engine_refusals() -> Generator[None]:
+    """Around building and running a query: tantivy refuses some with a plain
+    ``ValueError``, some only when run, and either is a QueryEngineError."""
     try:
-        return index.parse_query(query, **kwargs)  # type: ignore[arg-type]
+        yield
+    except QueryError:
+        raise
     except ValueError as e:
-        raise QuerySyntaxError(
-            "invalid query syntax",
-            hint="check quotes, brackets and parentheses are balanced",
-        ) from e
+        raise QueryEngineError from e
+
+
+def _engine_boundary[**P, R](search: Callable[P, R]) -> Callable[P, R]:
+    """A tantivy panic arrives as ``pyo3_runtime.PanicException``, a
+    BaseException no ``except Exception`` catches; it becomes a typed
+    :class:`QueryEngineError` here, so a search fails as a query error."""
+
+    @functools.wraps(search)
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return search(*args, **kwargs)
+        except BaseException as e:
+            if type(e).__module__ != "pyo3_runtime":
+                raise
+            raise QueryEngineError from e
+
+    return guarded
 
 
 class Searcher:
@@ -495,33 +508,26 @@ class Searcher:
         self._index.reload()
         self._searcher = self._index.searcher()
 
-    def _content_body_query(
-        self, content: str, schema: Schema, body_parse_kwargs: dict[str, object]
-    ) -> Query:
-        """Scored F_BODY query for the content terms.
-
-        Parsed into a boolean AST (:mod:`fnd.query_ast`) and lowered to Tantivy
-        (:mod:`fnd.query_compile`), so wildcards (``crypto*``/``*tion``/``col?r``),
-        ``term~N`` fuzzies, ``/regex/``, phrases, ``+``/``-`` and ``^`` boosts all
-        compose inside ``AND``/``OR``/``NOT`` and parentheses. ``parse_query``
-        (which drops ``*`` and no-ops ``~N``) is used only for plain term/phrase
-        leaves, where it gives correct analyzer/stemming parity. Adjacency is a
-        weighted OR (Should) so the bare-multi-term default still ranks all-term
-        docs highest. A field-grouped clause (``title:(a OR b)``) left in the
-        content by filter extraction is kept whole by the tokenizer and lowered
-        through ``parse_query`` as one leaf, so wildcards/fuzzy beside it still
-        compile.
-        """
-        import tantivy
-
+    @_engine_boundary
+    def content_query(self, text: str, fields: Sequence[str]) -> Query | None:
+        """``text`` compiled as search content over ``fields`` (see
+        :meth:`_raw_hits`), or None when it holds nothing searchable."""
         from fnd.query_ast import parse_query_ast
         from fnd.query_compile import compile_query
+        from fnd.schema import build_schema
 
-        node = parse_query_ast(content)
+        node = parse_query_ast(text)
         if node is None:
-            return tantivy.Query.empty_query()
-        return compile_query(node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs)
+            return None
+        with _engine_refusals():
+            return compile_query(
+                node,
+                searcher=self,
+                schema=build_schema(),
+                parse_kwargs={"default_field_names": list(fields)},
+            )
 
+    @_engine_boundary
     def _raw_hits(
         self,
         query: str,
@@ -535,6 +541,8 @@ class Searcher:
     ) -> list[Hit]:
         import tantivy
 
+        from fnd.query_ast import parse_query_ast, resolves_in_body_only
+        from fnd.query_compile import compile_query
         from fnd.query_dsl import preprocess
         from fnd.query_filters import extract_filters
         from fnd.schema import (
@@ -585,60 +593,60 @@ class Searcher:
         # query (e.g. ``kind:pdf`` alone) has no content → match every chunk and
         # let the filters narrow. With neither content nor filters there is
         # nothing to match — return no results rather than the whole corpus.
-        has_content = bool(content.strip())
-        if has_content:
-            body_required = self._content_body_query(content, schema, body_parse_kwargs)
-        elif filters:
-            body_required = tantivy.Query.all_query()
-        else:
-            body_required = tantivy.Query.empty_query()
-        clauses: list[tuple[tantivy.Occur, tantivy.Query]] = [(tantivy.Occur.Must, body_required)]
-        # Hard filters: required, but const-scored to 0 so they don't perturb BM25.
-        for f in filters:
-            clauses.append((tantivy.Occur.Must, tantivy.Query.const_score_query(f, 0.0)))
-        # Should-clause: secondary fields boost score without gating visibility.
-        # Parsed against the content (filters already removed). Skipped when the
-        # content carries wildcard/fuzzy/regex tokens — parse_query can't handle
-        # those (and the boost is best-effort, not a visibility gate). Each token
-        # is stripped of ``+``/``-``/parens and a trailing ``^boost`` first so a
-        # grouped / prefixed / boosted special token (``+crypto*``, ``(function~1)``,
-        # ``/crypt(o|id)/^2``) is still detected. (``~N`` is KEPT — it's what makes
-        # a fuzzy token special.)
-        content_is_special = any(
-            _WILDCARD_RE.match(c) or _FUZZY_RE.match(c) or _REGEX_RE.match(c) or _GLOB_RE.search(c)
-            for t in content.split()
-            for c in (re.sub(r"\^[\d.]+$", "", t.strip("+-()")),)
-        )
-        if has_content and not content_is_special:
-            boost_secondary = _parse_query(
-                self._index,
-                content,
-                default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
-                field_boosts={
-                    F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
-                    F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
-                    F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
-                },
-            )
-            clauses.append((tantivy.Occur.Should, boost_secondary))
-        parsed = tantivy.Query.boolean_query(clauses)
-        # Pin one generation for the whole search→doc sequence. A
-        # concurrent reload() may swap self._searcher mid-op; the
-        # DocAddresses below are generation-specific, so reading them
-        # against a newer searcher yields garbage (or a Rust panic).
-        searcher = self._searcher
-        result = searcher.search(parsed, limit=limit)
+        # Building and running the query, not reading what it found back.
+        with _engine_refusals():
+            has_content = bool(content.strip())
+            node = parse_query_ast(content) if has_content else None
+            if has_content:
+                body_required = compile_query(
+                    node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs
+                )
+            elif filters:
+                body_required = tantivy.Query.all_query()
+            else:
+                body_required = tantivy.Query.empty_query()
+            clauses: list[tuple[tantivy.Occur, tantivy.Query]] = [
+                (tantivy.Occur.Must, body_required)
+            ]
+            # Hard filters: required, but const-scored to 0 so they don't perturb BM25.
+            for f in filters:
+                clauses.append((tantivy.Occur.Must, tantivy.Query.const_score_query(f, 0.0)))
+            # Should-clause: secondary fields boost score without gating visibility.
+            # The same AST, lowered against them; skipped when a leaf resolves
+            # against F_BODY's dictionary only, which would score the body twice.
+            if node is not None and not resolves_in_body_only(node):
+                secondary_kwargs: dict[str, object] = {
+                    "default_field_names": [F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
+                    "field_boosts": {
+                        F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
+                        F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
+                        F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
+                    },
+                }
+                boost_secondary = compile_query(
+                    node, searcher=self, schema=schema, parse_kwargs=secondary_kwargs
+                )
+                clauses.append((tantivy.Occur.Should, boost_secondary))
+            parsed = tantivy.Query.boolean_query(clauses)
+            # Pin one generation for the whole search→doc sequence. A
+            # concurrent reload() may swap self._searcher mid-op; the
+            # DocAddresses below are generation-specific, so reading them
+            # against a newer searcher yields garbage (or a Rust panic).
+            searcher = self._searcher
+            result = searcher.search(parsed, limit=limit)
 
         from fnd.struct import decode as decode_body_struct
 
-        out: list[Hit] = []
-        for score, address in result.hits:
-            doc = searcher.doc(address)
+        docs = [(score, searcher.doc(address)) for score, address in result.hits]
+        bodies: list[str] = []
+        for _score, doc in docs:
             body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
-            body_text = ""
-            if body_struct_bytes is not None:
-                blocks = decode_body_struct(body_struct_bytes)
-                body_text = "\n".join(b.text for b in blocks)
+            blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes is not None else []
+            bodies.append("\n".join(b.text for b in blocks))
+        # One regex batch for every snippet below, not one per hit.
+        prime(_snippet_spec(query), (w for body in bodies for w in DOC_WORD_RE.findall(body)))
+        out: list[Hit] = []
+        for (score, doc), body_text in zip(docs, bodies, strict=True):
             meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
             if meta_blob_bytes is None:
                 meta_blob_bytes = b""

@@ -45,7 +45,14 @@ _WRAP = {"strong": "**", "b": "**", "em": "*", "i": "*", "code": "`"}
 
 
 def parse(content: bytes | str) -> HtmlElement:
-    """Parse HTML/XHTML into an element tree (encoding auto-detected for bytes)."""
+    """Parse HTML/XHTML into an element tree. Bytes that are valid UTF-8 are read
+    as UTF-8: libxml2 assumes Latin-1 for a page that declares no charset."""
+    if isinstance(content, bytes):
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            return lxml.html.fromstring(content)
+        return lxml.html.fromstring(content, parser=lxml.html.HTMLParser(encoding="utf-8"))
     return lxml.html.fromstring(content)
 
 

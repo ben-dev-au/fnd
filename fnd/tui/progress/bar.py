@@ -22,6 +22,8 @@ from textual.app import RenderResult
 from textual.reactive import reactive
 from textual.widget import Widget
 
+from fnd.display_text import display_line
+
 # Both runs are the pane border's own rule, so the line sits in the frame at
 # exactly the weight of the borders it sits under; only colour separates the
 # filled part from the remainder. A heavier glyph for the fill was tried first
@@ -52,6 +54,7 @@ def progress_line_segments(
     if width <= 0:
         return []
     fraction = 0.0 if fraction < 0.0 else (1.0 if fraction > 1.0 else fraction)
+    label = display_line(label)
 
     bar_width = width
     shown_label = ""

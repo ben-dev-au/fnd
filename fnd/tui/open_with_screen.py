@@ -31,10 +31,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import OptionList, Static
+from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
 from fnd.apps import App, OpenRequest
+from fnd.display_text import display_line
+from fnd.tui.ui_text import PlainOptionList, PlainStatic, set_border_title
 
 # ── Pure helpers (testable without Pilot) ─────────────────────────────
 
@@ -185,12 +187,12 @@ class OpenWithScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         kind = getattr(self._hit, "kind", "?")
         with Vertical(id="open_with_box") as box:
-            box.border_title = f" Open with: .{kind} "
+            set_border_title(box, f" Open with: .{kind} ")
             options: list[Option] = []
             for row in self._rows:
                 options.append(Option(self._row_text(row), id=row.id))
-            yield OptionList(*options, id="open_with_list")
-            yield Static(
+            yield PlainOptionList(*options, id="open_with_list")
+            yield PlainStatic(
                 "↑↓ pick · Enter open · letter jump · Esc cancel",
                 id="open_with_hint",
             )
@@ -204,7 +206,7 @@ class OpenWithScreen(ModalScreen[str | None]):
         text = Text()
         text.append(f" {key} ", style="bold")
         text.append(f" {marker} ", style="yellow" if row.is_default else "")
-        text.append(row.display_name)
+        text.append(display_line(row.display_name))
         if row.is_default:
             text.stylize("bold")
         return text
@@ -246,7 +248,15 @@ class OpenWithScreen(ModalScreen[str | None]):
             self.app.notify(f"Open failed: {exc}", title=app.display_name, severity="error")
             self.dismiss(None)
             return
-        if rc != 0:
+        from fnd.launcher import LAUNCH_REFUSED, REFUSED_REASON
+
+        if rc == LAUNCH_REFUSED:
+            self.app.notify(
+                f"Did not start {app.display_name}: {REFUSED_REASON}.",
+                title="Open",
+                severity="error",
+            )
+        elif rc != 0:
             self.app.notify(
                 f"{app.display_name} returned exit code {rc}",
                 title="Open",

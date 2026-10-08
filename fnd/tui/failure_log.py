@@ -79,8 +79,11 @@ def _save_records(records: list[FailureRecord]) -> None:
             for r in records
         ]
     }
+    from fnd._perms import secure_write_text
+
+    # Atomic, so a write that fails can never leave the log empty.
     with contextlib.suppress(OSError):
-        path.write_text(tomli_w.dumps(payload), encoding="utf-8")
+        secure_write_text(path, tomli_w.dumps(paths.storable(payload)), atomic=True)
 
 
 def _prune(records: list[FailureRecord]) -> list[FailureRecord]:

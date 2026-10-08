@@ -14,15 +14,22 @@ separate so the snippet path doesn't end up showing markdown markers like
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from markdown_it import MarkdownIt
 
-from fnd.extract.base import MAX_CHUNK_CHARS, MAX_TABLE_CHARS, Block, Chunk, ExtractError
+from fnd.extract.base import (
+    MAX_CHUNK_CHARS,
+    MAX_TABLE_CHARS,
+    Block,
+    Chunk,
+    ExtractError,
+    file_parent_id,
+)
 from fnd.fsmeta import FileTimes, read_file_times
+from fnd.text_canon import decode
 
 # CommonMark plus the GFM table rule: without it a table parses as a paragraph
 # of raw pipes, which inflates the body over the chunk budget and renders as raw
@@ -47,10 +54,6 @@ _CONTENT_TOKEN_TYPES: frozenset[str] = frozenset(
         "hr",
     }
 )
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _flush_section(
@@ -209,10 +212,7 @@ def _blank_frontmatter(source: str) -> str:
 
 
 def _extract_inner(path: Path) -> Iterator[Chunk]:
-    try:
-        source = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as e:
-        raise ExtractError(str(path), f"not valid utf-8: {e}") from e
+    source = decode(path.read_bytes())
     if not source.strip():
         return
 
@@ -220,7 +220,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     # preview's body_md picks frontmatter up.
     source = _blank_frontmatter(source)
 
-    parent_id = _parent_id(path)
+    parent_id = file_parent_id(path)
     times = read_file_times(path)
     tokens = _md.parse(source)
     source_lines = source.splitlines()

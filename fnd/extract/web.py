@@ -8,19 +8,14 @@ matching highlighting and scroll-to-match.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 
 from fnd.extract._html import parse, walk_html
 from fnd.extract._sectioner import HeadingSectioner
-from fnd.extract.base import Chunk, ExtractError
+from fnd.extract.base import Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import read_file_times
 from fnd.kinds import kind_for_suffix
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def extract(path: Path) -> Iterator[Chunk]:
@@ -46,7 +41,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         title = title_el.text.strip()
 
     sec = HeadingSectioner(
-        parent_id=_parent_id(path), path=path, times=times, kind=kind, title=title
+        parent_id=file_parent_id(path), path=path, times=times, kind=kind, title=title
     )
     walk_html(root, sec)
     yield from sec.finish()

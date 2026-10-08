@@ -18,7 +18,7 @@ import snowballstemmer
 from rich.text import Text
 
 from fnd.extract.base import Block
-from fnd.matching import DOC_WORD_RE
+from fnd.matching import DOC_WORD_RE, prime
 from fnd.stopwords import STOPWORDS as _HL_STOPWORDS
 
 if TYPE_CHECKING:
@@ -114,6 +114,7 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
     if spec.is_empty or not text:
         return False
     tokens = list(DOC_WORD_RE.finditer(text))
+    prime(spec, (m.group(0) for m in tokens))
     if any(word_matches(m.group(0), spec) for m in tokens):
         return True
     return bool(phrase_char_spans(text, spec) or _joined_runs([tokens], [set()], spec)[0])
@@ -226,6 +227,7 @@ def match_word_spans_multi(
     # sequence; only proximity group members consult it, so plain queries get the
     # undimmed runs unchanged (and skip stemming entirely).
     words = [m.group(0) for tokens in per_segment for m in tokens]
+    prime(spec, words)
     members, full = _proximity_tiers(words, spec)
     out: list[list[tuple[int, int, str]]] = []
     base = 0

@@ -8,7 +8,6 @@ labels read sensibly. Parsed with the stdlib ``json`` module — no nbformat.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Iterator
@@ -16,14 +15,11 @@ from pathlib import Path
 from typing import Any
 
 from fnd.extract._fences import fenced
-from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import read_file_times
+from fnd.text_canon import decode
 
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _source(raw: Any) -> str:
@@ -78,7 +74,7 @@ def extract(path: Path) -> Iterator[Chunk]:
 
 
 def _extract_inner(path: Path) -> Iterator[Chunk]:
-    raw = path.read_text(encoding="utf-8", errors="replace")
+    raw = decode(path.read_bytes())
     if not raw.strip():
         return
     try:
@@ -89,7 +85,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         raise ExtractError(str(path), "not a valid notebook: missing cells")
 
     times = read_file_times(path)
-    parent_id = _parent_id(path)
+    parent_id = file_parent_id(path)
     lang = _lang(nb)
     meta = nb.get("metadata", {})
     title = str(meta.get("title", "")) if isinstance(meta, dict) else ""

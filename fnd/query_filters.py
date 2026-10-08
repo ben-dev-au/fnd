@@ -20,13 +20,17 @@ from dataclasses import dataclass
 import tantivy
 from tantivy import FieldType, Query
 
+from fnd.kinds import KINDS_IN_CATEGORY
 from fnd.query_fields import FieldSpec, FieldValue, date_token_range, resolve
+from fnd.query_spans import literal_spans
 
 _BOOL_OPS = frozenset({"AND", "OR", "NOT"})
 # field:value head — value captured greedily (the tokenizer already kept any
 # bracketed/quoted run together as one token).
 _CLAUSE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(.+)$", re.DOTALL)
-_RANGE_RE = re.compile(r"^\[\s*(.+?)\s+TO\s+(.+?)\s*\]$", re.IGNORECASE)
+# ``[`` / ``]`` include a bound, ``{`` / ``}`` exclude it, mixed freely.
+_RANGE_RE = re.compile(r"^([\[{])\s*(.+?)\s+TO\s+(.+?)\s*([\]}])$", re.IGNORECASE)
+_SLOPPY_PHRASE_RE = re.compile(r'^"(.*)"~(\d+)$', re.DOTALL)
 _CMP_RE = re.compile(r"^(>=|<=|>|<)(.+)$")
 _WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
@@ -39,30 +43,30 @@ class ExtractResult:
 
 def _tokenize_top_level(s: str) -> list[str]:
     """Split ``s`` into whitespace-separated top-level tokens, keeping any
-    ``"…"`` / ``'…'`` / ``[…]`` / ``(…)`` run (with its inner spaces) intact."""
+    quoted phrase or ``/regex/`` (see :mod:`fnd.query_spans`) and any ``[…]`` /
+    ``(…)`` run or ``field:{…}`` range, with its inner spaces, intact."""
     tokens: list[str] = []
     buf: list[str] = []
-    depth = 0  # () or [] nesting
-    quote: str | None = None
-    for ch in s:
-        if quote is not None:
-            buf.append(ch)
-            if ch == quote:
-                quote = None
+    # The closers each open run waits for: a range ends on ``]`` or ``}``
+    # (``[lo TO hi}``), and ``{`` opens one only as a bound (``page:{1 TO 9}``),
+    # so a proximity ``{N}`` neither opens nor closes anything.
+    awaiting: list[str] = []
+    literal_ends = {span.start: span.end for span in literal_spans(s)}
+    i = 0
+    while i < len(s):
+        if i in literal_ends:
+            buf.append(s[i : literal_ends[i]])
+            i = literal_ends[i]
             continue
-        if ch in ('"', "'"):
-            quote = ch
-            buf.append(ch)
-            continue
-        if ch in "([":
-            depth += 1
-            buf.append(ch)
-            continue
-        if ch in ")]":
-            depth = max(0, depth - 1)
-            buf.append(ch)
-            continue
-        if ch.isspace() and depth == 0:
+        ch = s[i]
+        i += 1
+        if ch == "(":
+            awaiting.append(")")
+        elif ch == "[" or (ch == "{" and buf and buf[-1] == ":"):
+            awaiting.append("]}")
+        elif awaiting and ch in awaiting[-1]:
+            awaiting.pop()
+        elif ch.isspace() and not awaiting:
             if buf:
                 tokens.append("".join(buf))
                 buf = []
@@ -137,7 +141,8 @@ def _uint_range(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | 
     try:
         m = _RANGE_RE.match(value)
         if m:
-            return rng(spec.coerce(m.group(1)), spec.coerce(m.group(2)))
+            lo, hi = spec.coerce(m.group(2)), spec.coerce(m.group(3))
+            return rng(lo, hi, inc_lo=m.group(1) == "[", inc_hi=m.group(4) == "]")
         m = _CMP_RE.match(value)
         if m:
             op, n = m.group(1), spec.coerce(m.group(2))
@@ -162,6 +167,15 @@ def _compile(
 ) -> Query | None:
     """Lower one ``field:value`` clause into a typed tantivy query, or None when
     the value can't be parsed (caller then leaves the clause in content)."""
+    if spec.value is FieldValue.EXACT:
+        if _group_has_logic(value):
+            return None
+        terms = [Query.term_query(schema, spec.tantivy_field, t) for t in _exact_terms(spec, value)]
+        if not terms:
+            return None
+        if len(terms) == 1:
+            return terms[0]
+        return Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
     # Field grouping: ``title:(a OR b)`` → the boolean parsed against that field.
     # Needs the index (parse_query); without it, fall through to term/phrase.
     if index is not None and value.startswith("(") and value.endswith(")"):
@@ -171,24 +185,47 @@ def _compile(
             return None
     if spec.value is FieldValue.UINT:
         return _uint_range(spec, value, schema)
-    if spec.value is FieldValue.EXACT:
-        if spec.query_name == "collection":
-            names = [_strip_quotes(n.strip()) for n in value.split(",") if n.strip()]
-            terms = [Query.term_query(schema, spec.tantivy_field, n) for n in names]
-            if not terms:
-                return None
-            if len(terms) == 1:
-                return terms[0]
-            return Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
-        return Query.term_query(schema, spec.tantivy_field, _strip_quotes(value).lower())
-    # TEXT (default/stem tokenizer): quoted → phrase, single word → term.
-    raw = _strip_quotes(value)
+    # TEXT (default/stem tokenizer): quoted → phrase (``"a b"~N`` sloppy),
+    # single word → term.
+    sloppy = _SLOPPY_PHRASE_RE.match(value)
+    raw, slop = (sloppy.group(1), int(sloppy.group(2))) if sloppy else (_strip_quotes(value), 0)
     words = [w.lower() for w in _WORD_RE.findall(raw)]
     if not words:
         return None
     if len(words) == 1:
         return Query.term_query(schema, spec.tantivy_field, words[0])
-    return Query.phrase_query(schema, spec.tantivy_field, words)
+    return Query.phrase_query(schema, spec.tantivy_field, [*words], slop)
+
+
+def _group_has_logic(value: str) -> bool:
+    """An exact field's group is a list of alternatives; AND, NOT or a ``-``
+    value in it would be read as one more alternative."""
+    if not (value.startswith("(") and value.endswith(")")):
+        return False
+    tokens = _tokenize_top_level(value[1:-1])
+    return any(t.upper() in {"AND", "NOT"} or t.startswith("-") for t in tokens)
+
+
+def _exact_terms(spec: FieldSpec, value: str) -> list[str]:
+    """The stored terms one EXACT clause matches: its values (a group, or a
+    collection's comma list), each kind category as its member kinds, the way
+    ``--kind`` expands it."""
+    values = _exact_values(spec, value)
+    if spec.query_name == "collection":
+        return values
+    terms = [v.lower() for v in values]
+    if spec.query_name == "kind":
+        return [kind for term in terms for kind in KINDS_IN_CATEGORY.get(term, (term,))]
+    return terms
+
+
+def compile_clause(
+    name: str, value: str, schema: tantivy.Schema, index: tantivy.Index | None
+) -> Query | None:
+    """``name:value`` as the typed query a lifted filter compiles to, or None
+    when ``name`` is no field or the value cannot be read."""
+    spec = resolve(name)
+    return _compile(spec, value, schema, index) if spec is not None else None
 
 
 def extract_filters(

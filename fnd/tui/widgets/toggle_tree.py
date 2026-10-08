@@ -30,7 +30,8 @@ from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
 from fnd.tui.results_labels import _styled_state_row, state_colour
-from fnd.tui.widgets.arrow_expansion import ArrowsExpand, HomeToFirstRow
+from fnd.tui.ui_text import PlainTree
+from fnd.tui.widgets.arrow_expansion import HomeToFirstRow
 from fnd.tui.widgets.clear_bar import focus_clear_bar
 from fnd.tui.widgets.state_marker import StateMarkerLabel
 
@@ -155,7 +156,7 @@ class ToggleGroup:
         return (self, *(d for g in self.groups for d in g.walk()))
 
 
-class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, Any]]):
+class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
     """A ``Tree`` of category → item toggles with tri-state parents."""
 
     BINDINGS: ClassVar[list[BindingType]] = [

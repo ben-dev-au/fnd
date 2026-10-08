@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App
 
-from fnd import apps
+from fnd import apps, launcher
 from fnd.tui.open_with_screen import OpenWithScreen, eligible_apps, letter_shortcuts
 
 # ── Eligibility + shortcut assignment (pure functions, no Pilot) ────────
@@ -111,7 +111,7 @@ def _capture_launches(monkeypatch: pytest.MonkeyPatch, captured: list[list[str]]
     recorded as ``["open", target]`` so assertions read the same on every
     platform in the CI matrix."""
     monkeypatch.setattr(
-        apps.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )

@@ -23,9 +23,10 @@ import contextlib
 import functools
 import os
 import platform
+import shlex
 import subprocess
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from shutil import which
 from typing import Protocol, runtime_checkable
 
@@ -37,6 +38,15 @@ StartFile = Callable[[str], None]
 # no OS handler for the type). The API contract is return-code-only — a UI
 # action handler must never have to catch an exception from an open/reveal.
 LAUNCH_FAILED = 127
+
+# Not started, deliberately: a batch file would hand its command line to cmd.exe.
+# Outside every exit status a process can return (0 to 255, a negative signal,
+# a large positive Windows code), so a program's own 126 is never read as this.
+LAUNCH_REFUSED = -256
+REFUSED_REASON = (
+    "it is a batch file (.cmd or .bat), and its command line holds a character "
+    'cmd.exe would act on: & % ^ | < > ! "'
+)
 
 
 def _run(argv: list[str]) -> int:
@@ -65,14 +75,57 @@ class Launcher(Protocol):
     def open_path(self, path: Path) -> int: ...
     def open_url(self, url: str) -> int: ...
     def reveal(self, path: Path) -> None: ...
+    def editor_argv(self, path: Path) -> list[str]: ...
+    def url_path(self, path: Path) -> str: ...
+    def safe_to_run(self, argv: list[str]) -> bool: ...
+    def found_safely(self, argv: list[str]) -> bool: ...
 
 
-class MacLauncher:
+def _editor_value() -> str:
+    return (os.environ.get("VISUAL") or os.environ.get("EDITOR") or "").strip()
+
+
+class _PosixCommands:
+    """What macOS and Linux share: a shell's word splitting and ``/`` paths."""
+
+    _which: Callable[[str], str | None]
+
+    def editor_argv(self, path: Path) -> list[str]:
+        raw = _editor_value()
+        if raw and self._which(raw):
+            # The whole value names a program: an unquoted path holding spaces.
+            return [raw, str(path)]
+        try:
+            argv = shlex.split(raw)
+        except ValueError:
+            argv = [raw]
+        return [*(argv or ["vi"]), str(path)]
+
+    def url_path(self, path: Path) -> str:
+        return str(path)
+
+    def safe_to_run(self, argv: list[str]) -> bool:
+        """Always: an argv list reaches no shell here."""
+        return True
+
+    def found_safely(self, argv: list[str]) -> bool:
+        """Always: exec searches PATH only, never the current folder."""
+        return True
+
+
+class MacLauncher(_PosixCommands):
     """macOS ``open`` / ``open -R``."""
 
-    def __init__(self, *, run: Runner = _run, spawn: Spawner = _spawn) -> None:
+    def __init__(
+        self,
+        *,
+        run: Runner = _run,
+        spawn: Spawner = _spawn,
+        which: Callable[[str], str | None] = which,
+    ) -> None:
         self._run = run
         self._spawn = spawn
+        self._which = which
 
     def open_path(self, path: Path) -> int:
         return self._run(["open", str(path)])
@@ -84,7 +137,7 @@ class MacLauncher:
         self._spawn(["open", "-R", str(path)])
 
 
-class LinuxLauncher:
+class LinuxLauncher(_PosixCommands):
     """Freedesktop ``xdg-open``, with a best-effort file-manager ``--select``
     for reveal (falling back to opening the containing folder)."""
 
@@ -128,6 +181,7 @@ class WindowsLauncher:
         *,
         startfile: StartFile | None = None,
         spawn: Spawner = _spawn,
+        which: Callable[[str], str | None] = which,
     ) -> None:
         # ``os.startfile`` only exists on Windows and is resolved lazily (at
         # call time) so the class type-checks, imports, and constructs on
@@ -135,6 +189,7 @@ class WindowsLauncher:
         # inject a fake ``startfile`` when running off-Windows.
         self._startfile = startfile
         self._spawn = spawn
+        self._which = which
 
     def _start(self, target: str) -> int:
         startfile = self._startfile
@@ -158,6 +213,55 @@ class WindowsLauncher:
     def reveal(self, path: Path) -> None:
         # explorer returns exit code 1 even on success; fire-and-forget.
         self._spawn(["explorer", "/select,", str(path)])
+
+    def _resolve(self, name: str) -> str | None:
+        """``name`` on PATH by Windows' own search (PATHEXT finds `code.cmd` for
+        `code`), never from the current folder, where a file can be planted."""
+        found = self._which(name)
+        if found is None:
+            return None
+        # Windows path rules whatever the host, so tests run on every OS. A
+        # relative hit (`.\code.cmd`, `tools\code.cmd`) resolves into the cwd.
+        hit = PureWindowsPath(found)
+        if not hit.is_absolute() or hit.parent == PureWindowsPath(os.getcwd()):
+            return None
+        return found
+
+    def editor_argv(self, path: Path) -> list[str]:
+        raw = _editor_value()
+        whole = self._resolve(raw) if raw else None
+        if whole is not None:
+            return [whole, str(path)]
+        try:
+            argv = shlex.split(raw, posix=False)
+        except ValueError:
+            argv = [raw]
+        argv = [a[1:-1] if len(a) > 1 and a[0] == a[-1] == '"' else a for a in argv]
+        argv = argv or ["notepad"]
+        # A full path to a .cmd starts where the bare name does not.
+        return [self._resolve(argv[0]) or argv[0], *argv[1:], str(path)]
+
+    def url_path(self, path: Path) -> str:
+        """``/C:/Users/a.md`` for a drive path, ``//server/share/a.md`` for a share."""
+        text = str(path)
+        if text.startswith("\\\\?\\UNC\\"):
+            text = "\\\\" + text[len("\\\\?\\UNC\\") :]
+        text = text.removeprefix("\\\\?\\")
+        win = PureWindowsPath(text)
+        posix = win.as_posix()
+        return f"/{posix}" if len(win.drive) == 2 and win.drive.endswith(":") else posix
+
+    def found_safely(self, argv: list[str]) -> bool:
+        """Only a full path: Windows looks for a bare name in the current folder
+        first, where :meth:`_resolve` declined a planted file."""
+        return bool(argv) and PureWindowsPath(argv[0]).is_absolute()
+
+    def safe_to_run(self, argv: list[str]) -> bool:
+        """A batch file runs through cmd.exe, which acts on these anywhere in its
+        command line, the program's own path included."""
+        if not argv or PureWindowsPath(argv[0]).suffix.lower() not in (".cmd", ".bat"):
+            return True
+        return not any(set(arg) & _CMD_SPECIAL for arg in argv)
 
 
 @functools.lru_cache(maxsize=1)
@@ -187,3 +291,48 @@ def open_url(url: str) -> int:
 def reveal(path: Path | str) -> None:
     """Reveal ``path`` in the platform file manager (fire-and-forget)."""
     get_launcher().reveal(Path(path))
+
+
+def run(argv: list[str]) -> int:
+    """Run an app's own command line: blocking, output discarded, never raising,
+    and never a batch file handed text its shell would act on."""
+    if not get_launcher().safe_to_run(argv):
+        return LAUNCH_REFUSED
+    return _run(argv)
+
+
+def capture(argv: list[str], *, timeout: float) -> int:
+    """Exit status of a probe, or ``LAUNCH_FAILED`` if it cannot start or finish in time."""
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=timeout, check=False).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return LAUNCH_FAILED
+
+
+# What cmd.exe interprets in a batch file's arguments, quoted or not.
+_CMD_SPECIAL = frozenset('&|<>^%!"')
+
+
+def editor_argv(path: Path) -> list[str]:
+    """``$VISUAL``, else ``$EDITOR``, split as this platform's shell would
+    (``code -w`` is a program and a flag), then ``path``."""
+    return get_launcher().editor_argv(path)
+
+
+def url_path(path: Path) -> str:
+    """``path`` as the path part of a URL on this platform, not yet encoded."""
+    return get_launcher().url_path(path)
+
+
+def edit(path: Path) -> int:
+    """Edit ``path`` in the user's editor in the foreground: ``LAUNCH_FAILED``
+    if it cannot be found or started, ``LAUNCH_REFUSED`` if starting it is unsafe."""
+    argv = editor_argv(path)
+    if not get_launcher().found_safely(argv):
+        return LAUNCH_FAILED
+    if not get_launcher().safe_to_run(argv):
+        return LAUNCH_REFUSED
+    try:
+        return subprocess.call(argv)
+    except OSError:
+        return LAUNCH_FAILED

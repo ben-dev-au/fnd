@@ -31,6 +31,8 @@ def extract(path: Path, **kwargs: object) -> Iterator[Chunk]:
     mod_name = _DISPATCH.get(suffix)
     if mod_name is None:
         return iter(())
+    if not str(path).isascii() and not _encodes(str(path)):
+        return _refused(path)
     import importlib
     import inspect
 
@@ -43,3 +45,17 @@ def extract(path: Path, **kwargs: object) -> Iterator[Chunk]:
 
     # Every kind, one guarantee: see fnd/extract/_bound.py.
     return bounded(extractor(path, **kwargs))
+
+
+def _encodes(text: str) -> bool:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _refused(path: Path) -> Iterator[Chunk]:
+    """The index stores a path as text, and a name that is not UTF-8 has none."""
+    raise ExtractError(str(path), "the file name is not valid UTF-8; rename it to index it")
+    yield  # pragma: no cover

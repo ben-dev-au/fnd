@@ -22,13 +22,14 @@ import asyncio
 import math
 import os
 import sys
-import tempfile
 import threading
 import time
 import traceback
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from fnd import paths
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -71,7 +72,7 @@ class StallWatch:
         self._beat = time.perf_counter()
         self._stop_sampler = threading.Event()
         self._stacks: Counter[str] = Counter()
-        self._sample_path = Path(tempfile.gettempdir()) / _SAMPLE_FILE
+        self._sample_path: Path | None = None
 
     @classmethod
     def from_env(cls, app: FNDApp) -> StallWatch | None:
@@ -98,7 +99,7 @@ class StallWatch:
             return
         self._task = asyncio.create_task(self._run())
         if os.environ.get("_FND_STALL_STACKS"):
-            self._sample_path = Path(tempfile.gettempdir()) / _SAMPLE_FILE
+            self._sample_path = paths.diagnostics_dir() / _SAMPLE_FILE
             threading.Thread(target=self._sample, daemon=True).start()
 
     def _sample(self) -> None:
@@ -126,6 +127,8 @@ class StallWatch:
                 continue
             key = stack_key(traceback.extract_stack(frame))
             self._stacks[key] += 1
+            if self._sample_path is None:
+                continue
             try:
                 with self._sample_path.open("a") as fh:
                     fh.write(f"{late * 1000:.0f} {key}\n")

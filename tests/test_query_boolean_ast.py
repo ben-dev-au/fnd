@@ -7,7 +7,10 @@ handling, and leaf classification can't drift. Pure Python — no index.
 
 from __future__ import annotations
 
+import pytest
+
 from fnd.query_ast import (
+    FUZZY_MAX,
     And,
     Boosted,
     Fuzzy,
@@ -19,6 +22,7 @@ from fnd.query_ast import (
     Term,
     Wildcard,
     parse_query_ast,
+    resolves_in_body_only,
 )
 
 
@@ -130,3 +134,43 @@ def test_malformed_boost_does_not_crash() -> None:
 def test_well_formed_boost_still_parses() -> None:
     assert parse_query_ast("foo^2") == Boosted(Term("foo"), 2.0)
     assert parse_query_ast("foo^1.5") == Boosted(Term("foo"), 1.5)
+
+
+@pytest.mark.parametrize(
+    ("content", "node"),
+    [
+        ("'rock'n'roll'", Phrase("rock'n'roll", 0)),
+        ("don't", Term("don't")),
+        ("O'Reilly's", Term("O'Reilly's")),
+        ('foo:"a b"', Term('foo:"a b"')),
+        ("/x y/", Regex("x y")),
+        ("/cr[y]pto/", Regex("cr[y]pto")),
+    ],
+)
+def test_atoms_follow_the_shared_literal_spans(content: str, node: object) -> None:
+    assert parse_query_ast(content) == node
+
+
+def test_an_explicit_fuzzy_distance_is_capped_like_the_highlighter() -> None:
+    assert parse_query_ast("brown~9") == Fuzzy("brown", FUZZY_MAX)
+    assert parse_query_ast("brown~1") == Fuzzy("brown", 1)
+
+
+@pytest.mark.parametrize(
+    ("content", "body_only"),
+    [
+        ("crypto*", True),
+        ("kubernates~2", True),
+        ("/cr.pto/", True),
+        ('"crypt* wallet"', True),
+        ("cross entropy", False),
+        ('"cross entropy"', False),
+        ("a AND (b OR c*)", True),
+    ],
+)
+def test_body_only_names_what_only_the_body_dictionary_resolves(
+    content: str, body_only: bool
+) -> None:
+    node = parse_query_ast(content)
+    assert node is not None
+    assert resolves_in_body_only(node) is body_only

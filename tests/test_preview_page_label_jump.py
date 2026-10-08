@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 import fnd.apps as apps
+from fnd import launcher
 
 
 def _run_preview(req: apps.OpenRequest) -> list[str]:
@@ -27,7 +28,7 @@ def _run_preview(req: apps.OpenRequest) -> list[str]:
 
     with (
         mock.patch.object(apps, "ax_trusted", return_value=True),
-        mock.patch.object(apps.subprocess, "run", side_effect=fake_run),
+        mock.patch.object(launcher.subprocess, "run", side_effect=fake_run),
     ):
         apps._handle_preview(req)
 

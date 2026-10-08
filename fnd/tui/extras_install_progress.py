@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import shlex
 import signal
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,8 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import ProgressBar, Static
+
+from fnd.tui.ui_text import PlainOptionList, PlainStatic, set_border_title, ui_block, ui_text
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -100,19 +103,18 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         self._is_terminal = False  # set True after done/cancelled/failed
 
     def compose(self) -> ComposeResult:
-        from textual.widgets import OptionList
         from textual.widgets.option_list import Option
 
         with Vertical(id="extras_box") as box:
-            box.border_title = f"{self._action_label} pdf-structure"
-            yield Static("Starting…", id="extras_status")
+            set_border_title(box, f"{self._action_label} pdf-structure")
+            yield PlainStatic("Starting…", id="extras_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="extras_progress")
-            yield OptionList(
+            yield PlainOptionList(
                 Option("Run in background", id="background"),
                 Option("Cancel", id="cancel"),
                 id="extras_actions_running",
             )
-            yield OptionList(
+            yield PlainOptionList(
                 Option("Close", id="close"),
                 id="extras_actions_terminal",
                 classes="-hidden",
@@ -173,14 +175,16 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
                 tail = "Restart fnd to apply."
             else:
                 tail = "Restart fnd to apply."
-            status.update(f"[bold green]✓ {verb} complete.[/]  {tail}")
+            status.update(ui_text("[bold green]✓ $verb complete.[/]  $tail", verb=verb, tail=tail))
             bar.update(progress=total)
             self._enter_terminal_state()
         elif ev.phase == "cancelled":
-            status.update("[bold yellow]Cancelled.[/]  Re-run to resume.")
+            status.update(ui_text("[bold yellow]Cancelled.[/]  Re-run to resume."))
             self._enter_terminal_state()
         elif ev.phase == "failed":
-            status.update(f"[bold red]✗ {verb} failed.[/]  {ev.error}")
+            status.update(
+                ui_block("[bold red]✗ $verb failed.[/]  $error", verb=verb, error=ev.error)
+            )
             self._enter_terminal_state()
         # Raw subprocess stdout (e.g. "- tabulate==0.10.0") would
         # leak implementation detail into the user-facing modal. We
@@ -308,7 +312,7 @@ async def run_install(
     total = len(cmds)
     for i, argv in enumerate(cmds):
         events.put_nowait(
-            ProgressEvent(phase="starting", cmd_index=i, cmd_total=total, line=" ".join(argv))
+            ProgressEvent(phase="starting", cmd_index=i, cmd_total=total, line=shlex.join(argv))
         )
         if cancel.is_set():
             events.put_nowait(ProgressEvent(phase="cancelled", cmd_index=i, cmd_total=total))
@@ -322,7 +326,11 @@ async def run_install(
         except FileNotFoundError as e:
             events.put_nowait(
                 ProgressEvent(
-                    phase="failed", cmd_index=i, cmd_total=total, error=str(e), line=" ".join(argv)
+                    phase="failed",
+                    cmd_index=i,
+                    cmd_total=total,
+                    error=str(e),
+                    line=shlex.join(argv),
                 )
             )
             return

@@ -35,6 +35,7 @@ from fnd.tui.preview.warmth import WarmState, warm_state
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import LandingIntent, ScrollAnchor
 from fnd.tui.preview_scrollbar import MatchAwareScroll
+from fnd.tui.ui_text import PlainStatic
 from fnd.tui.widgets.markdown import FNDMarkdown, _legacy_blocks_to_md
 from fnd.tui.widgets.preview_container import PreviewCache, PreviewContainer
 
@@ -1350,7 +1351,7 @@ class PreviewPresenter:
             if existing:
                 existing[0].update(text)
             elif not replace_only:
-                pane.mount(Static(text, id="placeholder"))
+                pane.mount(PlainStatic(text, id="placeholder"))
 
     def clear_pane_placeholder(self) -> None:
         """Drop the empty-state Static. Called by every activate path so the
@@ -4170,7 +4171,7 @@ class PreviewPresenter:
         if not chunks:
             return
         first_chunk = chunks[0]
-        title = Static(Path(first_chunk.path).name, classes="preview-title")
+        title = PlainStatic(Path(first_chunk.path).name, classes="preview-title")
         container.mount(title)
         for i, c in enumerate(chunks):
             if uses_markdown_renderer(c):
@@ -4206,7 +4207,7 @@ class PreviewPresenter:
         first_widget: Static | None = None
         first_match: Static | None = None
         for line_text, has_match in pieces:
-            line_w = Static(line_text, classes="chunk-line")
+            line_w = PlainStatic(line_text, classes="chunk-line")
             # Store the PLAIN string (not the rich Text) — the match-count /
             # stop-region scans regex over ``fnd_text`` and re needs a str.
             line_w.fnd_text = line_text.plain  # type: ignore[attr-defined]

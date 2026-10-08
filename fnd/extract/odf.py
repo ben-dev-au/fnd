@@ -14,7 +14,6 @@ stdlib ``zipfile`` + ``lxml.etree`` (no odfpy) and, per subtype:
 
 from __future__ import annotations
 
-import hashlib
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,7 +24,7 @@ from fnd.extract._ooxml import reject_if_zip_bomb
 from fnd.extract._sectioner import HeadingSectioner
 from fnd.extract._tables import gfm_table
 from fnd.extract._xml import parse_xml
-from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import FileTimes, read_file_times
 from fnd.kinds import kind_for_suffix
 
@@ -36,10 +35,6 @@ _DRAW = "{urn:oasis:names:tc:opendocument:xmlns:drawing:1.0}"
 # Caps so a spreadsheet's repeat-padded phantom range can't blow up the index.
 _MAX_COLS = 64
 _MAX_ROWS = 2000
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _lname(tag: object) -> str:
@@ -72,7 +67,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     if kind is None:
         return
     times = read_file_times(path)
-    parent_id = _parent_id(path)
+    parent_id = file_parent_id(path)
 
     with zipfile.ZipFile(path) as zf:
         try:

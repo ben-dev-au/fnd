@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Final, Literal, overload
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
 from fnd.query import Hit, Searcher, SourceScope
 from fnd.query_errors import QuerySyntaxError
+from fnd.query_spans import has_phrase
 from fnd.render import keep_shown
 from fnd.synonyms import SynonymTable, compound_table, expand
 
@@ -239,7 +240,7 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # or ``""a b"~N`` — and crash the parser. Also skip when the query carries a
     # field qualifier (``kind:pdf``, ``c:wine``): a phrase over the raw qualifier
     # text is meaningless and quoting it mangles the qualifier.
-    carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q
+    carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q or has_phrase(q)
     carries_field_syntax = bool(_FIELD_SYNTAX_RE.search(q))
     carries_operator_syntax = bool(_OPERATOR_SYNTAX_RE.search(q))
     if (

@@ -30,10 +30,28 @@ from fnd.query_ast import (
     Term,
     Wildcard,
 )
+from fnd.query_errors import QuerySyntaxError
+from fnd.query_escape import literal, literal_phrase
+from fnd.query_fields import resolve
+from fnd.query_filters import compile_clause
 from fnd.schema import F_BODY
 
 if TYPE_CHECKING:
     from fnd.query import Searcher
+
+_FIELD_CLAUSE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
+
+
+def _parse_query(index: tantivy.Index, query: str, **kwargs: object) -> Query:
+    """Parse via Tantivy, converting its raw ``ValueError`` syntax errors into a
+    typed :class:`QuerySyntaxError` so callers never crash on a malformed query."""
+    try:
+        return index.parse_query(query, **kwargs)  # type: ignore[arg-type]
+    except ValueError as e:
+        raise QuerySyntaxError(
+            "invalid query syntax",
+            hint="check quotes, brackets and parentheses are balanced",
+        ) from e
 
 
 def compile_query(
@@ -105,9 +123,19 @@ class _Compiler:
 
     # ── leaves ──────────────────────────────────────────────────────
     def _term(self, text: str) -> Query:
-        from fnd.query import _parse_query  # lazy: avoids import cycle
-
-        return _parse_query(self._s._index, text, **self._pk)
+        # A clause on a known field compiles as its filter would; anything else is text.
+        clause = _FIELD_CLAUSE.match(text)
+        if clause and resolve(clause.group(1)):
+            name, value = clause.group(1), text[clause.end() :]
+            compiled = compile_clause(name, value, self._schema, self._s._index)
+            if compiled is None:
+                raise QuerySyntaxError(
+                    f"can't read the value of {name}:", hint="see the README for this field's form"
+                )
+            return compiled
+        # Whitespace inside an atom comes from a quoted value (``TODO:"a b"``).
+        escaped = literal_phrase(text) if any(ch.isspace() for ch in text) else literal(text)
+        return _parse_query(self._s._index, escaped, **self._pk)
 
     def _phrase(self, n: Phrase) -> Query:
         words = n.text.split()
@@ -118,16 +146,13 @@ class _Compiler:
             # words are stemmed to F_BODY token form (analyzer parity). Like the
             # other wildcard/fuzzy leaves, this matches F_BODY only.
             return self._wildcard_phrase(words, n.slop)
-        from fnd.query import _parse_query
-
-        q = f'"{n.text}"~{n.slop}' if n.slop else f'"{n.text}"'
-        return _parse_query(self._s._index, q, **self._pk)
+        return _parse_query(self._s._index, literal_phrase(n.text, slop=n.slop), **self._pk)
 
     def _wildcard_phrase(self, words: list[str], slop: int) -> Query:
         from fnd.matching import glob_to_regex
         from fnd.query_resolvers import fuzzy_stem
 
-        patterns: list[str | tuple[int, str]] = []
+        patterns: list[str] = []
         for w in words:
             if "*" in w or "?" in w:
                 patterns.append(glob_to_regex(w))
@@ -140,8 +165,10 @@ class _Compiler:
                 patterns.extend(re.escape(fuzzy_stem(sw)) for sw in re.split(r"[\W_]+", w) if sw)
         if not patterns:
             return Query.empty_query()
+        if len(patterns) == 1:  # tantivy panics on a one-term regex phrase
+            return self._regex(patterns[0])
         try:
-            return Query.regex_phrase_query(self._schema, F_BODY, patterns, slop=slop)
+            return Query.regex_phrase_query(self._schema, F_BODY, [*patterns], slop=slop)
         except ValueError:
             return Query.empty_query()  # malformed glob contributes nothing
 

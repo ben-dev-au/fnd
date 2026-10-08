@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
 from textual.content import Content
 
+from fnd.display_text import display_line
 from fnd.query import FileGroup
 from fnd.tui.collection_marks import MARK_STYLES, MARKS, PALETTE, CollectionMarks, Mark
 from fnd.tui.preview_edge import EDGE_RESERVED, MIN_NAME_CELLS, bottom_edge, marked_name
 from fnd.tui.results_labels import _format_file_label, _styled_parent_label, reapply_styles
 from fnd.tui.scope_panel import _legend_label
+from tests import _hostile_text
 
 CONFIGURED = ("Work", "Personal", "Archive")
 
@@ -201,3 +204,8 @@ def test_a_mark_survives_a_row_style_laid_over_it() -> None:
 
     assert hex_at(len(rendered.plain) - 1) == "#87be84"
     assert hex_at(rendered.plain.index("minutes")) == "#ffffff"
+
+
+@pytest.mark.parametrize("raw", _hostile_text.ALL)
+def test_a_marked_name_shows_any_collection_name_literally(raw: str) -> None:
+    assert marked_name(raw, None).plain == display_line(raw)

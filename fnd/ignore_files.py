@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Final
 
 from fnd.globs import translate
+from fnd.text_canon import canonical
 
 __all__ = [
     "IGNORE_FILENAMES",
@@ -172,6 +173,7 @@ class IgnoreFile:
             return None
         if not rel or rel == ".":
             return None
+        rel = canonical(rel)
         decided: Pattern | None = None
         for pattern in self.patterns:
             if pattern.dir_only and not is_dir:

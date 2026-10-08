@@ -44,6 +44,15 @@ class ExtractError(Exception):
         return (ExtractError, (self.path, self.reason))
 
 
+def file_parent_id(path: Path) -> str:
+    """The id every chunk of one file shares: a hash of its resolved path's
+    bytes, so a name that is not UTF-8 still has one."""
+    import hashlib
+    import os
+
+    return hashlib.sha1(os.fsencode(path.resolve()), usedforsecurity=False).hexdigest()
+
+
 def no_text_reason(path: str | Path) -> str:
     """Why a file that raised nothing still put nothing in the index."""
     is_pdf = Path(path).suffix.lower() == ".pdf"

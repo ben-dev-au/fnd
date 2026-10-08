@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 from rich.text import Text
 from textual import events, on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
@@ -40,6 +40,7 @@ from textual.widgets.tree import TreeNode
 
 from fnd import opener, os_labels
 from fnd.config import Config, default_index_dir
+from fnd.display_text import display_line
 from fnd.index_freshness import Ledger
 from fnd.launch_command import LaunchCommandSerializer, LaunchScope
 from fnd.matching import MatchSpec
@@ -73,6 +74,13 @@ from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
 from fnd.tui.sidebar_layout import Panel, allocate, reserved_demand
 from fnd.tui.stall_watch import StallWatch
+from fnd.tui.ui_text import (
+    PlainStatic,
+    PlainToastApp,
+    set_border_subtitle,
+    set_border_title,
+    ui_text,
+)
 from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.outline_tree import OutlineTree
 from fnd.tui.widgets.preview_container import (
@@ -131,7 +139,6 @@ def _hint_clusters(
     *,
     elided: bool = False,
 ) -> Any:
-    from rich.markup import escape
     from rich.text import Text
 
     def _cluster(pairs: tuple[tuple[str, str], ...]) -> Text:
@@ -148,8 +155,8 @@ def _hint_clusters(
             # and the Keybindings page then can't disagree.
             key = os_labels.localise(key)
             label = os_labels.localise(label)
-            # `[key]` is markup to Rich; unescaped, the chip paints a reversed blank.
-            out.append_text(Text.from_markup(f"[reverse] {escape(key)} [/] {escape(label)}"))
+            out.append(f" {display_line(key)} ", style="reverse")
+            out.append(f" {display_line(label)}")
         return out
 
     from rich.text import Text as _Text
@@ -282,7 +289,7 @@ def render_hint_bar(
 _DRAINER_STOP_TIMEOUT = 0.5
 
 
-class FNDApp(App[None]):
+class FNDApp(PlainToastApp):
     """Root Textual application: layout, screens and actions."""
 
     CSS = """
@@ -675,7 +682,7 @@ class FNDApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
         # Calm, practical one-liner for malformed queries — collapsed until set.
-        yield Static("", id="query_notice")
+        yield PlainStatic("", id="query_notice")
         with Horizontal():
             # Left column: results on top, the outline, then Collections and Filters.
             with Vertical(id="results_column"):
@@ -706,12 +713,12 @@ class FNDApp(App[None]):
             # widgets so cache hits are O(1) display flips.
             with Vertical(id="preview_column"), MatchAwareScroll(id="preview_pane") as pane:
                 pane.fit_edges = self._fit_preview_edges
-                yield Static("Type a query and press Enter.", id="placeholder")
+                yield PlainStatic("Type a query and press Enter.", id="placeholder")
         # App-level progress strip — one row, full width, hidden via
         # ``visibility: hidden`` so the row occupancy is stable across
         # show / hide (no preview reflow). Driven by ``ProgressFacility``.
         yield FNDProgressBar()
-        yield Static("", id="footer_hints")
+        yield PlainStatic("", id="footer_hints")
 
     def _apply_mouse_capture(self, on: bool) -> None:
         """Toggle terminal mouse reporting at runtime. Called only on Reading
@@ -974,7 +981,7 @@ class FNDApp(App[None]):
         """Just the title. `_refresh_status` also queues a sidebar reflow, and
         the collapse gesture is required to reflow synchronously."""
         with contextlib.suppress(Exception):
-            self.query_one("#results_pane", Tree).border_title = self._results.title()
+            set_border_title(self.query_one("#results_pane", Tree), self._results.title())
 
     def _refresh_panel_titles(self) -> None:
         """Every collapsible panel, because the gesture that closes one can be
@@ -989,7 +996,7 @@ class FNDApp(App[None]):
 
     def _refresh_status(self) -> None:
         with contextlib.suppress(Exception):
-            self.query_one("#results_pane", Tree).border_title = self._results.title()
+            set_border_title(self.query_one("#results_pane", Tree), self._results.title())
         self._fit_preview_edges()
         self._refresh_footer_hints()
         # Runs on every preview file activation, and from Settings and mount
@@ -1004,7 +1011,7 @@ class FNDApp(App[None]):
             pane = self.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
-        pane.border_title = self._preview_title(pane.outer_size.width)
+        set_border_title(pane, self._preview_title(pane.outer_size.width))
         self._refresh_preview_match_indicator()
 
     def _refresh_preview_match_indicator(self) -> None:
@@ -1014,25 +1021,25 @@ class FNDApp(App[None]):
         except Exception:
             return
         if self._reading_mode:
-            pane.border_subtitle = ""
+            set_border_subtitle(pane, "")
             return
         nav = getattr(self, "_match_nav", None)
         status = Content("")
         if self._current_match_unlocatable():
             # The engine matched a chunk the preview cannot highlight; see fnd.tui.match_evidence.
-            status = Content.from_markup("[$warning]◌ match not shown here[/]")
+            status = ui_text("[$warning]◌ match not shown here[/]")
         elif nav is not None and (nav.above or nav.below):
             # Screenfuls of this result holding a match above and below the viewport.
-            parts: list[str] = []
+            parts: list[Content] = []
             if nav.above:
-                parts.append(f"[$accent]▲{nav.above}[/]")
+                parts.append(ui_text("[$accent]▲$count[/]", count=nav.above))
             if nav.below:
-                parts.append(f"[$accent]▼{nav.below}[/]")
-            status = Content.from_markup("  ".join(parts))
+                parts.append(ui_text("[$accent]▼$count[/]", count=nav.below))
+            status = Content("  ").join(parts)
         label, align = bottom_edge(pane.outer_size.width, self._previewed_collections(), status)
         if pane.styles.border_subtitle_align != align:
             pane.styles.border_subtitle_align = align
-        pane.border_subtitle = label
+        set_border_subtitle(pane, label)
 
     def _previewed_group(self) -> FileGroup | None:
         pid = self._preview.parent_id
@@ -1407,15 +1414,14 @@ class FNDApp(App[None]):
     # surface stable while the presenter owns the state.
 
     def _diag_log_path(self) -> str:
-        """Opt-in preview-perf diagnostic log, in the OS temp dir. Gated by
-        _FND_PREVIEW_DIAG=1; production code paths never write here."""
-        import os
-        import tempfile
+        """Opt-in preview-perf diagnostic log. Gated by _FND_PREVIEW_DIAG=1;
+        production code paths never write here."""
+        from fnd.paths import diagnostics_dir
 
-        return os.path.join(tempfile.gettempdir(), "fnd-preview-diag.log")
+        return str(diagnostics_dir() / "fnd-preview-diag.log")
 
     def _diag_log(self, msg: str) -> None:
-        # _FND_PREVIEW_DIAG=1 appends to <tempdir>/fnd-preview-diag.log.
+        # _FND_PREVIEW_DIAG=1 appends to <diagnostics_dir>/fnd-preview-diag.log.
         # Investigation-only; remove once findings recorded.
         import os
         import time as _time
@@ -1430,7 +1436,7 @@ class FNDApp(App[None]):
 
     def action_diag_dump_preview(self) -> None:
         # Walks the active preview and writes a per-type widget count
-        # to /tmp/fnd-preview-diag.log. Always on (ignores the
+        # to <diagnostics_dir>/fnd-preview-diag.log. Always on (ignores the
         # env-var gate the log writes use) so a one-key tap works.
         from collections import Counter
 
@@ -1572,7 +1578,7 @@ class FNDApp(App[None]):
         _, hit = target
         if self._refuse_if_missing(Path(hit.path)):
             return
-        opener.open_smart(
+        rc = opener.open_smart(
             path=Path(hit.path),
             kind=hit.kind,
             page=hit.page,
@@ -1583,6 +1589,22 @@ class FNDApp(App[None]):
             query=self._search.current_query,
             source=self._source_for_hit(hit),
         )
+        from fnd.launcher import LAUNCH_FAILED, LAUNCH_REFUSED, REFUSED_REASON
+
+        if rc == LAUNCH_REFUSED:
+            self.notify(
+                f"Did not open this file with its app: {REFUSED_REASON}. Choose "
+                "another with Open With.",
+                severity="error",
+                timeout=8,
+            )
+        elif rc == LAUNCH_FAILED:
+            self.notify(
+                "The app for this file could not be started. Check its command in "
+                "Settings, or choose another with Open With.",
+                severity="error",
+                timeout=8,
+            )
 
     def action_open_default_app(self) -> None:
         """Open the focused file in its default app, ignoring the locator."""
@@ -2561,8 +2583,6 @@ class FNDApp(App[None]):
     def action_open_config_file(self) -> None:
         """Drop into ``$EDITOR`` on the user's config.toml; reload Config
         on return. On validation failure, push the recovery screen."""
-        import os
-        import subprocess
 
         from fnd._perms import secure_write_text
         from fnd.config import (
@@ -2582,9 +2602,8 @@ class FNDApp(App[None]):
 
         while isinstance(self.screen, SettingsScreen):
             self.pop_screen()
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
-        with self.suspend():
-            subprocess.call([editor, str(path)])
+        if not self._edit_in_editor(path):
+            return
         try:
             self._config = load()
         except Exception as e:
@@ -2608,8 +2627,6 @@ class FNDApp(App[None]):
 
     def action_open_keybindings_file(self) -> None:
         """Drop into $EDITOR on keybindings.toml; reload keymap on return."""
-        import os
-        import subprocess
 
         from fnd.config import default_config_path
 
@@ -2627,14 +2644,25 @@ class FNDApp(App[None]):
 
         while isinstance(self.screen, SettingsScreen):
             self.pop_screen()
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
-        with self.suspend():
-            subprocess.call([editor, str(path)])
+        if not self._edit_in_editor(path):
+            return
         # Reload the keymap so new bindings take effect immediately.
         from fnd.tui.actions import load_keymap
 
         self._fnd_keymap = load_keymap()
         self.notify("Reloaded keybindings", timeout=2)
+
+    def _edit_in_editor(self, path: Path) -> bool:
+        """Suspend into the user's editor; False, after saying so, if it cannot start."""
+        from fnd import launcher
+        from fnd.tui.config_recovery_screen import _editor_refusal
+
+        with self.suspend():
+            rc = launcher.edit(path)
+        if rc in (launcher.LAUNCH_FAILED, launcher.LAUNCH_REFUSED):
+            self.notify(_editor_refusal(path, rc), severity="error", timeout=8)
+            return False
+        return True
 
     def _on_recovery_done(self, result: object) -> None:
         from fnd.config import load

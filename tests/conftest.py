@@ -153,6 +153,23 @@ def tmp_index_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def isolated_app_dirs(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point fnd's data and cache roots at a temp dir for every test: code that
+    reaches a root directly (``config edit``'s starter write) otherwise lands in
+    the developer's real folders, past the per-file fixtures below."""
+    root = tmp_path_factory.mktemp("app_dirs")
+    monkeypatch.setattr("fnd.paths.user_data_dir", lambda *_a, **_k: str(root / "data"))
+    monkeypatch.setattr("fnd.paths.user_cache_dir", lambda *_a, **_k: str(root / "cache"))
+    # A spawned interpreter (the PDF worker, a CLI child) sees no monkeypatch.
+    monkeypatch.setenv("XDG_DATA_HOME", str(root / "child-data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(root / "child-cache"))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_LOCAL_APPDATA", str(root / "child-local"))
+    return root
+
+
+@pytest.fixture(autouse=True)
 def isolated_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:

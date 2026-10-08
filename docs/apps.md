@@ -52,9 +52,10 @@ current hit lacks renders as an empty string.
 | `{file_in_vault}`     | Path relative to the source root.                     |
 | `{file_in_vault_pct}` | URL-encoded `{file_in_vault}`.                        |
 
-Templates ending in `::col` or `::` (when `{line}` is empty) collapse to just
-`{path}`, which is why `code -g {path}:{line}:1` works whether or not the hit
-has a line locator.
+A locator whose position is unknown (`:{line}`, `:{page}` or `:{slide}`, with
+an optional `:col` after it) is dropped from the template, so
+`code -g {path}:{line}:1` runs `code {path}` when the hit has no line, and a
+path's own trailing `:` is kept.
 
 ## Schema
 
@@ -69,9 +70,17 @@ Every entry needs:
 
 Optional `notes`: short freeform description, not shown to users today.
 
-User TOML never reaches a shell: `argv` is passed as a list to `subprocess.run`,
-and `url` is passed as a single argv element to `open`. The `_pct` variables
-percent-encode every byte outside `A-Za-z0-9._~-`.
+User TOML never reaches a shell: `argv` is passed as a list, and `url` as a
+single argument to the OS opener. The one exception is Windows, which runs a
+`.cmd` or `.bat` program through cmd.exe; fnd refuses to start one when its
+command line holds a character cmd.exe would act on (`& % ^ | < > ! "`), and
+says so. The `_pct` variables percent-encode every
+byte outside `A-Za-z0-9._~-`. In a `url`, every variable is encoded that way,
+so `{heading}` and `{heading_pct}` are the same there: text holding `&` or `#`
+cannot add a parameter. `{path}` keeps its `/` in a URL (`vscode://file{path}`),
+and a Windows path takes the URL form `/C:/Users/...`.
+Templates are checked when the config loads: an unknown variable, a positional
+`{0}` or an empty `argv` is refused there.
 
 ## Platform notes
 

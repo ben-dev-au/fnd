@@ -21,8 +21,11 @@ default — bare multi-term OR-retrieves, BM25 ranks all-term docs higher)::
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Final
+
+from fnd.query_spans import literal_spans
 
 # Leaf classification — mirrors fnd.query so the boolean path and the flat path
 # recognise the same operator tokens.
@@ -36,6 +39,8 @@ _NUMBER: Final = r"\d+(?:\.\d+)?"
 _PHRASE_RE: Final = re.compile(rf"""^(['"])(.*)\1(?:~(\d+))?(?:\^({_NUMBER}))?$""", re.DOTALL)
 _BOOST_RE: Final = re.compile(rf"\^({_NUMBER})$")
 _KEYWORDS: Final = frozenset({"AND", "OR", "NOT"})
+# The furthest an explicit ``term~N`` reaches, in search and highlight alike.
+FUZZY_MAX: Final = 2
 
 
 # ── AST nodes ────────────────────────────────────────────────────────
@@ -101,6 +106,7 @@ Node = Term | Phrase | Wildcard | Fuzzy | Regex | Boosted | Not | Required | And
 def _tokenize(s: str) -> list[tuple[str, str]]:
     toks: list[tuple[str, str]] = []
     buf: list[str] = []
+    literal_ends = {span.start: span.end for span in literal_spans(s)}
     n = len(s)
     i = 0
 
@@ -166,24 +172,16 @@ def _tokenize(s: str) -> list[tuple[str, str]]:
             toks.append(("RP", ")"))
             i += 1
             continue
-        if ch in ("'", '"') and prefix_only():
-            j = i + 1
-            while j < n and s[j] != ch:
-                j += 1
-            j = min(j + 1, n)  # include closing quote (tolerate unterminated)
-            j = _consume_suffix(s, j)  # trailing ~N / ^N
-            buf.append(s[i:j])
-            flush()
-            i = j
-            continue
-        if ch == "/" and prefix_only():
-            j = i + 1
-            while j < n and s[j] != "/":
-                j += 1
-            j = min(j + 1, n)
-            j = _consume_suffix(s, j)
-            buf.append(s[i:j])
-            flush()
+        if i in literal_ends:
+            # A phrase or regex opening a token is an atom of its own, with any
+            # ~N / ^N suffix; one inside an atom (``field:"a b"``) stays in it.
+            if prefix_only():
+                j = _consume_suffix(s, literal_ends[i])
+                buf.append(s[i:j])
+                flush()
+            else:
+                j = literal_ends[i]
+                buf.append(s[i:j])
             i = j
             continue
         if ch == "^" and not buf:
@@ -316,7 +314,7 @@ def _classify_core(value: str) -> Node | None:
         return Regex(rm.group(1))  # verbatim — lowercasing corrupts \D/\B/named groups
     fm = _FUZZY_RE.match(value)
     if fm:
-        return Fuzzy(fm.group(1), int(fm.group(2)) if fm.group(2) else None)
+        return Fuzzy(fm.group(1), min(int(fm.group(2)), FUZZY_MAX) if fm.group(2) else None)
     wm = _WILDCARD_RE.match(value)
     if wm:
         return Wildcard(value, prefix=wm.group(1))
@@ -325,6 +323,26 @@ def _classify_core(value: str) -> Node | None:
     if not value:
         return None
     return Term(value)
+
+
+def walk(node: Node) -> Iterator[Node]:
+    """``node`` and every node beneath it."""
+    yield node
+    if isinstance(node, Boosted | Not | Required):
+        yield from walk(node.child)
+    elif isinstance(node, And | Or):
+        for child in node.children:
+            yield from walk(child)
+
+
+def resolves_in_body_only(node: Node) -> bool:
+    """Whether ``node`` holds a leaf only the body's term dictionary resolves:
+    a wildcard, fuzzy or regex term, or a phrase with a wildcard in it."""
+    return any(
+        isinstance(n, Wildcard | Fuzzy | Regex)
+        or (isinstance(n, Phrase) and _GLOB_RE.search(n.text) is not None)
+        for n in walk(node)
+    )
 
 
 def parse_query_ast(content: str) -> Node | None:

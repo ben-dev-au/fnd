@@ -17,19 +17,19 @@ from fnd.tui.indexer_modal import IndexerScreen, _current_line, _short_name, fmt
 
 
 def test_no_current_file_means_no_line() -> None:
-    assert _current_line("") == ""
+    assert _current_line("").plain == ""
 
 
 def test_a_current_file_still_names_it() -> None:
     """The control: the line exists for the running case."""
-    line = _current_line("/vault/notes/alpha.md")
+    line = _current_line("/vault/notes/alpha.md").plain
 
     assert "alpha.md" in line
     assert "Current:" in line
 
 
 def test_the_stuck_suffix_survives() -> None:
-    assert "· stuck" in _current_line("/a/b.pdf", " · stuck")
+    assert "· stuck" in _current_line("/a/b.pdf", " · stuck").plain
 
 
 def test_the_placeholder_itself_is_unchanged() -> None:

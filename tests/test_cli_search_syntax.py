@@ -33,11 +33,17 @@ def test_standalone_proximity_reports_cleanly(cli_corpus: Path) -> None:
 def test_unbalanced_quote_reports_cleanly(cli_corpus: Path) -> None:
     result = runner_invoke(["search", '"unbalanced', "--collection", "notes"])
     assert result.exit_code != 0
-    assert "syntax" in result.output.lower()
+    assert "unclosed quote" in result.output.lower()
 
 
 def test_valid_proximity_succeeds(cli_corpus: Path) -> None:
     result = runner_invoke(["search", "{60} buffer overflow exploit", "--collection", "notes"])
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("query", ['"buffer*"', "{1}buff*", "don't", "TODO: fix"])
+def test_text_the_engine_once_refused_searches(cli_corpus: Path, query: str) -> None:
+    result = runner_invoke(["search", query, "--collection", "notes"])
     assert result.exit_code == 0, result.output
 
 

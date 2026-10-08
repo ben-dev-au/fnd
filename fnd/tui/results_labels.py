@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 
-from fnd.display_text import sanitise_display_text
+from fnd.display_text import display_line
 from fnd.tui.collection_marks import mark_style
 
 if TYPE_CHECKING:
@@ -126,7 +126,7 @@ def _styled_state_row(marker: str, rest: str, colour: str) -> Any:
     """
     from rich.text import Text
 
-    text = Text(f"{marker}{rest}")
+    text = Text(f"{marker}{display_line(rest)}")
     if colour:
         text.stylize(_marker_style(colour), 0, len(marker))
     return text
@@ -218,7 +218,7 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     # any source — snippet, heading crumb, filename — can never over-run the row
     # and corrupt the pane border. Snippets are already cleaned at their source
     # (fnd.query._make_snippet); this covers the locator/filename paths too.
-    text = sanitise_display_text(text)
+    text = display_line(text)
     label = Text()
     if max_score > 0 and score > 0:
         label.append(f"{score:5.2f}", style=_score_style(score, max_score))
@@ -262,11 +262,11 @@ def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
 
 
 def _shorten(text: str, limit: int) -> str:
-    """Truncate ``text`` to ``limit`` chars with an ellipsis suffix."""
-    text = text.strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 1)].rstrip() + "…"
+    """``text`` on one line in at most ``limit`` cells, an ellipsis marking the cut."""
+    from fnd.display_text import fit
+
+    cut = fit(text.strip().replace("\n", " "), limit)
+    return cut.removesuffix("…").rstrip() + "…" if cut.endswith("…") else cut
 
 
 def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
@@ -278,21 +278,24 @@ def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
     ends plus the suffix. When even one stem char won't fit we still show
     ``…<suffix>``; only when the suffix itself can't fit (``max_width`` shorter
     than ``…`` + suffix) do we fall back to a plain right-truncation that drops
-    it. Char-counted (like ``_shorten``); wide glyphs aside.
+    it. Measured in cells, so a wide glyph counts two.
     """
-    if len(name) <= max_width:
+    from rich.cells import cell_len
+
+    from fnd.display_text import fit
+
+    if cell_len(name) <= max_width:
         return name
-    if max_width <= 1:
-        return name[: max(0, max_width)]
     suffix = Path(name).suffix
     stem = name[: len(name) - len(suffix)] if suffix else name
-    stem_budget = max_width - len(suffix) - 1  # 1 cell for the ellipsis
+    stem_budget = max_width - cell_len(suffix) - 1  # 1 cell for the ellipsis
     if stem_budget < 0:
         # Even "…" + suffix won't fit; show leading chars, plain-truncated.
-        return name[: max_width - 1] + "…"
-    head = (stem_budget + 1) // 2
-    tail = stem_budget - head
-    return stem[:head] + "…" + (stem[-tail:] if tail else "") + suffix
+        return fit(name, max_width)
+    head = fit(stem, (stem_budget + 1) // 2 + 1).removesuffix("…")
+    room = stem_budget - cell_len(head)
+    tail = fit(stem, room + 1, keep="end").removeprefix("…") if room > 0 else ""
+    return f"{head}…{tail}{suffix}"
 
 
 def _format_hit_label(

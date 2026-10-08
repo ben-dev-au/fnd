@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from markdown_it import MarkdownIt
 
-from fnd.display_text import sanitise_display_text
+from fnd.display_text import display_line
 
 if TYPE_CHECKING:
     from markdown_it.token import Token
@@ -108,7 +108,7 @@ def build_outline(chunks: Sequence[FileChunk]) -> Outline:
 
 
 def _display(text: str) -> str:
-    return " ".join(sanitise_display_text(text).split())
+    return " ".join(display_line(text).split())
 
 
 class _Markdown:

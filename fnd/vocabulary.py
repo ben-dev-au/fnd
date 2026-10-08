@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from fnd.matching import auto_fuzzy_distance, osa_within
 from fnd.query_errors import UnknownFilterValueError
+from fnd.text_canon import canonical, fold
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -64,16 +65,16 @@ class Vocabulary:
         # somehow holds two names differing only by case.
         self._by_fold: dict[str, str] = {}
         for name in self.names:
-            self._by_fold.setdefault(name.casefold(), name)
+            self._by_fold.setdefault(fold(name), name)
 
     def match(self, raw: str) -> str | None:
         """Canonical spelling of ``raw``, or None if it isn't a legal value."""
-        value = raw.strip()
+        value = canonical(raw.strip())
         if value in self._exact:
             return value
         if self.case_sensitive:
             return None
-        return self._by_fold.get(value.casefold())
+        return self._by_fold.get(fold(value))
 
     def suggest(self, raw: str) -> list[str]:
         """Names close enough to ``raw`` to have been the intent, best first.
@@ -87,13 +88,13 @@ class Vocabulary:
         weaker candidate shouldn't turn an obvious fix into a choice. Ties
         within the tier are genuine ambiguity and are all returned (capped).
         """
-        value = raw.strip().casefold()
+        value = fold(raw.strip())
         if not value:
             return []
         budget = auto_fuzzy_distance(value)
         scored: list[tuple[int, str]] = []
         for name in self.names:
-            folded = name.casefold()
+            folded = fold(name)
             if folded == value:
                 scored.append((0, name))
             elif budget and (d := osa_within(value, folded, max_dist=budget)) <= budget:

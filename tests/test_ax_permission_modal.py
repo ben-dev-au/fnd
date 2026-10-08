@@ -12,11 +12,10 @@ The flow under test:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from fnd import apps
+from fnd import apps, launcher
 
 
 def test_set_notice_sink_routes_through_sink() -> None:
@@ -94,24 +93,15 @@ async def test_modal_retry_action_clears_ax_cache(monkeypatch: pytest.MonkeyPatc
 def test_modal_open_settings_action_invokes_open_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Open System Settings button must fire ``open <url>`` with the
-    Accessibility deep-link URL."""
+    """The Open System Settings button hands the Accessibility deep link to the launcher."""
     from fnd.tui import ax_permission_screen
 
-    captured: list[list[str]] = []
-
-    class FakePopen:
-        def __init__(self, argv: list[str], **kw: Any) -> None:
-            captured.append(list(argv))
-
-    monkeypatch.setattr(ax_permission_screen.subprocess, "Popen", FakePopen)
+    captured: list[str] = []
+    monkeypatch.setattr(launcher, "open_url", lambda url: captured.append(url) or 0)
     screen = ax_permission_screen.AccessibilityPermissionScreen()
     screen.action_open_settings()
     assert captured == [
-        [
-            "open",
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-        ]
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     ]
 
 
@@ -133,7 +123,7 @@ def test_preview_handler_emits_ax_notice_when_blocked(
 
     captured_run: list[list[str]] = []
     monkeypatch.setattr(
-        apps.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: captured_run.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
@@ -161,7 +151,7 @@ def test_preview_handler_silent_when_no_page_locator(
     notices: list[str] = []
     apps.set_notice_sink(notices.append)
     monkeypatch.setattr(
-        apps.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: type("R", (), {"returncode": 0})(),
     )

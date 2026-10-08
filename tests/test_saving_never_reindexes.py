@@ -12,6 +12,7 @@ from fnd.config import CollectionConfig, SourceConfig, load, write_collection
 from fnd.index_freshness import Ledger, indexed_with
 from fnd.tui import FNDApp
 from fnd.tui.settings_screen import SourceFormScreen
+from tests._pilot_wait import wait_until
 
 
 @pytest.fixture
@@ -229,6 +230,25 @@ async def test_an_invalid_name_is_refused_not_a_crash(config_file: Path, index_d
     assert still
     assert running
     assert "notes" in load(config_file).collections
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_quoting_markup_is_drawn_not_a_crash(
+    config_file: Path, index_dir: Path
+) -> None:
+    """The refusal quotes the name it refused, and a drawn toast is not markup."""
+    from textual.widgets._toast import Toast
+
+    app = FNDApp(index_dir=index_dir, config=load(config_file))
+    async with app.run_test(size=(110, 30), notifications=True) as pilot:
+        await _settle(pilot, 5)
+        await _rename(app, pilot, "Work [/]")
+        await wait_until(pilot, lambda: bool(app.screen.query(Toast)), message="no refusal shown")
+        await _settle(pilot, 5)
+        shown = [toast.render().plain for toast in app.screen.query(Toast)]
+        running = app.is_running
+    assert running
+    assert any("'Work [/]'" in text for text in shown), shown
 
 
 @pytest.mark.asyncio

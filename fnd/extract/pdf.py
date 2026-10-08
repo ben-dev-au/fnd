@@ -36,7 +36,7 @@ from typing import Any, Final, cast
 import pymupdf  # type: ignore[import-not-found]
 
 from fnd.cache import ExtractionCache, sha256_file
-from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.extract.heading_fold import HeadingFolder
 from fnd.extract.recovery import (
     TABLE_CAPTION_RE,
@@ -150,10 +150,6 @@ _TABLE_LABEL_RE = re.compile(r"\b(?:TABLE|Table)\s+\d", re.MULTILINE)
 # holds an identical pattern and cannot import this module; the two must
 # agree or its table counts stop matching what the extractor produces.
 _TABLE_LINE_RE = re.compile(r"^\s*\|.+\|\s*$")
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _margin_integers(page: pymupdf.Page) -> list[int]:
@@ -1021,7 +1017,7 @@ def extract(
         # with the original file's parent_id / path / mtime — overlay
         # the *current* file's identity so downstream indexer code
         # routes chunks to the right Tantivy parent_id.
-        parent_id_now = _parent_id(path)
+        parent_id_now = file_parent_id(path)
         path_str_now = str(path)
         times_now = read_file_times(path)
         # read_file_times reports 0 for a vanished file; fall back to the
@@ -1115,7 +1111,7 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
     *,
     on_page: Callable[[int], None] | None = None,
 ) -> Iterator[Chunk]:
-    parent_id = _parent_id(path)
+    parent_id = file_parent_id(path)
     times = read_file_times(path)
 
     try:

@@ -62,7 +62,7 @@ def test_a_prune_reports_the_collections_that_still_hold_the_file(
 
 def test_the_line_names_them() -> None:
     """A receipt that cannot be read as 'the corpus is clean'."""
-    line = _format_indexed_line(0, 2, 0, 1, ("Personal",))
+    line = _format_indexed_line(0, 2, 0, 1, ("Personal",)).plain
 
     assert "1 removed" in line, line
     assert "still in Personal" in line, line
@@ -70,7 +70,7 @@ def test_the_line_names_them() -> None:
 
 def test_the_line_is_silent_when_nothing_else_holds_it() -> None:
     """The control: no warning when the removal really did empty the corpus."""
-    line = _format_indexed_line(0, 2, 0, 1, ())
+    line = _format_indexed_line(0, 2, 0, 1, ()).plain
 
     assert "1 removed" in line, line
     assert "still in" not in line, line

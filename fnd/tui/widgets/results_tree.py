@@ -10,11 +10,11 @@ from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.message import Message
-from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
 from fnd.tui.preview.warmth import WarmState
-from fnd.tui.widgets.arrow_expansion import ArrowsExpand, HomeToFirstRow
+from fnd.tui.ui_text import PlainTree
+from fnd.tui.widgets.arrow_expansion import HomeToFirstRow
 from fnd.tui.widgets.clear_bar import focus_clear_bar
 from fnd.tui.widgets.mark_label import CollectionMarkLabel
 from fnd.tui.widgets.state_marker import StateMarkerLabel
@@ -22,9 +22,7 @@ from fnd.tui.widgets.state_marker import StateMarkerLabel
 __all__ = ["ResultsTree"]
 
 
-class ResultsTree(
-    ArrowsExpand, HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, Tree[dict[str, Any]]
-):
+class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTree[dict[str, Any]]):
     """Results tree where expanded parents (file rows) are literally
     unselectable.
 

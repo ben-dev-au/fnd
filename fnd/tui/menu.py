@@ -38,8 +38,10 @@ from fnd.config import (
     DEFAULT_RESULT_LIMIT,
     is_all_collections,
 )
+from fnd.display_text import fit
 from fnd.fsmeta import path_is_absent
 from fnd.index_freshness import State
+from fnd.text_canon import fold
 from fnd.tui.editing import BACK, CLEAR, SAVE, SAVE_KEY, editing_help_rows
 from fnd.tui.freshness_view import MARKER, badge, run_pending, verdict_for
 
@@ -115,10 +117,6 @@ class MenuItem:
     id: str
     label: str
     description: str = ""
-    # Render ``description`` as Rich markup (colour). Off by default so
-    # arbitrary text (paths, globs, notes) shows literally; opt in only for
-    # hand-authored descriptions that use ``[colour]…[/]`` tags.
-    description_markup: bool = False
     kind: str = KIND_SUBMENU
 
     # HEADER: 1 = top-level group, 2 = sub-group.
@@ -146,9 +144,8 @@ class MenuItem:
     setting_path: str = ""
     hint: str = ""
     bounds: tuple[float, float] | None = None
-    """The range the row prints, as the editor enforces it. Separate fields,
-    held together by a guard test: nine rows stated a range and enforced none
-    of it, and the same validator quoted it when refusing letters."""
+    """The range the editor enforces, read from the config field the row
+    writes; a guard test holds the printed ``hint`` to it."""
     elide: str = "tail"
     """Which end of an over-long value to drop: ``tail``, or ``head`` for a
     path, whose leaf is what tells two sources apart."""
@@ -218,6 +215,16 @@ class MenuItem:
             except Exception:
                 return ()
         return self.children
+
+    def __post_init__(self) -> None:
+        if self.bounds is None and self.setting_path:
+            from fnd.config_types import field_bounds
+
+            object.__setattr__(self, "bounds", field_bounds(self.setting_key))
+
+    @property
+    def setting_key(self) -> tuple[str, ...]:
+        return tuple(self.setting_path.split("."))
 
 
 # ── Header helpers ───────────────────────────────────────────────────
@@ -785,7 +792,9 @@ def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
 
 def _coerce_str_list(raw: str) -> list[str]:
     """Comma-separated text -> list. Empty input clears the list."""
-    return [part.strip() for part in raw.split(",") if part.strip()]
+    from fnd.config_types import split_list
+
+    return split_list(raw)
 
 
 def _choices_tag_sources(_app: FNDApp) -> list[ChoiceOption]:
@@ -813,7 +822,9 @@ def _get_str_list_default(field_name: str) -> Callable[[FNDApp], str]:
         cfg = app._config
         if cfg is None:
             return ""
-        return ", ".join(getattr(cfg.defaults, field_name, []) or [])
+        from fnd.config_types import join_list
+
+        return join_list(getattr(cfg.defaults, field_name, []) or [])
 
     return getter
 
@@ -861,7 +872,7 @@ def _choices_collections(app: FNDApp) -> list[ChoiceOption]:
     # when the stored value is resolved. Offering the pseudo-choice too would
     # put two rows on the same stored value, and picking "All collections"
     # would silently select that one collection instead.
-    if not any(n.casefold() == ALL_COLLECTIONS for n in names):
+    if not any(fold(n) == ALL_COLLECTIONS for n in names):
         choices.insert(0, ChoiceOption(value=ALL_COLLECTIONS, label="All collections"))
     return choices
 
@@ -896,7 +907,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.result_limit",
             hint="1-1000",
-            bounds=(1, 1000),
             coerce=int,
             value_getter=_get_int_default("result_limit", DEFAULT_RESULT_LIMIT),
             keywords=("result", "limit"),
@@ -908,7 +918,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.debounce_ms",
             hint="0-2000",
-            bounds=(0, 2000),
             coerce=int,
             value_getter=_get_int_default("debounce_ms", 200),
             keywords=("debounce", "delay"),
@@ -923,7 +932,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_load_debounce_ms",
             hint="0-1000",
-            bounds=(0, 1000),
             coerce=int,
             value_getter=_get_int_default("preview_load_debounce_ms", 150),
             keywords=("preview", "debounce", "delay", "load"),
@@ -935,7 +943,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_chunks",
             hint="1-50",
-            bounds=(1, 50),
             coerce=int,
             value_getter=_get_int_default("preview_chunks", 5),
             keywords=("preview", "chunks"),
@@ -951,7 +958,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.sections_score_threshold",
             hint="0.0-1.0",
-            bounds=(0.0, 1.0),
             coerce=float,
             value_getter=_get_float_default("sections_score_threshold", 0.5),
             keywords=("section", "threshold", "score", "filter"),
@@ -967,7 +973,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.sections_per_file_max",
             hint="1-2000",
-            bounds=(1, 2000),
             coerce=int,
             value_getter=_get_int_default("sections_per_file_max", 200),
             keywords=("section", "cap", "limit"),
@@ -984,7 +989,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_decode_workers",
             hint="1-16",
-            bounds=(1, 16),
             coerce=int,
             value_getter=_get_int_default("preview_decode_workers", 4),
             keywords=("preview", "decode", "workers", "threads", "parallel"),
@@ -1001,7 +1005,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_warm_margin",
             hint="0-20",
-            bounds=(0, 20),
             coerce=int,
             value_getter=_get_int_default("preview_warm_margin", 2),
             keywords=("warm", "margin", "context", "preview", "cache", "ahead"),
@@ -1033,7 +1036,6 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.fuzzy_min_term_chars",
             hint="0-10",
-            bounds=(0, 10),
             coerce=int,
             value_getter=_get_int_default("fuzzy_min_term_chars", 3),
             keywords=("fuzzy", "min", "length", "chars", "floor"),
@@ -1252,7 +1254,7 @@ def _set_app_default_for_kind(app: FNDApp, kind: str, value: Any) -> None:
 
     cfg_path = default_config_path()
     if value:
-        write_setting(config_path=cfg_path, dotted_path=f"app_defaults.{kind}", value=value)
+        write_setting(config_path=cfg_path, dotted_path=("app_defaults", kind), value=value)
     else:
         # No write_unset helper — round-trip via tomlkit to drop the key.
         import tomlkit
@@ -1781,7 +1783,7 @@ def _set_collection_ranking_profile(app: FNDApp, name: str, value: Any) -> None:
 
     write_setting(
         config_path=default_config_path(),
-        dotted_path=f"collections.{name}.ranking_profile",
+        dotted_path=("collections", name, "ranking_profile"),
         value=value,
     )
     app._config = load()  # type: ignore[attr-defined]
@@ -2055,14 +2057,14 @@ def _summary_config_path(_app: FNDApp) -> str:
     from fnd.config import default_config_path
 
     p = str(default_config_path())
-    return ("…" + p[-50:]) if len(p) > 50 else p
+    return fit(p, 51, keep="end")
 
 
 def _summary_keybindings_path(_app: FNDApp) -> str:
     from fnd.config import default_config_path
 
     p = str(default_config_path().parent / "keybindings.toml")
-    return ("…" + p[-50:]) if len(p) > 50 else p
+    return fit(p, 51, keep="end")
 
 
 # ── Indexing section ────────────────────────────────────────────────
@@ -2449,7 +2451,7 @@ def _open_filter_browser(app: FNDApp) -> None:
         write_settings(
             config_path=default_config_path(),
             values={
-                f"defaults.filters.{name}": (None if value == "" else value)
+                ("defaults", "filters", name): (None if value == "" else value)
                 for name, value in values.items()
             },
         )
@@ -2895,9 +2897,7 @@ def _summary_cache_location_row(_app: FNDApp) -> str:
     home = str(Path.home())
     if p.startswith(home):
         p = "~" + p[len(home) :]
-    if len(p) > 50:
-        p = "…" + p[-50:]
-    return p
+    return fit(p, 51, keep="end")
 
 
 def _cache_size_short() -> str:

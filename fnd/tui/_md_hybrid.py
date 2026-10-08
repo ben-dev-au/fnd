@@ -34,6 +34,7 @@ from textual.widgets import DataTable, Static
 
 from fnd.matching import MatchSpec
 from fnd.render import match_word_spans
+from fnd.tui.ui_text import PlainStatic
 
 
 @dataclass(slots=True)
@@ -144,7 +145,7 @@ def _render_text_run(md_text: str, spec: MatchSpec, wrap_width: int) -> tuple[St
             if seg.text:
                 combined.append(seg.text, style=seg.style if seg.style else "")
     has_match = _bake_match_spans_into_text(combined, spec)
-    static = Static(combined, classes="chunk-text-run")
+    static = PlainStatic(combined, classes="chunk-text-run")
     return static, has_match
 
 
@@ -250,7 +251,7 @@ def _build_fence_widget(md_text: str, spec: MatchSpec) -> tuple[Static, bool]:
     except Exception:
         text = Text(code)
     has_match = _bake_match_spans_into_text(text, spec)
-    return Static(text, classes="chunk-fence-run"), has_match
+    return PlainStatic(text, classes="chunk-fence-run"), has_match
 
 
 def build_hybrid_chunk_widgets(

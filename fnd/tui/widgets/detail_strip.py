@@ -2,17 +2,18 @@
 every settings screen.
 
 Empty by default. The parent screen calls ``set(description, metadata)``
-on cursor row changes; ``clear()`` blanks it. Uses Rich Text so the
-metadata line gets $text-muted styling and the description line stays
-plain $text.
+on cursor row changes; ``clear()`` blanks it.
 """
 
 from __future__ import annotations
 
-from rich.text import Text
 from textual.app import ComposeResult
+from textual.content import Content
 from textual.widget import Widget
 from textual.widgets import Static
+
+from fnd.display_text import display_block
+from fnd.tui.ui_text import PlainStatic
 
 
 class DetailStrip(Widget):
@@ -45,21 +46,18 @@ class DetailStrip(Widget):
 
     def __init__(self) -> None:
         super().__init__()
-        self._description: str = ""
+        self._description: str | Content = ""
         self._metadata: str = ""
-        # Whether the current description is trusted Rich markup. Off by
-        # default so arbitrary text (paths, globs, app notes) renders
-        # literally — only opted-in rows colour their description.
-        self._description_is_markup: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static("", classes="-description", id="detail_description")
-        yield Static("", classes="-metadata", id="detail_metadata")
+        yield PlainStatic("", classes="-description", id="detail_description")
+        yield PlainStatic("", classes="-metadata", id="detail_metadata")
 
-    def set(self, description: str, metadata: str = "", *, markup: bool = False) -> None:
+    def set(self, description: str | Content, metadata: str = "") -> None:
+        """Show ``description`` (a ``str`` literally, Content as styled) above
+        a dim ``metadata`` line."""
         self._description = description
         self._metadata = metadata
-        self._description_is_markup = markup
         self._refresh_strip()
 
     def clear(self) -> None:
@@ -73,28 +71,12 @@ class DetailStrip(Widget):
         except Exception:
             pass
 
-    def _render_lines(self) -> tuple[Text, Text]:
+    def _render_lines(self) -> tuple[Content, Content]:
         """Pure render — tested directly without mounting the widget."""
-        if not self._description:
-            description = Text("")
-        elif self._description_is_markup:
-            description = self._markup(self._description)
-        else:
-            description = Text(self._description)
-        return (
-            description,
-            Text(self._metadata, style="dim") if self._metadata else Text(""),
-        )
-
-    @staticmethod
-    def _markup(text: str) -> Text:
-        """Render an opted-in description as Rich markup so toggles can
-        colour their effects (e.g. ``[green]+[/]`` / ``[red]-[/]``). Falls
-        back to literal text if the markup is malformed."""
-        try:
-            return Text.from_markup(text)
-        except Exception:
-            return Text(text)
+        description = self._description
+        if not isinstance(description, Content):
+            description = Content(display_block(description))
+        return description, Content.styled(display_block(self._metadata), "dim")
 
     def on_mount(self) -> None:
         self._refresh_strip()

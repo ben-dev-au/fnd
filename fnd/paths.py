@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import functools
 import os
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from platformdirs import user_cache_dir, user_data_dir
 
@@ -39,17 +42,20 @@ def app_cache_dir() -> Path:
     return Path(user_cache_dir(_APP_NAME, appauthor=False))
 
 
+def diagnostics_dir() -> Path:
+    """Opt-in diagnostic logs: user-owned, not the shared temp dir, where a
+    fixed file name is a link anyone can plant."""
+    from fnd._perms import secure_mkdir
+
+    return secure_mkdir(app_cache_dir() / "diagnostics")
+
+
 # ── Data-root derivations ────────────────────────────────────────────────
 
 
 def reindex_state_dir() -> Path:
     """Directory holding per-collection reindex-resume state files."""
     return app_data_dir() / "reindex"
-
-
-def reindex_state_path(collection: str) -> Path:
-    """Resume-state file for one ``collection``."""
-    return reindex_state_dir() / f"{collection}.state.toml"
 
 
 def dismissed_dir() -> Path:
@@ -131,3 +137,72 @@ def uv_tool_root() -> Path:
     xdg = os.environ.get("XDG_DATA_HOME")
     data_home = Path(xdg) if xdg else Path.home() / ".local" / "share"
     return data_home / "uv" / "tools"
+
+
+def storable(value: Any) -> Any:
+    """``value`` with every string valid UTF-8: a file name that is not (held as
+    lone surrogates) becomes visible escapes, so writing it to TOML cannot raise."""
+    if isinstance(value, str):
+        from fnd.display_text import escape_surrogates
+
+        return escape_surrogates(value)
+    if isinstance(value, dict):
+        return {k: storable(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, list | tuple):
+        return [storable(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    return value
+
+
+# Characters no Windows, macOS or Linux file name may hold, plus the reserved
+# device names, which Windows refuses whatever follows the first dot.
+_UNSAFE_NAME_CHARS = frozenset('<>:"/\\|?*') | frozenset(chr(c) for c in range(0x20))
+_RESERVED_STEMS = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
+
+
+def safe_filename(name: str) -> str:
+    """``name`` as a file name every filesystem takes: unchanged when it already
+    is one, otherwise escaped and suffixed with a hash so two names never meet."""
+    import hashlib
+
+    plain = (
+        name not in ("", ".", "..")
+        and not set(name) & _UNSAFE_NAME_CHARS
+        and not name.endswith((".", " "))
+        and name.split(".", 1)[0].upper() not in _RESERVED_STEMS
+    )
+    if plain:
+        return name
+    escaped = "".join("_" if ch in _UNSAFE_NAME_CHARS or ch == "." else ch for ch in name)
+    digest = hashlib.sha1(name.encode("utf-8", "surrogatepass"), usedforsecurity=False).hexdigest()
+    return f"{escaped[:48]}-{digest[:10]}"
+
+
+# What a terminal's drag-and-drop or tab completion escapes in a POSIX path.
+_SHELL_ESCAPE = re.compile(r"\\([ \t'\"()\[\]{}&;!$`*?#~|<>])")
+
+
+def _posix_pasted_path(text: str) -> str:
+    return _SHELL_ESCAPE.sub(r"\1", text)
+
+
+def _windows_pasted_path(text: str) -> str:
+    """Unchanged: a backslash is a separator here, never an escape."""
+    return text
+
+
+# Keyed by sys.platform; anything not named is a POSIX shell.
+_PASTED_PATH: dict[str, Callable[[str], str]] = {"win32": _windows_pasted_path}
+
+
+def unescape_pasted_path(text: str) -> str:
+    """A path as a shell on this platform would read it from a paste."""
+    return _PASTED_PATH.get(sys.platform, _posix_pasted_path)(text)

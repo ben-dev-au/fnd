@@ -18,7 +18,6 @@ markdown markers.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -30,7 +29,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 from fnd.extract._ooxml import reject_if_zip_bomb
-from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import FileTimes, read_file_times
 
 _HEADING_LEVELS: dict[str, int] = {
@@ -42,10 +41,6 @@ _HEADING_LEVELS: dict[str, int] = {
     "Heading 6": 6,
     "Title": 1,
 }
-
-
-def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _heading_level(p: Paragraph) -> int:
@@ -204,7 +199,7 @@ def _flush(
 
 def extract(path: Path) -> Iterator[Chunk]:
     reject_if_zip_bomb(path)
-    parent_id = _parent_id(path)
+    parent_id = file_parent_id(path)
     yield from _extract_inner(path, parent_id)
 
 

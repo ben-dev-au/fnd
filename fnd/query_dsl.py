@@ -25,6 +25,8 @@ import datetime as dt
 import re
 from typing import Final
 
+from fnd.query_spans import literal_spans, map_outside, without_literals
+
 # Far-future unix timestamp used as "no upper bound" in numeric ranges.
 FAR_FUTURE: Final = 99_999_999_999  # year ~5138
 # Minimum unix timestamp.
@@ -145,7 +147,6 @@ _BRACE_PROX: Final = re.compile(rf"\{{(\d+)\}}\s*((?:{_RUN_TOKEN})(?:\s+{_RUN_TO
 # A residual brace group that is a proximity attempt (no ``TO`` — that would be
 # a Tantivy exclusive range, which we leave alone).
 _PROX_RESIDUAL: Final = re.compile(r"\{(?![^}]*\bTO\b)[^}]*\}")
-_QUOTED_SPAN: Final = re.compile(r"\"[^\"]*\"|'[^']*'")
 
 
 def _expand_proximity_aliases(q: str) -> str:
@@ -186,8 +187,7 @@ def check_proximity(expanded: str) -> None:
     """
     from fnd.query_errors import QuerySyntaxError
 
-    outside_quotes = _QUOTED_SPAN.sub(" ", expanded)
-    if _PROX_RESIDUAL.search(outside_quotes):
+    if _PROX_RESIDUAL.search(without_literals(expanded)):
         raise QuerySyntaxError(
             "malformed proximity",
             hint="proximity is {N} word word: a number in braces then two or more plain words",
@@ -195,20 +195,23 @@ def check_proximity(expanded: str) -> None:
 
 
 def preprocess(query: str) -> str:
-    """Run all DSL translations in a stable order and return the result."""
-    q = query.strip()
+    """Run all DSL translations in a stable order and return the result.
+    A ``/regex/`` is left as written: its ``{N}`` and ``[...]`` are its own."""
+    return map_outside(query.strip(), _expand, kinds={"regex"})
+
+
+def _expand(q: str) -> str:
     q = _expand_collection_shorthand(q)
     q = _expand_date_token(q)
     q = _expand_numeric_compare(q)
-    q = _expand_proximity_aliases(q)
-    return q
+    return _expand_proximity_aliases(q)
 
 
 def split_metadata_filter(query: str) -> tuple[str, str | None]:
     """Extract a single top-level ``[…]`` clause from ``query``.
 
     Returns ``(lexical_query, metadata_filter_or_None)``. ``[…]`` blocks
-    appearing inside a quoted phrase are left intact, and a ``field:[lo TO hi]``
+    appearing inside a quoted phrase or a ``/regex/`` are left intact, and a ``field:[lo TO hi]``
     range (the ``[`` follows a ``:``) is a numeric range — left in the lexical
     query, not treated as a filter. A filter may contain nested ``in [ … ]``
     lists. An empty ``[]`` is treated as no filter. Two or more top-level filter
@@ -218,21 +221,15 @@ def split_metadata_filter(query: str) -> tuple[str, str | None]:
     Whitespace around the extracted clause is collapsed so the resulting
     lexical query reads naturally.
     """
-    in_quote: str | None = None
+    literal_ends = {span.start: span.end for span in literal_spans(query)}
     bracket_start: int | None = None
     depth = 0  # nesting inside the active filter ([... in [...] ...])
     found_range: tuple[int, int] | None = None
     i = 0
     while i < len(query):
         ch = query[i]
-        if in_quote:
-            if ch == in_quote:
-                in_quote = None
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            in_quote = ch
-            i += 1
+        if i in literal_ends:
+            i = literal_ends[i]
             continue
         if ch == "[":
             if bracket_start is None and i > 0 and query[i - 1] == ":":

@@ -14,14 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from fnd import apps, opener
+from fnd import apps, launcher, opener
 from fnd.apps import OpenRequest
 
 
 def _capture_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     captured: list[list[str]] = []
     monkeypatch.setattr(
-        apps.subprocess,
+        launcher.subprocess,
         "run",
         lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )

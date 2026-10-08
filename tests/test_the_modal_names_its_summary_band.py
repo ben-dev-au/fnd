@@ -91,6 +91,6 @@ async def test_the_key_it_names_reaches_the_band(tmp_index_dir: Path) -> None:
                 await pilot.pause()
             if isinstance(app.focused, Tree):
                 break
-        landed = type(app.focused).__name__
+        landed = getattr(app.focused, "id", None)
 
-    assert landed == "Tree", landed
+    assert landed == "indexer_history_tree", landed
