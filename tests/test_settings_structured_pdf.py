@@ -16,7 +16,7 @@ from textual.widgets import OptionList, Static
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import settings_ready
+from tests._pilot_wait import lazy_trailing_value, settings_ready
 
 
 @pytest.fixture
@@ -77,30 +77,14 @@ async def test_indexing_screen_has_pdf_rows(built_index: Path, cfg: Config) -> N
 @pytest.mark.asyncio
 async def test_status_row_not_installed(built_index: Path, cfg: Config) -> None:
     from fnd.tui.menu import SECTION_PDF_TEXTURE
-    from fnd.tui.settings_screen import SettingsList, open_settings_section
+    from fnd.tui.settings_screen import open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
         await settings_ready(pilot, app)
-        # Trailing value goes through lazy_trailing; wait a tick for the
-        # worker thread to populate it.
-        from fnd.tui.lazy_trailing import invalidate
-
-        invalidate("pdf_texture.engine_status")
-        lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "pdf_texture.engine_status")
-        # First call schedules the worker and returns "…"; second call
-        # after a pause returns the real value.
-        row.trailing_value(app)
-        for _ in range(20):
-            await pilot.pause()
-            v = row.trailing_value(app)
-            if "Not installed" in v:
-                break
-        else:
-            v = row.trailing_value(app)
+        v = await lazy_trailing_value(pilot, app, "pdf_texture.engine_status")
         assert "Not installed" in v
         assert "✗" in v
 

@@ -228,3 +228,20 @@ async def screen_ready(
 async def settings_ready(pilot: Pilot[None], app: Any, *, timeout: float = 30.0) -> Any:
     """:func:`screen_ready` for the settings screen. Kept for its callers."""
     return await screen_ready(pilot, app, timeout=timeout)
+
+
+async def lazy_trailing_value(
+    pilot: Pilot[None], app: Any, row_id: str, *, timeout: float = 10.0
+) -> str:
+    """Wait until settings row ``row_id`` shows its computed trailing value, not the placeholder."""
+    from fnd.tui.lazy_trailing import PLACEHOLDER
+    from fnd.tui.settings_screen import SettingsList
+
+    row = next(it for it in app.screen.query_one(SettingsList)._items if it.id == row_id)
+    await wait_until(
+        pilot,
+        lambda: row.trailing_value(app) != PLACEHOLDER,
+        timeout=timeout,
+        message=f"{row_id} never replaced the lazy placeholder",
+    )
+    return row.trailing_value(app)

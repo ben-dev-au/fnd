@@ -28,7 +28,7 @@ from fnd.tui.lazy_trailing import (
     invalidate,
     invalidate_all,
 )
-from tests._pilot_wait import settings_ready
+from tests._pilot_wait import lazy_trailing_value, settings_ready
 
 
 class _StubApp:
@@ -127,6 +127,30 @@ def test_compute_failure_yields_empty_string() -> None:
     assert _CACHE["test.failure"][0] == ""
 
 
+def test_invalidate_mid_compute_recomputes_on_the_same_worker() -> None:
+    """A result computed before invalidate_all() is discarded and recomputed, with no second worker."""
+    invalidate_all()
+    app = _StubApp()
+    release = threading.Event()
+    workers: list[threading.Thread] = []
+    results = iter(["stale", "fresh"])
+
+    def _compute() -> str:
+        workers.append(threading.current_thread())
+        release.wait(timeout=5.0)
+        return next(results)
+
+    get_or_schedule(app, "test.dirty", _compute)
+    assert _wait_until(lambda: bool(workers))
+    invalidate_all()
+    assert get_or_schedule(app, "test.dirty", _compute) == PLACEHOLDER
+    release.set()
+    workers[0].join(timeout=5.0)
+    assert not workers[0].is_alive()
+    assert workers == [workers[0], workers[0]]
+    assert get_or_schedule(app, "test.dirty", _compute) == "fresh"
+
+
 # ── Integration: Indexing screen shows placeholder then real value ──
 
 
@@ -142,7 +166,7 @@ async def test_cache_size_row_shows_placeholder_then_value(
     from fnd.index import build_index
     from fnd.tui import FNDApp
     from fnd.tui.menu import SECTION_PDF_TEXTURE
-    from fnd.tui.settings_screen import SettingsList, open_settings_section
+    from fnd.tui.settings_screen import open_settings_section
 
     invalidate_all()
 
@@ -181,16 +205,4 @@ async def test_cache_size_row_shows_placeholder_then_value(
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
         await settings_ready(pilot, app)
-        lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
-
-        # Worker may or may not have completed by now — keep polling
-        # until we see a populated entries-count string.
-        for _ in range(30):
-            await pilot.pause()
-            v = row.trailing_value(app)
-            if "entries" in v:
-                break
-        else:
-            v = row.trailing_value(app)
-        assert "entries" in v
+        assert "entries" in await lazy_trailing_value(pilot, app, "pdf_texture.cache_size")

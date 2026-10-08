@@ -17,7 +17,7 @@ from fnd.config import Config, load
 from fnd.extract.base import Block, Chunk
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import settings_ready
+from tests._pilot_wait import lazy_trailing_value, settings_ready
 
 
 @pytest.fixture
@@ -131,16 +131,14 @@ async def test_cache_size_row_shows_empty_when_no_cache(
     built_index: Path, cfg: Config, isolated_cache: Path
 ) -> None:
     from fnd.tui.menu import SECTION_PDF_TEXTURE
-    from fnd.tui.settings_screen import SettingsList, open_settings_section
+    from fnd.tui.settings_screen import open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
         await settings_ready(pilot, app)
-        lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
-        assert row.trailing_value(app) == "empty"
+        assert await lazy_trailing_value(pilot, app, "pdf_texture.cache_size") == "empty"
 
 
 @pytest.mark.asyncio
@@ -152,16 +150,14 @@ async def test_cache_size_row_shows_count_and_size(
     cache.put("bb--v1", [_make_chunk(1)])
 
     from fnd.tui.menu import SECTION_PDF_TEXTURE
-    from fnd.tui.settings_screen import SettingsList, open_settings_section
+    from fnd.tui.settings_screen import open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
         await settings_ready(pilot, app)
-        lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
-        v = row.trailing_value(app)
+        v = await lazy_trailing_value(pilot, app, "pdf_texture.cache_size")
         assert "2 entries" in v
         assert "B" in v or "KB" in v or "MB" in v
 
