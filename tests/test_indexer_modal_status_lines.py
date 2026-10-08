@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from fnd.display_text import display_line
@@ -93,6 +95,7 @@ def test_current_line_names_the_provider_and_wait_while_fetching() -> None:
 
 @pytest.mark.parametrize("raw", _hostile_text.ALL)
 def test_a_file_or_collection_name_shows_literally(raw: str) -> None:
-    name = raw.replace("/", "_")
+    # A backslash is a separator on Windows, so there it cannot be in a name.
+    name = raw.replace("/", "_").replace("\\", "_" if sys.platform == "win32" else "\\")
     assert _current_line(f"/a/{name}.md").plain == f"Current: {display_line(name)}.md"
     assert f"still in {display_line(raw)}" in _format_indexed_line(0, 1, 0, 1, (raw,)).plain
