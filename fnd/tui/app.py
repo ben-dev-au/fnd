@@ -1589,9 +1589,16 @@ class FNDApp(PlainToastApp):
             query=self._search.current_query,
             source=self._source_for_hit(hit),
         )
-        from fnd.launcher import LAUNCH_FAILED
+        from fnd.launcher import LAUNCH_FAILED, LAUNCH_REFUSED, REFUSED_REASON
 
-        if rc == LAUNCH_FAILED:
+        if rc == LAUNCH_REFUSED:
+            self.notify(
+                f"Did not open this file with its app: {REFUSED_REASON}. Choose "
+                "another with Open With.",
+                severity="error",
+                timeout=8,
+            )
+        elif rc == LAUNCH_FAILED:
             self.notify(
                 "The app for this file could not be started. Check its command in "
                 "Settings, or choose another with Open With.",
@@ -2652,8 +2659,8 @@ class FNDApp(PlainToastApp):
 
         with self.suspend():
             rc = launcher.edit(path)
-        if rc == launcher.LAUNCH_FAILED:
-            self.notify(_editor_refusal(path), severity="error", timeout=8)
+        if rc in (launcher.LAUNCH_FAILED, launcher.LAUNCH_REFUSED):
+            self.notify(_editor_refusal(path, rc), severity="error", timeout=8)
             return False
         return True
 

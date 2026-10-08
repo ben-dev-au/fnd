@@ -316,7 +316,7 @@ def _render_url(template: str, req: OpenRequest) -> str:
     ``{path}`` keeps its ``/``, as a URL path (``vscode://file{path}``) needs."""
     vars_ = _render_vars(req)
     encoded = {k: vars_.get(f"{k}_pct", v) for k, v in vars_.items()}
-    encoded["path"] = urllib.parse.quote(vars_["path"], safe="/:")
+    encoded["path"] = urllib.parse.quote(launcher.url_path(req.path), safe="/:")
     return template.format(**encoded)
 
 

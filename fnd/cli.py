@@ -576,9 +576,14 @@ def config_edit() -> None:
     from fnd import launcher
 
     rc = launcher.edit(path)
-    if rc == launcher.LAUNCH_FAILED:
+    if rc in (launcher.LAUNCH_FAILED, launcher.LAUNCH_REFUSED):
         editor = shlex.join(launcher.editor_argv(path)[:-1])
-        echo(f"could not start the editor `{editor}`; set $VISUAL or $EDITOR", err=True)
+        why = (
+            f"{launcher.REFUSED_REASON}; set $VISUAL to an editor that is not a batch file"
+            if rc == launcher.LAUNCH_REFUSED
+            else "set $VISUAL or $EDITOR to one on your PATH"
+        )
+        echo(f"did not start the editor `{editor}`: {why}", err=True)
         raise typer.Exit(code=1)
     sys.exit(rc)
 

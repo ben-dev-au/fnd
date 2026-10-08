@@ -240,7 +240,10 @@ def saved_states() -> list[tuple[Path, IndexState]]:
         if path != want and not want.exists():
             with contextlib.suppress(OSError):
                 path.replace(want)
-                path = want
+        # state_file_for may itself have moved this file there; a different file
+        # already at `want` is its own state, never this one's new home.
+        if not path.exists() and want.exists():
+            path = want
         out.append((path, state))
     out.sort(key=lambda pair: pair[1].last_update or pair[1].started_at, reverse=True)
     return out

@@ -45,13 +45,18 @@ def _backup_name(config_path: Path) -> Path:
     return config_path.with_name(f"{config_path.name}.bak-{stamp}")
 
 
-def _editor_refusal(path: Path) -> str:
-    """Why the editor did not open, naming the command that failed."""
+def _editor_refusal(path: Path, rc: int) -> str:
+    """Why the editor did not open, naming the command and the real reason."""
     import shlex
 
     from fnd import launcher
 
     editor = shlex.join(launcher.editor_argv(path)[:-1])
+    if rc == launcher.LAUNCH_REFUSED:
+        return (
+            f"Did not start the editor {editor!r}: {launcher.REFUSED_REASON}. Set "
+            "$VISUAL to an editor that is not a batch file, such as an .exe's full path."
+        )
     return f"Could not start the editor {editor!r}. Set $VISUAL or $EDITOR to one on your PATH."
 
 
@@ -185,8 +190,8 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
             secure_write_text(self._config_path, starter_config())
         with self.app.suspend():
             rc = launcher.edit(self._config_path)
-        if rc == launcher.LAUNCH_FAILED:
-            self.notify(_editor_refusal(self._config_path), severity="error", timeout=8)
+        if rc in (launcher.LAUNCH_FAILED, launcher.LAUNCH_REFUSED):
+            self.notify(_editor_refusal(self._config_path, rc), severity="error", timeout=8)
             return
         try:
             from fnd.config import load

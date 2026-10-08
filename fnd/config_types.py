@@ -13,9 +13,7 @@ points at nothing.
 from __future__ import annotations
 
 import os
-import re
 import string
-import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
@@ -68,19 +66,16 @@ def _stripped(value: object) -> object:
 
 # ── Paths ─────────────────────────────────────────────────────────────
 
-# What a terminal's drag-and-drop or tab completion escapes in a POSIX path.
-_SHELL_ESCAPE: Final = re.compile(r"\\([ \t'\"()\[\]{}&;!$`*?#~|<>])")
-
 
 def clean_path_text(raw: str) -> str:
     """A typed or pasted path without the text around it: outer whitespace, one
-    pair of matching quotes, and (off Windows) shell backslash escapes."""
+    pair of matching quotes, and this platform's shell escapes."""
+    from fnd.paths import unescape_pasted_path
+
     text = raw.strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
         text = text[1:-1].strip()
-    if sys.platform != "win32":
-        text = _SHELL_ESCAPE.sub(r"\1", text)
-    return text
+    return unescape_pasted_path(text)
 
 
 def _source_path(value: object, info: ValidationInfo) -> object:

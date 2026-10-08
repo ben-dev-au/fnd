@@ -15,12 +15,13 @@ from fnd.apps import OpenRequest, _render_argv, _render_url  # pyright: ignore[r
 
 
 def test_visual_wins_and_a_flag_stays_a_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fnd.launcher import editor_argv
+    from fnd.launcher import MacLauncher
 
+    # An injected `which`, so a machine with VS Code on PATH reads the same.
     monkeypatch.setenv("VISUAL", "code -w")
     monkeypatch.setenv("EDITOR", "nano")
     target = Path("/x/c.toml")
-    assert editor_argv(target) == ["code", "-w", str(target)]
+    assert MacLauncher(which=lambda _name: None).editor_argv(target) == ["code", "-w", str(target)]
 
 
 def test_a_missing_editor_is_a_return_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,19 +97,6 @@ def test_an_unquoted_editor_path_holding_a_space_is_one_program(
     assert editor_argv(target) == [str(program), str(target)]
 
 
-def test_a_quoted_windows_editor_loses_its_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fnd import launcher
-
-    monkeypatch.setattr(launcher.sys, "platform", "win32")
-    monkeypatch.setattr(launcher, "which", lambda _name: None)
-    monkeypatch.setenv("VISUAL", '"C:\\Program Files\\VS Code\\code.cmd" --wait')
-    assert launcher.editor_argv(Path("c.toml")) == [
-        "C:\\Program Files\\VS Code\\code.cmd",
-        "--wait",
-        "c.toml",
-    ]
-
-
 @pytest.mark.asyncio
 async def test_the_tui_says_when_the_editor_cannot_start(
     tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -136,7 +124,7 @@ def test_o_says_when_the_app_for_a_file_cannot_start(
     from types import SimpleNamespace
 
     from fnd import opener
-    from fnd.launcher import LAUNCH_FAILED
+    from fnd.launcher import LAUNCH_FAILED, LAUNCH_REFUSED
     from fnd.tui.app import FNDApp
 
     doc = tmp_path / "a.md"
@@ -154,6 +142,11 @@ def test_o_says_when_the_app_for_a_file_cannot_start(
     monkeypatch.setattr(opener, "open_smart", lambda **_kw: LAUNCH_FAILED)
     FNDApp.action_open_at_locator(stub)  # pyright: ignore[reportArgumentType]
     assert any("could not be started" in m for m in said), said
+
+    said.clear()
+    monkeypatch.setattr(opener, "open_smart", lambda **_kw: LAUNCH_REFUSED)
+    FNDApp.action_open_at_locator(stub)  # pyright: ignore[reportArgumentType]
+    assert any("batch file" in m for m in said), said
 
 
 # ── templates (findings 13, 17) ──────────────────────────────────────

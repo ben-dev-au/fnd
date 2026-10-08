@@ -71,10 +71,14 @@ Every entry needs:
 Optional `notes`: short freeform description, not shown to users today.
 
 User TOML never reaches a shell: `argv` is passed as a list, and `url` as a
-single argument to the OS opener. The `_pct` variables percent-encode every
+single argument to the OS opener. The one exception is Windows, which runs a
+`.cmd` or `.bat` program through cmd.exe; fnd refuses to start one when its
+command line holds a character cmd.exe would act on (`& % ^ | < > ! "`), and
+says so. The `_pct` variables percent-encode every
 byte outside `A-Za-z0-9._~-`. In a `url`, every variable is encoded that way,
 so `{heading}` and `{heading_pct}` are the same there: text holding `&` or `#`
-cannot add a parameter. `{path}` keeps its `/` in a URL (`vscode://file{path}`).
+cannot add a parameter. `{path}` keeps its `/` in a URL (`vscode://file{path}`),
+and a Windows path takes the URL form `/C:/Users/...`.
 Templates are checked when the config loads: an unknown variable, a positional
 `{0}` or an empty `argv` is refused there.
 

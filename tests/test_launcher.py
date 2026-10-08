@@ -128,6 +128,9 @@ def test_factory_picks_platform_launcher(
 ) -> None:
     monkeypatch.setattr("fnd.launcher.platform.system", lambda: system)
     launcher.get_launcher.cache_clear()
-    got = launcher.get_launcher()
-    assert type(got).__name__ == cls
-    launcher.get_launcher.cache_clear()
+    try:
+        got = launcher.get_launcher()
+        assert type(got).__name__ == cls
+    finally:
+        # A launcher cached for the wrong OS would run its rules in later tests.
+        launcher.get_launcher.cache_clear()

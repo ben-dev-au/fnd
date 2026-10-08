@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import functools
 import os
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -182,3 +184,25 @@ def safe_filename(name: str) -> str:
     escaped = "".join("_" if ch in _UNSAFE_NAME_CHARS or ch == "." else ch for ch in name)
     digest = hashlib.sha1(name.encode("utf-8", "surrogatepass"), usedforsecurity=False).hexdigest()
     return f"{escaped[:48]}-{digest[:10]}"
+
+
+# What a terminal's drag-and-drop or tab completion escapes in a POSIX path.
+_SHELL_ESCAPE = re.compile(r"\\([ \t'\"()\[\]{}&;!$`*?#~|<>])")
+
+
+def _posix_pasted_path(text: str) -> str:
+    return _SHELL_ESCAPE.sub(r"\1", text)
+
+
+def _windows_pasted_path(text: str) -> str:
+    """Unchanged: a backslash is a separator here, never an escape."""
+    return text
+
+
+# Keyed by sys.platform; anything not named is a POSIX shell.
+_PASTED_PATH: dict[str, Callable[[str], str]] = {"win32": _windows_pasted_path}
+
+
+def unescape_pasted_path(text: str) -> str:
+    """A path as a shell on this platform would read it from a paste."""
+    return _PASTED_PATH.get(sys.platform, _posix_pasted_path)(text)

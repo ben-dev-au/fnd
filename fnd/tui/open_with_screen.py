@@ -248,7 +248,15 @@ class OpenWithScreen(ModalScreen[str | None]):
             self.app.notify(f"Open failed: {exc}", title=app.display_name, severity="error")
             self.dismiss(None)
             return
-        if rc != 0:
+        from fnd.launcher import LAUNCH_REFUSED, REFUSED_REASON
+
+        if rc == LAUNCH_REFUSED:
+            self.app.notify(
+                f"Did not start {app.display_name}: {REFUSED_REASON}.",
+                title="Open",
+                severity="error",
+            )
+        elif rc != 0:
             self.app.notify(
                 f"{app.display_name} returned exit code {rc}",
                 title="Open",
