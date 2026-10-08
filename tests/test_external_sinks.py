@@ -158,12 +158,9 @@ def test_a_url_placeholder_is_always_percent_encoded() -> None:
 
 
 def test_a_url_path_keeps_its_slashes() -> None:
-    from urllib.parse import quote
-
-    path = Path("/n/my a.md")
-    req = OpenRequest(path=path, kind="md", line=3)
-    want = f"vscode://file{quote(str(path), safe='/:')}:3"
-    assert _render_url("vscode://file{path}:{line}", req) == want
+    """The same URL on every OS: Windows' `\\n\\my a.md` is `/n/my a.md` in a URL."""
+    req = OpenRequest(path=Path("/n/my a.md"), kind="md", line=3)
+    assert _render_url("vscode://file{path}:{line}", req) == "vscode://file/n/my%20a.md:3"
 
 
 def test_a_path_ending_in_a_colon_is_opened_as_written() -> None:
