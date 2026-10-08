@@ -14,6 +14,7 @@ from pathlib import Path
 import tomlkit
 
 from fnd.config import app_data_dir
+from fnd.text_canon import canonical, fold
 
 
 def _state_path() -> Path:
@@ -87,19 +88,22 @@ def load(path: Path | None = None) -> UiState:
         raw = filters.get(key, {})
         if not isinstance(raw, dict):
             return {}
+        # As the index holds them, a tag being an exact term: fold is what
+        # normalise_tag ends with, and folding twice changes nothing.
         return {
-            str(k): [t for t in v if isinstance(t, str)]
+            str(k): [n for t in v if isinstance(t, str) and (n := fold(t))]
             for k, v in raw.items()
             if isinstance(v, list)
         }
 
     raw_match_all = filters.get("tag_match_all", True)
     return UiState(
-        collections=[s for s in scope.get("collections", []) if isinstance(s, str)],
+        # Canonical, as the config now names collections and the index tags.
+        collections=[canonical(s) for s in scope.get("collections", []) if isinstance(s, str)],
         sources=[s for s in scope.get("sources", []) if isinstance(s, str)],
         collapsed_panels=[s for s in panels.get("collapsed", []) if isinstance(s, str)],
         expanded_collections=[
-            s for s in panels.get("expanded_collections", []) if isinstance(s, str)
+            canonical(s) for s in panels.get("expanded_collections", []) if isinstance(s, str)
         ],
         expanded_filter_branches=[
             s for s in panels.get("expanded_filter_branches", []) if isinstance(s, str)

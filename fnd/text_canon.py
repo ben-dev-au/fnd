@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-__all__ = ["canonical", "decode"]
+__all__ = ["canonical", "decode", "fold"]
 
 # The line model of an editor and of markdown-it: only CR and CRLF end a line,
 # so a deep-link line number and a preview section match the file as opened.
@@ -63,6 +63,12 @@ def decode(raw: bytes) -> str:
     except UnicodeDecodeError:
         text = raw.decode("utf-8-sig", errors="replace")
     bad = text.count("\ufffd")
-    if bad >= sum(1 for ch in text if ord(ch) > 0x7F) - bad:
+    if bad > sum(1 for ch in text if ord(ch) > 0x7F) - bad:
         text = raw.decode("cp1252", errors="replace")
     return canonical(text)
+
+
+def fold(text: str) -> str:
+    """:func:`canonical`, case folded: the one key for comparing names, tags and
+    terms regardless of case or composition."""
+    return canonical(text).casefold()

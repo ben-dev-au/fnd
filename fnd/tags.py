@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from fnd.text_canon import canonical
+from fnd.text_canon import canonical, fold
 
 __all__ = [
     "MAX_TAGS_PER_FILE",
@@ -53,7 +53,7 @@ def normalise_tag(raw: str) -> str:
     if text.startswith("#"):
         text = text[1:]
     text = " ".join(text.split())
-    return text.casefold()[:MAX_TAG_LEN]
+    return fold(text)[:MAX_TAG_LEN]
 
 
 def frontmatter_key(raw: object) -> str:

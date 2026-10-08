@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fnd.query_spans import literal_spans
+from fnd.text_canon import fold
 
 
 @dataclass(slots=True, frozen=True)
@@ -39,6 +40,24 @@ class SynonymTable:
     (so users see what they typed plus what the file declared)."""
 
     groups: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
+    _by_term: dict[str, tuple[str, ...]] = field(init=False, repr=False, compare=False)
+    _by_tokens: dict[tuple[str, ...], tuple[str, ...]] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        """Fold every term once: lookups run per query word on the search path."""
+        by_term: dict[str, tuple[str, ...]] = {}
+        by_tokens: dict[tuple[str, ...], tuple[str, ...]] = {}
+        for g in self.groups:
+            for term in g:
+                folded = fold(term)
+                by_term.setdefault(folded, g)
+                toks = tuple(re.findall(r"\w+", folded))
+                if toks:
+                    by_tokens.setdefault(toks, g)
+        object.__setattr__(self, "_by_term", by_term)
+        object.__setattr__(self, "_by_tokens", by_tokens)
 
     @classmethod
     def from_groups(cls, raw_groups: list[list[str]]) -> SynonymTable:
@@ -52,11 +71,7 @@ class SynonymTable:
     def expansions_for(self, term: str) -> tuple[str, ...] | None:
         """Return every synonym in the group containing ``term``, or None
         if no group matches. Match is case-insensitive."""
-        needle = term.casefold()
-        for g in self.groups:
-            if any(t.casefold() == needle for t in g):
-                return g
-        return None
+        return self._by_term.get(fold(term))
 
 
 def load_synonyms(path: Path) -> SynonymTable:
@@ -90,17 +105,24 @@ def merge_tables(*tables: SynonymTable) -> SynonymTable:
     than competing with it, so the user always *extends* the defaults. Earlier
     tables seed group order; later ones append their new forms."""
     comps: list[list[str]] = []
+    folded: dict[str, str] = {}
+
+    def key(term: str) -> str:
+        if term not in folded:
+            folded[term] = fold(term)
+        return folded[term]
+
     for table in tables:
         for g in table.groups:
-            keys = {t.casefold() for t in g}
-            overlap = [c for c in comps if any(t.casefold() in keys for t in c)]
+            keys = {key(t) for t in g}
+            overlap = [c for c in comps if any(key(t) in keys for t in c)]
             if overlap:
                 merged: list[str] = []
                 seen: set[str] = set()
                 for src in (*overlap, list(g)):
                     for t in src:
-                        if t.casefold() not in seen:
-                            seen.add(t.casefold())
+                        if key(t) not in seen:
+                            seen.add(key(t))
                             merged.append(t)
                 for c in overlap:
                     comps.remove(c)
@@ -154,14 +176,8 @@ def expand(query: str, table: SynonymTable) -> str:
 
     # Group lookup keyed by the \w+ token tuple (hyphens are separators) so a
     # query form matches a table form regardless of hyphenation. O(1) lookups.
-    key2group: dict[tuple[str, ...], tuple[str, ...]] = {}
-    max_len = 1
-    for g in table.groups:
-        for term in g:
-            toks = tuple(re.findall(r"\w+", term.casefold()))
-            if toks:
-                key2group.setdefault(toks, g)
-                max_len = max(max_len, len(toks))
+    key2group = table._by_tokens  # pyright: ignore[reportPrivateUsage]
+    max_len = max(map(len, key2group), default=1)
 
     literals = literal_spans(query)
 
@@ -180,7 +196,7 @@ def expand(query: str, table: SynonymTable) -> str:
         # single quoted token (e.g. "4", "mfa") is left literal — quoting one
         # word is the clearest exact-match request, so it never expands; only
         # genuine multi-word phrases ("multi factor authentication") do.
-        key = tuple(re.findall(r"\w+", m.group(1).casefold()))
+        key = tuple(re.findall(r"\w+", fold(m.group(1))))
         exp = key2group.get(key) if len(key) > 1 else None
         if exp is not None:
             repls.append((span.start, span.end, _format_disjunction(m.group(1), exp)))
@@ -199,7 +215,7 @@ def expand(query: str, table: SynonymTable) -> str:
                 for j in range(k - 1)
             ):
                 continue
-            grp = key2group.get(tuple(w.group(0).casefold() for w in run))
+            grp = key2group.get(tuple(fold(w.group(0)) for w in run))
             if grp is not None:
                 surface = query[run[0].start() : run[-1].end()]
                 repls.append((run[0].start(), run[-1].end(), _format_disjunction(surface, grp)))
@@ -236,9 +252,9 @@ def _format_disjunction(original: str, group: tuple[str, ...]) -> str:
     seen: set[str] = set()
     parts: list[str] = []
     for term in (original, *group):
-        if term.casefold() in seen:
+        if fold(term) in seen:
             continue
-        seen.add(term.casefold())
+        seen.add(fold(term))
         if " " in term:
             parts.append(f'"{term}"')
         else:

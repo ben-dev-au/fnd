@@ -60,6 +60,7 @@ from fnd.index import (
     unreadable_roots,
 )
 from fnd.index_freshness import Ledger, indexed_with
+from fnd.text_canon import canonical
 from fnd.walk import walk_sources
 
 EventKind = Literal[
@@ -173,7 +174,7 @@ class IndexState:
             raise ValueError("malformed state file (missing [state] table)")
         s = cast(dict[str, Any], raw)
         return cls(
-            collection=str(s.get("collection", "")),
+            collection=canonical(str(s.get("collection", ""))),
             started_at=str(s.get("started_at", "")),
             total_files=int(s.get("total_files", 0) or 0),
             pdfs_total=int(s.get("pdfs_total", 0) or 0),
@@ -231,8 +232,16 @@ def saved_states() -> list[tuple[Path, IndexState]]:
         return out
     for path in candidates:
         state = load_state(path)
-        if state is not None:
-            out.append((path, state))
+        if state is None:
+            continue
+        # A run saved under a name since spelt differently moves to the name now
+        # used, or a finished run would clear only the new file.
+        want = state_file_for(state.collection)
+        if path != want and not want.exists():
+            with contextlib.suppress(OSError):
+                path.replace(want)
+                path = want
+        out.append((path, state))
     out.sort(key=lambda pair: pair[1].last_update or pair[1].started_at, reverse=True)
     return out
 

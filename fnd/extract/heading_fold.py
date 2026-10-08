@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 
 from fnd.extract.base import Block, Chunk
+from fnd.text_canon import fold
 
 __all__ = ["HeadingFolder"]
 
@@ -42,7 +43,7 @@ def _heading_key(text: str) -> str:
     said "not present" and folded a second copy in, so the preview showed the
     same heading twice.
     """
-    return re.sub(r"[*_`~\s]+", " ", text.lstrip("#")).strip().casefold()
+    return fold(re.sub(r"[*_`~\s]+", " ", text.lstrip("#")).strip())
 
 
 def _leading_heading_key(body_md: str) -> str:

@@ -41,6 +41,7 @@ from fnd.config import (
 from fnd.display_text import fit
 from fnd.fsmeta import path_is_absent
 from fnd.index_freshness import State
+from fnd.text_canon import fold
 from fnd.tui.editing import BACK, CLEAR, SAVE, SAVE_KEY, editing_help_rows
 from fnd.tui.freshness_view import MARKER, badge, run_pending, verdict_for
 
@@ -871,7 +872,7 @@ def _choices_collections(app: FNDApp) -> list[ChoiceOption]:
     # when the stored value is resolved. Offering the pseudo-choice too would
     # put two rows on the same stored value, and picking "All collections"
     # would silently select that one collection instead.
-    if not any(n.casefold() == ALL_COLLECTIONS for n in names):
+    if not any(fold(n) == ALL_COLLECTIONS for n in names):
         choices.insert(0, ChoiceOption(value=ALL_COLLECTIONS, label="All collections"))
     return choices
 

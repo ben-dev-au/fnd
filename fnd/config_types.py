@@ -20,9 +20,16 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
 
-from pydantic import AfterValidator, BaseModel, BeforeValidator, TypeAdapter, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+)
 
-from fnd.text_canon import canonical
+from fnd.text_canon import canonical, fold
 
 __all__ = [
     "TEMPLATE_VARS",
@@ -76,7 +83,7 @@ def clean_path_text(raw: str) -> str:
     return text
 
 
-def _source_path(value: object) -> object:
+def _source_path(value: object, info: ValidationInfo) -> object:
     if isinstance(value, str):
         text = clean_path_text(value)
         if not text:
@@ -86,7 +93,12 @@ def _source_path(value: object) -> object:
         return value
     path = value.expanduser()
     # Anchor, not is_absolute(): Windows treats "/tmp" as relative to the drive.
-    return path if path.anchor else Path(os.getcwd()) / path
+    if path.anchor:
+        return path
+    # Relative to the config file it is written in; typed anywhere else, to the shell's folder.
+    context = info.context if isinstance(info.context, dict) else {}
+    base = context.get("config_dir")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return (base if isinstance(base, Path) else Path(os.getcwd())) / path
 
 
 SourcePath = Annotated[Path, BeforeValidator(_source_path)]
@@ -188,7 +200,7 @@ CollectionName = Annotated[str, AfterValidator(_collection_name)]
 
 def collection_key(name: str) -> str:
     """Names with one key share a state file on a case-insensitive filesystem."""
-    return canonical(name).casefold()
+    return fold(name)
 
 
 def composed_names(raw: object) -> dict[str, str]:

@@ -20,7 +20,15 @@ from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from fnd.config_types import (
     AppArgv,
@@ -41,6 +49,7 @@ from fnd.config_types import (
 )
 from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_SPECS, split_type_globs
 from fnd.paths import app_data_dir  # re-exported: many modules import it from here
+from fnd.text_canon import fold
 
 _APP_NAME = "fnd"
 
@@ -227,7 +236,7 @@ def is_all_collections(value: str | None, *, known: Collection[str] = ()) -> boo
     """
     if not value or value in known:
         return False
-    return value.strip().casefold() == ALL_COLLECTIONS
+    return fold(value.strip()) == ALL_COLLECTIONS
 
 
 class _ConfigModel(BaseModel):
@@ -643,7 +652,7 @@ class CollectionConfig(_ConfigModel):
         return [Path(str(p)).expanduser() for p in v]
 
     @model_validator(mode="after")
-    def _normalise_sources(self) -> CollectionConfig:
+    def _normalise_sources(self, info: ValidationInfo) -> CollectionConfig:
         # sources were explicitly provided alongside roots; only valid if roots
         # is already empty (idempotent re-validation path is handled below).
         if self.sources and self.roots:
@@ -662,12 +671,16 @@ class CollectionConfig(_ConfigModel):
             raise ValueError("collection mixes legacy 'roots' with 'sources'; pick one")
         if not self.sources and self.roots:
             # Promote legacy flat shape into a single implicit source.
+            # The load's context, so a relative root resolves where a source's would.
             implicit = [
-                SourceConfig(
-                    path=root,
-                    includes=list(self.includes),
-                    filters=_legacy_filters(self.excludes),
-                    follow_symlinks=self.follow_symlinks,
+                SourceConfig.model_validate(
+                    {
+                        "path": root,
+                        "includes": list(self.includes),
+                        "filters": _legacy_filters(self.excludes),
+                        "follow_symlinks": self.follow_symlinks,
+                    },
+                    context=info.context,
                 )
                 for root in self.roots
             ]
@@ -1078,7 +1091,7 @@ def validate_collection_name(name: str) -> str:
     # ``all`` is the pseudo-name for "every collection" in ``-c`` and in
     # ``defaults.collection``; a real one would make those ambiguous. Only
     # blocked at write time, so an older config that already has one loads.
-    if name.casefold() == ALL_COLLECTIONS:
+    if fold(name) == ALL_COLLECTIONS:
         raise InvalidCollectionNameError(
             f"collection name {name!r} is reserved; it means 'every collection' in "
             "`--collection` and `defaults.collection`"
@@ -1106,6 +1119,11 @@ def parse_duration_seconds(s: str) -> int:
 # ── Loaders ─────────────────────────────────────────────────────────────────
 
 
+def _context(config_path: Path) -> dict[str, Path]:
+    """What a field needs from where the config lives: relative paths resolve there."""
+    return {"config_dir": config_path.expanduser().absolute().parent}
+
+
 def load(path: Path | None = None) -> Config:
     """Load and validate the config TOML. If the file is missing, return a
     Config with no collections; the caller decides whether to error.
@@ -1121,7 +1139,7 @@ def load(path: Path | None = None) -> Config:
         return Config()
     raw = tomllib.loads(p.read_text(encoding="utf-8"))
     check_version(raw)
-    return Config.model_validate(raw)
+    return Config.model_validate(raw, context=_context(p))
 
 
 def ensure_current(config_path: Path | None = None) -> list[str]:
@@ -1142,7 +1160,7 @@ def ensure_current(config_path: Path | None = None) -> list[str]:
     text = p.read_text(encoding="utf-8")
     raw = tomllib.loads(text)
     version, applied = migrate(raw)
-    config = Config.model_validate(raw)
+    config = Config.model_validate(raw, context=_context(p))
     rendered = render_config(config, preserved=extract_preserved(text), version=version)
     if rendered == text or tomllib.loads(rendered) == tomllib.loads(text):
         return []
@@ -1187,7 +1205,7 @@ def _rewrite(config_path: Path, mutate: Callable[[dict[str, Any]], None]) -> Con
     raw: dict[str, Any] = tomllib.loads(text) if text else {}
     version, _applied = migrate(raw)
     mutate(raw)
-    config = Config.model_validate(raw)
+    config = Config.model_validate(raw, context=_context(config_path))
     rendered = render_config(config, preserved=extract_preserved(text), version=version)
     _refuse_lossy(rendered, config, raw)
     secure_mkdir(config_path.parent)
