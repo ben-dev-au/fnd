@@ -564,16 +564,12 @@ def config_path() -> None:
 def config_edit() -> None:
     """Open the config TOML in $EDITOR; create from template if missing."""
     from fnd._perms import secure_write_text
-    from fnd.config import app_data_dir, default_config_path, starter_config
+    from fnd.config import default_config_path, starter_config
 
     path = default_config_path()
+    # Only where there is no config: this must never replace one.
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        # default_config_path returns the primary path when neither exists.
-        if not path.parent.samefile(app_data_dir()):
-            # Fallback path was returned; create primary instead.
-            path = app_data_dir() / "config.toml"
-            path.parent.mkdir(parents=True, exist_ok=True)
         secure_write_text(path, starter_config())
         echo(f"wrote starter template to {path}")
 

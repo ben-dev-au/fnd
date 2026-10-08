@@ -15,8 +15,14 @@ from pathlib import Path
 
 def run_fnd(data_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """``fnd <args>`` in this venv, its config and index under ``data_root / "fnd"``."""
+    # A scratch HOME too: with the primary config absent, fnd falls back to
+    # ~/.config/fnd/config.toml and its startup migration would rewrite a real one.
+    home = data_root / "home"
+    home.mkdir(parents=True, exist_ok=True)
     env = {
         **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
         "XDG_DATA_HOME": str(data_root),
         "XDG_CACHE_HOME": str(data_root / "cache"),
         "WIN_PD_OVERRIDE_LOCAL_APPDATA": str(data_root),
