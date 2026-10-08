@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 _CACHE: dict[str, tuple[str, float]] = {}
 _PENDING: set[str] = set()
+# Pending keys invalidated mid-compute: the worker discards its result and computes again.
+_DIRTY: set[str] = set()
 _LOCK = threading.Lock()
 _TTL_SECONDS = 30.0
 
@@ -60,13 +62,18 @@ def get_or_schedule(
         _PENDING.add(key)
 
     def _worker() -> None:
-        try:
-            value = compute()
-        except Exception:
-            value = ""
-        with _LOCK:
-            _CACHE[key] = (value, time.monotonic())
-            _PENDING.discard(key)
+        while True:
+            try:
+                value = compute()
+            except Exception:
+                value = ""
+            with _LOCK:
+                if key in _DIRTY:
+                    _DIRTY.discard(key)
+                    continue
+                _CACHE[key] = (value, time.monotonic())
+                _PENDING.discard(key)
+                break
         # Refresh whatever settings screen is on top so the new value
         # paints. ``call_from_thread`` is the Textual hook for marshalling
         # work back onto the UI thread. Under test runs the worker can
@@ -89,12 +96,15 @@ def invalidate(key: str) -> None:
     """Drop the cached value for ``key`` so the next read recomputes."""
     with _LOCK:
         _CACHE.pop(key, None)
+        if key in _PENDING:
+            _DIRTY.add(key)
 
 
 def invalidate_all() -> None:
-    """Wipe the whole cache. Used by tests."""
+    """Wipe the whole cache and make every in-flight worker compute again."""
     with _LOCK:
         _CACHE.clear()
+        _DIRTY.update(_PENDING)
 
 
 def _refresh_active_settings(app: FNDApp | Any) -> None:
