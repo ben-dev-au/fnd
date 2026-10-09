@@ -22,7 +22,8 @@ to being called 130,298 times a launch.
 
 from __future__ import annotations
 
-from fnd.matching import _stem, glob_to_regex
+from fnd.analysis import index_token as _stem
+from fnd.matching import glob_to_regex
 
 
 def test_caching_does_not_change_what_stemming_returns() -> None:

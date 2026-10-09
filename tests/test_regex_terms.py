@@ -104,6 +104,9 @@ def test_a_regex_search_runs_the_engine_once_for_all_its_snippets(
         return real(pattern, stems)
 
     monkeypatch.setattr(regex_terms, "_run", _counted)
-    hits = searcher._raw_hits("/crypto.*/", limit=20, collection=None)
+    from fnd.query import materialise_hits, snippet_spec
+
+    pool = searcher._candidates("/crypto.*/", window=20, collection=None)
+    hits = materialise_hits(pool.hits, snippet_spec("/crypto.*/"))
     assert len(hits) == 12
     assert len(runs) <= 2, runs

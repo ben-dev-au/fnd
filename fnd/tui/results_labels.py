@@ -423,16 +423,27 @@ def _format_file_label(
     # Charged BEFORE eliding: added afterwards it pushed the row 2 cells past
     # its budget, and the cells it took were the suffix the elision keeps.
     marker = f"{_STALE_GLYPH} " if stale else ""
+    copies = copies_note(len(g.copies))
     if name_budget > 0:
         shape_cells = 1 + cell_len(mark.shape) if mark and mark.shape else 0
-        name = _elide_middle_keep_suffix(name, max(1, name_budget - cell_len(marker) - shape_cells))
+        name = _elide_middle_keep_suffix(
+            name, max(1, name_budget - cell_len(marker) - shape_cells - cell_len(copies))
+        )
     label = _build_label(f"{marker}{name}", g.top_score, max_score)
-    if mark is None:
-        return label
-    style = mark_style(mark.colour)
-    suffix = Path(name).suffix
-    if suffix:
-        label.stylize(style, len(label) - len(suffix))
-    if mark.shape:
-        label.append(f" {mark.shape}", style=style)
+    if mark is not None:
+        style = mark_style(mark.colour)
+        suffix = Path(name).suffix
+        if suffix:
+            label.stylize(style, len(label) - len(suffix))
+        if mark.shape:
+            label.append(f" {mark.shape}", style=style)
+    if copies:
+        label.append(copies, style="dim")
     return label
+
+
+def copies_note(count: int) -> str:
+    """`` +2 copies`` after a result folding byte-identical copies; empty for none."""
+    if count == 0:
+        return ""
+    return f" +{count} {'copy' if count == 1 else 'copies'}"

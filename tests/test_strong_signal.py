@@ -96,9 +96,9 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
     assert trace.regime != "strong-signal"
     assert trace.strong_signal.fired is False
     # Probe directly — gap should be tight, normalized top score modest.
-    probe = searcher._filtered_raw_hits(
-        "note filler", target=100, collection="notes", metadata_filter=None
-    )
+    probe = searcher._candidates(
+        "note filler", window=100, collection="notes", metadata_filter=None
+    ).hits
     assert probe
     if len(probe) >= 2:
         top_n = normalise_bm25(probe[0].score)
@@ -115,9 +115,9 @@ def test_intent_disables_strong_signal_bypass(cfg: Config, unambiguous_index: Pa
     from fnd.query import Searcher
 
     searcher = Searcher(index_dir=unambiguous_index)
-    probe = searcher._filtered_raw_hits(
-        "mitochondrion", target=100, collection="notes", metadata_filter=None
-    )
+    probe = searcher._candidates(
+        "mitochondrion", window=100, collection="notes", metadata_filter=None
+    ).hits
     ss = _evaluate_strong_signal(probe, intent_present=True)
     assert ss.fired is False
     assert ss.disabled_by_intent is True

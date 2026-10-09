@@ -20,9 +20,9 @@ import dataclasses
 import pytest
 
 from fnd.cascade import _with_pass
-from fnd.fusion import _with_pass_index, _with_score
+from fnd.fusion import _with_pass_index
 from fnd.query import Hit
-from fnd.rerank import _replace_score
+from fnd.rerank import _with_rank_score
 
 
 def _populated_hit() -> Hit:
@@ -55,6 +55,10 @@ def _populated_hit() -> Hit:
         body_text="the full decoded chunk body",
         body_md="## the markdown the preview renders",
         memberships=(("Work", "/w"), ("Personal", "/p")),
+        materialised=False,
+        stored_struct=b"\x03",
+        rank_score=0.25,
+        content_hash="ab" * 32,
     )
 
 
@@ -89,19 +93,18 @@ def test_every_hit_field_is_populated_by_the_fixture() -> None:
 @pytest.mark.parametrize(
     ("name", "rebuilt"),
     [
-        ("rerank._replace_score", _replace_score(_populated_hit(), 9.99)),
-        ("fusion._with_score", _with_score(_populated_hit(), 9.99)),
+        ("rerank._with_rank_score", _with_rank_score(_populated_hit(), 9.99)),
         ("fusion._with_pass_index", _with_pass_index(_populated_hit(), 1)),
         ("cascade._with_pass", _with_pass(_populated_hit(), 1)),
     ],
 )
 def test_rebuild_preserves_all_fields_except_intentional_overrides(name: str, rebuilt: Hit) -> None:
-    """Every field except the one the helper overrides (score or
+    """Every field except the one the helper overrides (rank_score or
     pass_index) must round-trip. Without this guard, adding a field to
     Hit silently defaults that field to 0/""/None in every rebuilt
     Hit, the exact class of bug behind the missing ``line``."""
     original = _populated_hit()
-    overridden = {"score", "pass_index"}
+    overridden = {"rank_score", "pass_index"}
     for field in dataclasses.fields(Hit):
         if field.name in overridden:
             continue

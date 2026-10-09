@@ -56,5 +56,5 @@ def test_a_corrupt_stored_chunk_is_not_reported_as_a_query_problem(
 
     monkeypatch.setattr("fnd.struct.decode", _corrupt)
     with pytest.raises(UnicodeDecodeError) as caught:
-        Searcher(index_dir=built_index)._raw_hits("blue", limit=5, collection=None)
+        Searcher(index_dir=built_index).search("blue", limit=5)
     assert not isinstance(caught.value, QueryError)

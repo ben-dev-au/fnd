@@ -212,6 +212,19 @@ def test_eval_in_list() -> None:
     assert pred({"tags": ["something", "else"]}) is False
 
 
+def test_equality_on_a_list_asks_whether_it_holds_the_value() -> None:
+    """Obsidian writes a property picked from a list as a one-item list."""
+    assert compile_filter("Notes_Type == 'Cheat Sheet'")({"Notes_Type": ["Cheat Sheet"]})
+    assert not compile_filter("Notes_Type == 'Cheat Sheet'")({"Notes_Type": ["Lecture"]})
+    assert compile_filter("Notes_Type != 'Cheat Sheet'")({"Notes_Type": ["Lecture"]})
+    assert not compile_filter("Notes_Type != 'Cheat Sheet'")({"Notes_Type": ["Cheat Sheet"]})
+    assert compile_filter("Notes_Type ~~ 'Cheat*'")({"Notes_Type": ["Cheat Sheet"]})
+    assert compile_filter("Notes_Type in ['Lecture', 'Tutorial']")({"Notes_Type": ["Lecture"]})
+    assert not compile_filter("Notes_Type not in ['Tutorial', 'Lecture']")(
+        {"Notes_Type": ["Lecture"]}
+    )
+
+
 def test_eval_and_or_not() -> None:
     pred = compile_filter("Course == 'DevOps' AND status != 'archived' AND 'active' in tags")
     assert pred({"Course": "DevOps", "status": "active", "tags": ["active"]}) is True

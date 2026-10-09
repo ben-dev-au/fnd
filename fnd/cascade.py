@@ -2,7 +2,7 @@
 
 Three widening passes are tried in order:
 
-  0. literal — query as the user typed it (already stem-aware via en_stem)
+  0. literal: query as the user typed it (already stem-aware via the index analyser)
   1. fuzzy — Lucene-style "rewrite" fuzzy: enumerate the F_BODY term
      dictionary for indexed stems within the per-term auto-distance
      (0 for ≤2 chars, 1 for 3-5, 2 for ≥6 — same shape as Lucene's
@@ -25,24 +25,33 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import tantivy
 
 from fnd.explain import CascadePassTrace, CascadeTrace
-from fnd.matching import AUTO_FUZZY_MAX, auto_fuzzy_distance
-from fnd.query import Hit, Searcher, SourceScope, scope_arms, scope_or
+from fnd.matching import auto_fuzzy_distance, auto_fuzzy_reach
+from fnd.query import (
+    CandidatePool,
+    Hit,
+    Searcher,
+    SourceScope,
+    _collect,
+    _meta_keep,
+    candidate_window,
+    scope_arms,
+    scope_or,
+)
 from fnd.query_ast import FUZZY_MAX
 from fnd.query_errors import QuerySyntaxError
 from fnd.query_spans import has_phrase
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
-from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
+from fnd.analysis import index_token
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.render import keep_shown
-from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
-from fnd.struct import decode as decode_body_struct
+from fnd.schema import F_BODY, build_schema
 from fnd.synonyms import SynonymTable, compound_table, expand
 
 
@@ -53,7 +62,7 @@ def _carries_precision_intent(query: str) -> bool:
     * a quoted phrase, ``{N}`` proximity, or ``NEAR/N``;
     * a ``*``/``?`` wildcard (the fuzzy pass strips these and fuzzy-matches the
       bare stem — ``crypto*`` would re-admit ``cryptid``);
-    * an explicit exclusion (``NOT x`` / ``-x``) — the fuzzy pass strips the
+    * an explicit exclusion (``NOT x`` / ``-x``): the fuzzy pass strips the
       operator and would re-admit the excluded docs.
     """
     if any(ch in query for ch in '"{*?') or "NEAR/" in query or has_phrase(query):
@@ -63,7 +72,16 @@ def _carries_precision_intent(query: str) -> bool:
     return bool(re.search(r"\bNOT\b", query)) or bool(re.search(r"(?:^|\s)-[\w(]", query))
 
 
-_FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
+def _fuzzy_stands_down(query: str) -> bool:
+    """True where the fuzzy pass must not run: precision intent, or a field
+    clause it cannot lift to a filter (``(kind:a AND kind:b) AND x``), which its
+    own query would drop. The synonym and compound passes keep such a clause."""
+    from fnd.query_filters import has_unlifted_filter
+
+    return _carries_precision_intent(query) or has_unlifted_filter(query, build_schema())
+
+
+_FUZZY_TOKEN_RE = re.compile(r"^(\w+)(~(\d*))?$")
 # Strip ``~N`` (and bare trailing ``~``) only when preceded by a word
 # char — preserves phrase-proximity ``"a b"~3`` (~ after a quote).
 _STRIP_FUZZY_MOD_RE = re.compile(r"(?<=\w)~\d*")
@@ -73,8 +91,9 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
     """Like :func:`fnd.render._terms_from_query`, but preserves per-term
     ``~N`` modifiers.
 
-    Returns ``(term, explicit_distance | None)`` tuples. Bare ``~`` with
-    no digit reads as no modifier. ``~N`` is clamped to ``{1, 2}``.
+    Returns ``(term, explicit_distance | None)`` tuples, None for no modifier.
+    Bare ``~`` is the automatic distance, as the compiled query searches it.
+    ``~N`` is clamped to ``{1, 2}``.
     Quoted phrases are stripped — proximity (``"a b"~3``) isn't fuzzy.
     """
     if not query:
@@ -93,9 +112,11 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
         if not m:
             continue
         term = m.group(1)
-        dist_str = m.group(2)
-        if dist_str is None or dist_str == "":
+        dist_str = m.group(3)
+        if dist_str is None:
             out.append((term, None))
+        elif dist_str == "":
+            out.append((term, auto_fuzzy_distance(index_token(term))))
         else:
             out.append((term, min(int(dist_str), FUZZY_MAX)))
     return out
@@ -119,9 +140,9 @@ def fuzzy_body_clauses(
 ) -> list[tuple[tantivy.Occur, tantivy.Query]] | None:
     """The fuzzy pass's body clauses, or None where it would not run.
 
-    ``F_BODY`` is en_stem-analysed, so the on-disk token form for "Templates"
+    ``F_BODY`` is analysed by ``fnd_text``, so the on-disk token form for "Templates"
     is ``templat``. This bypasses parse_query (and its query-time stemming),
-    so each query term is lowercased and Snowball-stemmed before the
+    so each query term goes through the same analyser before the
     dictionary is consulted; otherwise the Levenshtein distance is computed
     between mismatched token shapes.
 
@@ -137,21 +158,21 @@ def fuzzy_body_clauses(
     if not term_dists:
         return None
     schema = build_schema()
-    stems_with_dists: list[tuple[str, int]] = []
+    stems_with_dists: list[tuple[str, int, bool]] = []
     for term, explicit in term_dists:
-        stem = _fuzzy_stem(term)
+        stem = index_token(term)
         if explicit is not None:
             d = explicit
-        elif auto_fuzzy_enabled and len(stem) >= min_term_chars:
-            d = min(auto_fuzzy_distance(stem), AUTO_FUZZY_MAX)
+        elif auto_fuzzy_enabled:
+            d = auto_fuzzy_reach(stem, min_term_chars=min_term_chars)
         else:
             d = 0
-        stems_with_dists.append((stem, d))
-    if all(d == 0 for _, d in stems_with_dists):
+        stems_with_dists.append((stem, d, explicit is not None))
+    if all(d == 0 for _, d, _ in stems_with_dists):
         return None
     clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
-    for stem, dist in stems_with_dists:
-        variants = _fuzzy_term_variants(searcher, stem, dist)
+    for stem, dist, front in stems_with_dists:
+        variants = _fuzzy_term_variants(searcher, stem, dist, front=front)
         if not variants:
             # No indexed stem within distance, so the AND of fuzzy term clauses
             # can never match.
@@ -178,11 +199,12 @@ def _fuzzy_pass(
     limit: int,
     collection: str | list[str] | None,
     source_scope: SourceScope | None = None,
-    intent: str | None = None,
+    metadata_filter: str | None = None,
+    min_files: int = 0,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
-) -> list[Hit]:
+) -> CandidatePool:
     """Build a Boolean query of fuzzy term queries over the body field,
     AND-combined so all query terms must fuzzy-match.
 
@@ -208,14 +230,14 @@ def _fuzzy_pass(
         min_term_chars=min_term_chars,
     )
     if body is None:
-        return []
+        return CandidatePool([], exhausted=True, all_files=True)
     subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = list(body)
     arms = scope_arms(schema, collection, source_scope)
     if arms is not None:
         # An explicitly empty scope matches nothing, which a single query
         # cannot express: `None` would mean unscoped.
         if not arms:
-            return []
+            return CandidatePool([], exhausted=True, all_files=True)
         scope = scope_or(arms)
         # Const-scored: collection and source-path IDF must not perturb the
         # fuzzy pass's ranking.
@@ -243,79 +265,15 @@ def _fuzzy_pass(
                 (tantivy.Occur.Must, tantivy.Query.const_score_query(compiled_tags, 0.0))
             )
     bq = tantivy.Query.boolean_query(subqueries)
-    # Pin one searcher generation for the whole search→doc sequence so a
-    # concurrent reload() can't swap it between the search and materialisation
-    # (the same guard _raw_hits uses against cross-generation DocAddresses).
-    searcher_view = searcher._searcher
-    result = searcher_view.search(bq, limit=limit)
-    return _materialize_hits(searcher_view, result.hits, query=query, intent=intent)
-
-
-def _materialize_hits(
-    searcher_view: object,
-    pairs: list[tuple[float, tantivy.DocAddress]],
-    *,
-    query: str,
-    intent: str | None = None,
-) -> list[Hit]:
-    """Turn a (score, doc-address) list from a typed-API search into Hits.
-
-    Pulled out of ``Searcher._raw_hits`` so the cascade can issue queries
-    that bypass ``parse_query`` (e.g. the dictionary-rewritten fuzzy pass)
-    but still yield the same Hit shape the rest of the system expects.
-    ``searcher_view`` is the generation-pinned snapshot the caller searched
-    against — addresses must be dereferenced on the same generation.
-    """
-    from fnd.query import (  # local import: avoid cycle
-        _first_int,
-        _first_str,
-        _make_snippet,
-        _memberships_of,
+    # One searcher generation for the whole search and doc sequence: a
+    # concurrent reload() swaps it, and DocAddresses are generation-specific.
+    return _collect(
+        searcher._searcher,
+        bq,
+        window=limit,
+        min_files=min_files,
+        keep=_meta_keep(metadata_filter),
     )
-
-    out: list[Hit] = []
-    for score, address in pairs:
-        doc = searcher_view.doc(address)  # type: ignore[attr-defined]
-        body_struct_bytes = doc.get_first("body_struct")  # type: ignore[attr-defined]
-        body_text = ""
-        if body_struct_bytes is not None:
-            blocks = decode_body_struct(body_struct_bytes)
-            body_text = "\n".join(b.text for b in blocks)
-        meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
-        if meta_blob_bytes is None:
-            meta_blob_bytes = b""
-        body_md_bytes = doc.get_first("body_md")  # type: ignore[attr-defined]
-        out.append(
-            Hit(
-                score=float(score),
-                parent_id=_first_str(doc, F_PARENT_ID),
-                path=_first_str(doc, "path"),
-                kind=_first_str(doc, "kind"),
-                page=_first_int(doc, "page"),
-                slide=_first_int(doc, "slide"),
-                heading_path=_first_str(doc, "heading_path"),
-                title=_first_str(doc, "title"),
-                snippet=_make_snippet(body_text, query, intent=intent),
-                page_label=_first_str(doc, F_PAGE_LABEL),
-                chunk_seq=_first_int(doc, "chunk_seq"),
-                line=_first_int(doc, "line"),
-                mtime=_first_int(doc, "mtime"),
-                meta_blob=meta_blob_bytes,
-                body_text=body_text,
-                body_md=body_md_bytes.decode("utf-8") if body_md_bytes else "",
-                memberships=_memberships_of(doc),
-            )
-        )
-    return out
-
-
-def _derived_hits(searcher: Searcher, query: str, **kwargs: Any) -> list[Hit]:
-    """A rewrite the engine refuses widens to nothing; the literal hits stand,
-    as in fusion's derived passes."""
-    try:
-        return searcher._filtered_raw_hits(query, **kwargs)
-    except QuerySyntaxError:
-        return []
 
 
 @overload
@@ -329,7 +287,6 @@ def cascade_search(
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     source_scope: SourceScope | None = ...,
-    intent: str | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
@@ -348,7 +305,6 @@ def cascade_search(
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     source_scope: SourceScope | None = ...,
-    intent: str | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
@@ -366,7 +322,6 @@ def cascade_search(
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
     source_scope: SourceScope | None = None,
-    intent: str | None = None,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
@@ -381,9 +336,9 @@ def cascade_search(
     ``metadata_filter`` and ``source_scope`` apply to every pass so
     cascade preserves the same scope a single-pass search would, even
     when widening to fuzzy / synonym. Literal + synonym passes go through
-    :meth:`Searcher._filtered_raw_hits` (which honours the metadata
-    filter); the programmatic fuzzy pass adds an inline source-set
-    clause to its boolean query.
+    :meth:`Searcher._candidates`; the programmatic fuzzy pass adds an inline
+    source-set clause to its boolean query. ``limit`` is the number of files
+    the caller shows: each pass pages until it holds more than that.
 
     ``with_trace``: when ``True``, returns ``(hits, CascadeTrace)`` so the
     layered search can format the regime label as ``cascade(+fuzzy)`` /
@@ -411,10 +366,42 @@ def cascade_search(
             final_count=len(out),
         )
 
-    # Oversample so the caller's per-file grouper has enough chunks to
-    # bucket into ``limit`` files. Mirrors the ``target = limit * 10``
-    # contract Searcher.search_grouped used.
-    pass_target = limit * 10
+    window = candidate_window(limit)
+
+    def _pass(q: str) -> CandidatePool:
+        return searcher._candidates(
+            q,
+            window=window,
+            collection=collection,
+            metadata_filter=metadata_filter,
+            source_scope=source_scope,
+            tag_filter=tag_filter,
+            min_files=limit,
+        )
+
+    def _derived_pass(q: str) -> CandidatePool:
+        # A rewrite the engine refuses widens to nothing; the literal hits stand.
+        try:
+            return _pass(q)
+        except QuerySyntaxError:
+            return CandidatePool([], exhausted=True, all_files=True)
+
+    def _trace(
+        pass_index: int, name: str, q: str, pool: CandidatePool, hits: list[Hit], new: int
+    ) -> None:
+        if with_trace:
+            pass_traces.append(
+                CascadePassTrace(
+                    pass_index=pass_index,
+                    name=name,
+                    query=q,
+                    hit_count=len(hits),
+                    new_count=new,
+                    bm25_top=hits[0].score if hits else 0.0,
+                    exhausted=pool.exhausted,
+                    all_files=pool.all_files,
+                )
+            )
 
     # Literal + synonym passes go through tantivy's QueryParser, which
     # silently no-ops ``~N`` on indexed-non-fast body fields. Strip the
@@ -423,63 +410,32 @@ def cascade_search(
     literal_query = _strip_fuzzy_modifiers(query)
 
     # Pass 0: literal query through the standard parse_query path.
-    raw = searcher._filtered_raw_hits(
-        literal_query,
-        target=pass_target,
-        collection=collection,
-        metadata_filter=metadata_filter,
-        source_scope=source_scope,
-        intent=intent,
-        tag_filter=tag_filter,
-    )
-    new_count = _ingest(raw, 0)
-    if with_trace:
-        pass_traces.append(
-            CascadePassTrace(
-                pass_index=0,
-                name="literal",
-                query=literal_query,
-                hit_count=len(raw),
-                new_count=new_count,
-                bm25_top=raw[0].score if raw else 0.0,
-            )
-        )
+    pool = _pass(literal_query)
+    _trace(0, "literal", literal_query, pool, pool.hits, _ingest(pool.hits, 0))
     if len(out) >= threshold:
         return _trace_result() if with_trace else out
 
     # Pass 1: fuzzy via typed API (text-syntax ~1 is not supported by
-    # tantivy-py for indexed-non-fast text fields). Metadata filter is
-    # applied post-hoc since the fuzzy pass bypasses parse_query entirely.
-    # Skipped for phrase/proximity queries: those express precision intent, and
-    # the fuzzy pass strips proximity ({N}/NEAR) and would re-admit far matches.
-    fuzzy_raw = (
-        []
-        if _carries_precision_intent(query)
+    # tantivy-py for indexed-non-fast text fields). Skipped for phrase/proximity
+    # queries: those express precision intent, and the fuzzy pass strips
+    # proximity ({N}/NEAR) and would re-admit far matches.
+    pool = (
+        CandidatePool([], exhausted=True, all_files=True)
+        if _fuzzy_stands_down(query)
         else _fuzzy_pass(
             searcher,
             query=query,
-            limit=pass_target,
+            limit=window,
             collection=collection,
             source_scope=source_scope,
-            intent=intent,
+            metadata_filter=metadata_filter,
+            min_files=limit,
             auto_fuzzy_enabled=auto_fuzzy_enabled,
             min_term_chars=min_term_chars,
             tag_filter=tag_filter,
         )
     )
-    fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
-    new_count = _ingest(fuzzy_raw, 1)
-    if with_trace:
-        pass_traces.append(
-            CascadePassTrace(
-                pass_index=1,
-                name="fuzzy",
-                query=query,
-                hit_count=len(fuzzy_raw),
-                new_count=new_count,
-                bm25_top=fuzzy_raw[0].score if fuzzy_raw else 0.0,
-            )
-        )
+    _trace(1, "fuzzy", query, pool, pool.hits, _ingest(pool.hits, 1))
     if len(out) >= threshold:
         return _trace_result() if with_trace else out
 
@@ -490,28 +446,8 @@ def cascade_search(
     if synonyms is not None and synonyms.groups and not _carries_precision_intent(query):
         syn_q = expand(literal_query, synonyms)
         if syn_q != literal_query:
-            raw = _derived_hits(
-                searcher,
-                syn_q,
-                target=pass_target,
-                collection=collection,
-                metadata_filter=metadata_filter,
-                source_scope=source_scope,
-                intent=intent,
-                tag_filter=tag_filter,
-            )
-            new_count = _ingest(raw, 2)
-            if with_trace:
-                pass_traces.append(
-                    CascadePassTrace(
-                        pass_index=2,
-                        name="synonym",
-                        query=syn_q,
-                        hit_count=len(raw),
-                        new_count=new_count,
-                        bm25_top=raw[0].score if raw else 0.0,
-                    )
-                )
+            pool = _derived_pass(syn_q)
+            _trace(2, "synonym", syn_q, pool, pool.hits, _ingest(pool.hits, 2))
     if len(out) >= threshold:
         return _trace_result() if with_trace else out
 
@@ -520,48 +456,16 @@ def cascade_search(
     if not _carries_precision_intent(query):
         comp_q = expand(literal_query, compound_table(literal_query))
         if comp_q != literal_query:
-            raw = _derived_hits(
-                searcher,
-                comp_q,
-                target=pass_target,
-                collection=collection,
-                metadata_filter=metadata_filter,
-                source_scope=source_scope,
-                intent=intent,
-                tag_filter=tag_filter,
-            )
-            raw = keep_shown(raw, literal_query)
-            new_count = _ingest(raw, 1)
-            if with_trace:
-                pass_traces.append(
-                    CascadePassTrace(
-                        pass_index=3,
-                        name="compound",
-                        query=comp_q,
-                        hit_count=len(raw),
-                        new_count=new_count,
-                        bm25_top=raw[0].score if raw else 0.0,
-                    )
-                )
+            pool = _derived_pass(comp_q)
+            shown = keep_shown(pool.hits, literal_query)
+            _trace(3, "compound", comp_q, pool, shown, _ingest(shown, 1))
 
     return _trace_result() if with_trace else out
-
-
-def _apply_metadata_filter(hits: list[Hit], metadata_filter: str | None) -> list[Hit]:
-    """Re-use the searcher's predicate logic on a list of hits produced
-    outside ``parse_query`` (e.g. the fuzzy pass)."""
-    if metadata_filter is None:
-        return hits
-    from fnd.filter_dsl import compile_filter
-    from fnd.query import _passes_meta_filter
-
-    predicate = compile_filter(metadata_filter)
-    return [h for h in hits if _passes_meta_filter(h, predicate)]
 
 
 def _with_pass(h: Hit, pass_index: int) -> Hit:
     """Return a copy of ``h`` tagged with ``pass_index``. Hits are frozen
     dataclasses, so we copy rather than mutate — via ``dataclasses.replace``,
     which cannot drop a field the way an enumerated rebuild does (see
-    :func:`fnd.fusion._with_score`)."""
+    :func:`fnd.fusion._with_pass_index`)."""
     return dataclasses.replace(h, pass_index=pass_index)

@@ -112,7 +112,7 @@ def test_cascade_trace_records_pass_widening(
     trace lists the literal pass with zero new_count and the fuzzy pass
     with hits.
 
-    Uses ``glimmer`` / ``glimer`` (both pass through en_stem unchanged
+    Uses ``glimmer`` / ``glimer`` (both pass through the index analyser unchanged
     so the on-disk Levenshtein distance is exactly 1) — same canonical
     fixture as ``test_ux_j_cascade_fallback.py``."""
     from fnd.cascade import cascade_search
@@ -178,9 +178,10 @@ def test_search_layered_regime_fusion_for_ambiguous_query(cfg: Config, medium_in
     assert trace.cascade is None
 
 
-def test_search_layered_regime_cascade_for_typo(
+def test_search_layered_respells_a_typo_in_fusion(
     cfg: Config, tmp_path: Path, tmp_index_dir: Path
 ) -> None:
+    """An unindexed word gets fusion's typo pass; the cascade is no longer its only route."""
     from fnd.layered import search_layered
     from fnd.query import Searcher
 
@@ -190,7 +191,7 @@ def test_search_layered_regime_cascade_for_typo(
     build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
 
     searcher = Searcher(index_dir=tmp_index_dir)
-    _, trace = search_layered(
+    groups, trace = search_layered(
         searcher,
         query="glimer",  # 1-edit typo; literal probe returns 0 hits
         limit=10,
@@ -198,8 +199,9 @@ def test_search_layered_regime_cascade_for_typo(
         collection="notes",
         with_trace=True,
     )
-    assert trace.regime.startswith("cascade")
-    assert trace.cascade is not None
+    assert trace.regime == "fusion"
+    assert trace.corrections == {"glimer": ("glimmer",)}
+    assert [Path(g.path).name for g in groups] == ["doc.md"]
 
 
 def test_trace_to_json_is_valid_dict(cfg: Config, medium_index: Path) -> None:

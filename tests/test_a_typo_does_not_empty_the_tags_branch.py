@@ -104,3 +104,16 @@ async def test_a_query_tantivy_cannot_parse_still_narrows_the_tags(
     values = {getattr(t, "value", t) for t in tags["frontmatter"]}
     assert "misc" in values
     assert "physics" not in values, values
+
+
+@pytest.mark.asyncio
+async def test_a_respelt_word_finds_the_tags_of_its_files(cfg: Config, tagged_index: Path) -> None:
+    """A suffix typo the stem-level fuzzy widening cannot reach, only the respelling."""
+    app = FNDApp(index_dir=tagged_index, config=cfg)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        rows, tags = await _tags_after(app, pilot, "entanglemetn")
+
+    assert rows, "the premise: the respelling finds the file"
+    values = {getattr(n, "value", n) for n in tags["frontmatter"]}
+    assert values, "files with tags are on screen and the branch says none are indexed"

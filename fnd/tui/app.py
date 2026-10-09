@@ -964,18 +964,24 @@ class FNDApp(PlainToastApp):
         # The same disambiguation the results rows use: two files sharing a
         # basename gave both panes the same title, so the tree could tell them
         # apart and the pane above it could not.
-        from fnd.tui.results_labels import disambiguated_names
+        from fnd.tui.results_labels import copies_note, disambiguated_names
 
         g = self._previewed_group()
         if g is None:
             return "Preview"
         name = disambiguated_names([g.path for g in self._search.groups]).get(g.path)
         name = name or Path(g.path).name
+        tail = ""
+        if g.copies:
+            tail = " · also at " + ", ".join(Path(*Path(c).parts[-2:]).as_posix() for c in g.copies)
         if edge_width > 0:
             prefix = "Preview: "
             # A round border keeps 6 cells of the edge: 2 corners, 2 pads, 2 dashes (measured).
-            name = _elide_middle_keep_suffix(name, edge_width - 6 - len(prefix))
-        return f"Preview: {name}"
+            budget = edge_width - 6 - len(prefix)
+            if tail and len(name) + len(tail) > budget:
+                tail = copies_note(len(g.copies))
+            name = _elide_middle_keep_suffix(name, budget - len(tail))
+        return f"Preview: {name}{tail}"
 
     def _refresh_results_title(self) -> None:
         """Just the title. `_refresh_status` also queues a sidebar reflow, and
@@ -2276,6 +2282,10 @@ class FNDApp(PlainToastApp):
     def _reflow_on_node_expanded(self, ev: Tree.NodeExpanded[Any]) -> None:
         if ev.node.tree.id in self._SIDEBAR_TREE_IDS:
             self._reflow_sidebar()
+
+    @on(Tree.NodeExpanded, "#results_pane")
+    def _materialise_expanded_file(self, ev: Tree.NodeExpanded[Any]) -> None:
+        self._results.on_file_expanded(ev.node)
 
     @on(Tree.NodeCollapsed)
     def _reflow_on_node_collapsed(self, ev: Tree.NodeCollapsed[Any]) -> None:

@@ -72,9 +72,9 @@ class TestFieldInList:
     def test_missing_field_is_strict_null_even_when_negated(self) -> None:
         assert compile_filter("file.kind not in ['pdf']")({}) is False
 
-    def test_list_valued_field_does_not_match(self) -> None:
-        """A list field belongs on the ``'x' in tags`` form, not this one."""
-        assert compile_filter("tags in ['a']")({"tags": ["a"]}) is False
+    def test_a_list_value_matches_when_it_holds_a_listed_value(self) -> None:
+        assert compile_filter("tags in ['a', 'c']")({"tags": ["a", "b"]}) is True
+        assert compile_filter("tags in ['c']")({"tags": ["a", "b"]}) is False
 
     def test_ast_shape_is_distinct_from_in_node(self) -> None:
         assert parse("file.kind in ['pdf']") == FieldIn("file.kind", ("pdf",), negated=False)

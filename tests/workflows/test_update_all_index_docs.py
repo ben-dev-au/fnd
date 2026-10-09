@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 import tantivy
 
+from fnd.analysis import register
 from fnd.config import CollectionConfig, Config, Defaults, SourceConfig
 from fnd.schema import F_COLLECTION, build_schema
 from fnd.tui import FNDApp
@@ -29,7 +30,7 @@ from .conftest import wait_until
 
 def _per_collection_doc_counts(index_dir: Path, names: list[str]) -> dict[str, int]:
     schema = build_schema()
-    idx = tantivy.Index(schema, path=str(index_dir))
+    idx = register(tantivy.Index(schema, path=str(index_dir)))
     idx.reload()
     s = idx.searcher()
     counts: dict[str, int] = {}

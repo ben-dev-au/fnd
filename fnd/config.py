@@ -705,15 +705,13 @@ class RankingProfileConfig(_ConfigModel):
     """
 
     recency_boost: float = Field(default=0.0, ge=0)
-    """How much a recent modification time lifts a result. 0 ignores mtime
-    entirely; higher values favour recent files more strongly."""
+    """Recent files' rank score is multiplied by up to 1 + this; 0 ignores mtime, and 0.1 already moves a result several places."""
 
     recency_half_life: Duration = "365d"
     """Age at which the recency boost has decayed by half, e.g. "365d", "12w"."""
 
     filetype_boosts: dict[str, float] = Field(default_factory=dict)
-    """Per-type score multipliers, e.g. { md = 1.0, pdf = 0.85 }. A type not
-    named here scores at 1.0."""
+    """Per-type rank-score multipliers, e.g. { md = 1.0, pdf = 0.97 }; keep them near 1. Unnamed types score 1.0."""
 
     phrase_proximity: float = Field(default=0.0, ge=0)
     """Extra proximity boost applied after ranking. 0 disables it."""
@@ -835,11 +833,14 @@ class Defaults(_ConfigModel):
     is instant. 0 disables it."""
 
     fuzzy_enabled: bool = True
-    """Auto-fuzzy matching in the cascade fallback. When False, only per-term
-    ``~N`` modifiers in the query trigger fuzzy expansion."""
+    """Respell query words no file contains, and fuzzy-match in the cascade
+    fallback. When False, only per-term ``~N`` modifiers trigger fuzzy expansion."""
 
-    fuzzy_min_term_chars: int = Field(default=3, ge=0, le=10)
-    """Shortest stem auto-fuzzy applies to. Shorter terms stay exact."""
+    collapse_copies: bool = True
+    """Show byte-identical copies of a file as one result, noting the copies."""
+
+    fuzzy_min_term_chars: int = Field(default=4, ge=0, le=10)
+    """Shortest stem auto-fuzzy applies to. Shorter terms and numbers stay exact."""
 
     indexer_auto_resume: bool = False
     """Resume an interrupted reindex on launch. Off by default, so indexing never

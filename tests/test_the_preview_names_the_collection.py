@@ -29,7 +29,9 @@ def shared_vault(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.Monkey
     vault, work, home = tmp_path / "Vault", tmp_path / "WorkDocs", tmp_path / "HomeDocs"
     for d in (vault, work, home):
         d.mkdir()
-        (d / f"{d.name.lower()}.md").write_text("# Note\n\nhaystack here.\n", encoding="utf-8")
+        (d / f"{d.name.lower()}.md").write_text(
+            f"# Note\n\nhaystack here, {d.name}.\n", encoding="utf-8"
+        )
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
         textwrap.dedent(f"""
@@ -225,7 +227,9 @@ def three_collections(
     for name in ("Alpha", "Beta", "Gamma"):
         root = tmp_path / name
         root.mkdir()
-        (root / f"{name.lower()}.md").write_text("# Note\n\nhaystack here.\n", encoding="utf-8")
+        (root / f"{name.lower()}.md").write_text(
+            f"# Note\n\nhaystack here, {name}.\n", encoding="utf-8"
+        )
         lines += [f"[[collections.{name}.sources]]", f'path = "{root.as_posix()}"']
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

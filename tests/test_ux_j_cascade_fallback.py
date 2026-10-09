@@ -42,7 +42,7 @@ def fuzzy_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     """Index a doc whose body uses ``glimmer`` so a 1-edit typo
     (``glimer``) is the canonical fuzzy fallback case. Cascade's
     ``_fuzzy_pass`` uses ``fuzzy_term_query`` against raw indexed
-    tokens — both ``glimmer`` and ``glimer`` pass through en_stem
+    tokens: both ``glimmer`` and ``glimer`` pass through the index analyser
     unchanged, so the on-disk Levenshtein distance is exactly 1."""
     a = tmp_path / "notes"
     _write_md(a / "notes.md", "# Notes\nthe glimmer pattern is shown here.\n")

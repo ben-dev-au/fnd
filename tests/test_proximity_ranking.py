@@ -33,7 +33,7 @@ def test_proximity_promotes_tight_cluster_over_scattered() -> None:
     hits = [_hit("far", 10.0, far), _hit("tight", 10.0, tight)]
     ranked = rerank_hits(hits, profile=profile, query="alpha beta gamma")
     assert ranked[0].parent_id == "tight"
-    assert ranked[0].score > ranked[1].score
+    assert ranked[0].rank_key > ranked[1].rank_key
 
 
 def test_proximity_measures_full_body_not_just_snippet() -> None:
@@ -41,7 +41,7 @@ def test_proximity_measures_full_body_not_just_snippet() -> None:
     profile = RankingProfile(phrase_proximity=0.5, proximity_max_window=50)
     h = _hit("x", 10.0, "alpha beta gamma")
     ranked = rerank_hits(h_list := [h], profile=profile, query="alpha beta gamma")
-    assert ranked[0].score > 10.0
+    assert ranked[0].rank_key > 10.0
     assert h_list  # sanity
 
 

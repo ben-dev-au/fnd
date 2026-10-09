@@ -6,6 +6,7 @@ from pathlib import Path
 
 import tantivy
 
+from fnd.analysis import register
 from fnd.schema import (
     DEFAULT_SEARCH_FIELDS,
     F_CREATED,
@@ -26,7 +27,7 @@ def test_schema_version_at_or_past_8() -> None:
 
 def test_new_fields_round_trip(tmp_path: Path) -> None:
     schema = build_schema()
-    index = tantivy.Index(schema, path=str(tmp_path))
+    index = register(tantivy.Index(schema, path=str(tmp_path)))
     writer = index.writer(15_000_000)
     doc = tantivy.Document()
     doc.add_text("parent_id", "p1")
@@ -55,7 +56,7 @@ def test_new_fields_round_trip(tmp_path: Path) -> None:
 def test_tag_fields_are_exact_match_not_stemmed(tmp_path: Path) -> None:
     """The raw tokenizer must keep slashes and spaces intact."""
     schema = build_schema()
-    index = tantivy.Index(schema, path=str(tmp_path))
+    index = register(tantivy.Index(schema, path=str(tmp_path)))
     writer = index.writer(15_000_000)
     doc = tantivy.Document()
     doc.add_text("parent_id", "p1")

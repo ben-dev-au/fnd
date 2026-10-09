@@ -29,13 +29,15 @@ import pytest
 import tantivy
 
 from fnd import meta_blob, struct
+from fnd.analysis import register
 from fnd.extract.base import Block
+from fnd.index import add_body
 from fnd.layered import search_layered
 from fnd.query import Searcher
 from fnd.query_plan import QueryPlan
+from fnd.rerank import RankingProfile
 from fnd.schema import (
     F_AUTHOR,
-    F_BODY,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
     F_COLLECTION,
@@ -193,12 +195,12 @@ def _frozen_clock(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[r
 def searcher() -> Searcher:
     schema = build_schema()
     d = Path(tempfile.mkdtemp(prefix="fnd-acceptance-"))
-    idx = tantivy.Index(schema, path=str(d))
+    idx = register(tantivy.Index(schema, path=str(d)))
     w = idx.writer()
     for pid, f in _DOCS:
         doc = tantivy.Document()
         doc.add_text(F_PARENT_ID, pid)
-        doc.add_text(F_BODY, f["body"])
+        add_body(doc, f["body"])
         doc.add_text(F_TITLE, f.get("title", ""))
         doc.add_text(F_HEADING_PATH, f.get("heading_path", ""))
         doc.add_text(F_AUTHOR, f.get("author", ""))
@@ -375,7 +377,7 @@ _CASES: list[_Case] = [
         lambda r: {"wc-crypto", "wc-graphy", "wc-graphic"} <= r and "wc-other" not in r,
         _OK,
     ),
-    ("wildcard-leading", "*graph", lambda r: "wc-graphic" in r and "wc-crypto" not in r, _OK),
+    ("wildcard-leading", "*graphic", lambda r: "wc-graphic" in r and "wc-graphy" not in r, _OK),
     # Regex is matched case-insensitively against the lowercased index, and the
     # pattern is kept verbatim (no destructive lowercasing of \\D etc.).
     (
@@ -544,14 +546,21 @@ def test_query_capability(
     assert pred(run(searcher, query)), f"{name} [{path}] failed"
 
 
-def test_weighted_default_ranking_layered(searcher: Searcher) -> None:
-    """Weighted default (TUI/fusion path): bare multi-term retrieves OR but ranks
-    all-term docs above single-term docs. This is the user's model and it holds
-    on the fusion path today — the rework must preserve it once wildcard/fuzzy
-    terms also resolve. (Plain BM25-over-OR does NOT guarantee this; fusion/RRF
-    does — which is why single-pass CLI needs unifying, see below.)"""
+@pytest.mark.parametrize(
+    "profile",
+    [None, RankingProfile(), RankingProfile(filetype_boosts={"md": 1.0})],
+    ids=["no-profile", "tui-default-profile", "neutral-boost"],
+)
+def test_weighted_default_ranking_layered(
+    searcher: Searcher, profile: RankingProfile | None
+) -> None:
+    """Bare multi-term retrieves OR but ranks all-term docs above single-term
+    docs, with or without the ranking profile the TUI always passes. (Plain
+    BM25-over-OR does not guarantee this; fusion does.)"""
     p = QueryPlan.from_user_text("cross entropy loss")
-    groups = search_layered(searcher, query=p.lexical, limit=50, sections_per_file=5)
+    groups = search_layered(
+        searcher, query=p.lexical, limit=50, sections_per_file=5, profile=profile
+    )
     ranked = [h.parent_id for g in groups for h in g.hits]
     assert "all3" in ranked
     all3_rank = ranked.index("all3")

@@ -16,7 +16,7 @@ runner = CliRunner()
 
 @pytest.fixture
 def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Intercept Searcher.search and record how the CLI called it.
+    """Intercept the CLI's search and record how it was called.
 
     __init__ is stubbed too: this asserts on argument handling only, and
     opening the real index would couple the test to whatever the developer
@@ -24,13 +24,16 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """
     seen: dict[str, Any] = {}
 
-    def fake_search(self: object, query: str, **kwargs: Any) -> list[Any]:
-        seen["query"] = query
+    def fake_search(searcher: object, **kwargs: Any) -> tuple[list[Any], Any]:
+        from types import SimpleNamespace
+
         seen.update(kwargs)
-        return []
+        seen["filter_clauses"] = getattr(searcher, "filter_clauses", ())
+        return [], SimpleNamespace(corrections={}, paint_spec=lambda paint, strict: strict)
 
     monkeypatch.setattr("fnd.query.Searcher.__init__", lambda self, **kw: None)
-    monkeypatch.setattr("fnd.query.Searcher.search", fake_search)
+    monkeypatch.setattr("fnd.layered.search_layered", fake_search)
+    monkeypatch.setattr("fnd.synonyms.load_app_synonyms", lambda: None)
     monkeypatch.setattr("fnd.migrate.prompt_and_rebuild_or_exit", lambda **kw: None)
     return seen
 
@@ -75,29 +78,31 @@ def test_hostile_tag_value_never_reaches_the_query(captured: dict[str, Any]) -> 
     assert 'evil" or body:x or "' in values
 
 
-def test_created_flag_becomes_a_query_token(captured: dict[str, Any]) -> None:
+def test_created_flag_becomes_a_filter_clause(captured: dict[str, Any]) -> None:
     runner.invoke(app, ["search", "notes", "--created", "week"])
-    assert "created:week" in captured["query"]
+    assert captured["filter_clauses"] == ("created:week",)
+    assert captured["query"] == "notes"
 
 
-def test_modified_flag_becomes_a_query_token(captured: dict[str, Any]) -> None:
+def test_modified_flag_becomes_a_filter_clause(captured: dict[str, Any]) -> None:
     runner.invoke(app, ["search", "notes", "--modified", "month"])
-    assert "mtime:month" in captured["query"]
+    assert captured["filter_clauses"] == ("mtime:month",)
 
 
 def test_kind_flag_is_repeatable(captured: dict[str, Any]) -> None:
     runner.invoke(app, ["search", "notes", "--kind", "pdf", "--kind", "md"])
     # Multiple --kind collapse into ONE OR-group so results match ANY of the
     # kinds; separate kind: clauses would AND and match nothing.
-    assert "kind:(pdf md)" in captured["query"]
+    assert captured["filter_clauses"] == ("kind:(pdf md)",)
 
 
 def test_kind_category_flag_expands_to_members(captured: dict[str, Any]) -> None:
     runner.invoke(app, ["search", "notes", "--kind", "code"])
     # A category id expands to an OR-group over its member kinds.
-    assert "kind:(" in captured["query"]
-    assert "python" in captured["query"]
-    assert "cpp" in captured["query"]
+    (clause,) = captured["filter_clauses"]
+    assert clause.startswith("kind:(")
+    assert "python" in clause
+    assert "cpp" in clause
 
 
 def test_parse_filter_flags_expands_categories_for_the_tui_seed() -> None:

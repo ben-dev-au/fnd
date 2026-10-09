@@ -40,6 +40,7 @@ DEFAULT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sections_per_file_max",
             "fuzzy_enabled",
             "fuzzy_min_term_chars",
+            "collapse_copies",
         ),
     ),
     (

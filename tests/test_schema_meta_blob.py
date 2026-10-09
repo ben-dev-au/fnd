@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from tantivy import Document
 
+from fnd.analysis import register
 from fnd.schema import F_META_BLOB, SCHEMA_VERSION, build_schema
 
 
@@ -89,7 +90,7 @@ def _build_legacy_v1_index(index_dir: Path) -> None:
     sb = SchemaBuilder()
     sb.add_text_field("body", stored=False, tokenizer_name="default")
     schema = sb.build()
-    Index(schema, path=str(index_dir))
+    register(Index(schema, path=str(index_dir)))
     # Pretend a prior force-rebuild bumped the sidecar but crashed before
     # Tantivy got new segments — the exact stuck state in the field.
     (index_dir / ".fnd-schema-version").write_text(str(SCHEMA_VERSION))
@@ -109,11 +110,11 @@ def test_force_rebuild_recovers_from_inconsistent_sidecar_and_meta_json(
     from tantivy import Index
 
     with pytest.raises(ValueError, match=r"(?i)schema"):
-        Index(build_schema(), path=str(tmp_path))
+        register(Index(build_schema(), path=str(tmp_path)))
     # _ensure_index(force=True) recovers cleanly.
     _ensure_index(tmp_path, force=True)
     # And re-opening succeeds without issue (the dir is now consistent).
-    Index(build_schema(), path=str(tmp_path))
+    register(Index(build_schema(), path=str(tmp_path)))
 
 
 def test_open_without_force_on_inconsistent_dir_gives_clear_error(
