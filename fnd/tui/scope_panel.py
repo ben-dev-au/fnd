@@ -1150,6 +1150,7 @@ class ScopeController:
         try:
             from fnd.query_plan import QueryPlan
             from fnd.schema import DEFAULT_SEARCH_FIELDS
+            from fnd.typos import respelt
 
             lexical = QueryPlan.from_user_text(raw).lexical.strip()
             searcher = getattr(self._app._search, "searcher", None)
@@ -1158,6 +1159,20 @@ class ScopeController:
             exact = searcher.content_query(lexical, DEFAULT_SEARCH_FIELDS)
             if exact is None:
                 return None
+            trace = self._app._search.latest_trace
+            fixes = trace.corrections if trace is not None else {}
+            respelt_query = (
+                searcher.content_query(respelt(lexical.split(), fixes), DEFAULT_SEARCH_FIELDS)
+                if fixes
+                else None
+            )
+            if respelt_query is not None:
+                # The results include the respelt words, so the facets must too.
+                import tantivy
+
+                exact = tantivy.Query.boolean_query(
+                    [(tantivy.Occur.Should, exact), (tantivy.Occur.Should, respelt_query)]
+                )
             return self._widen_to_fuzzy(index, exact, lexical)
         except Exception:
             return None

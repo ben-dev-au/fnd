@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import tantivy
 from tantivy import FieldType, Query
 
+from fnd.analysis import analyse
 from fnd.kinds import KINDS_IN_CATEGORY
 from fnd.query_fields import FieldSpec, FieldValue, date_token_range, resolve
 from fnd.query_spans import literal_spans
@@ -31,8 +32,8 @@ _CLAUSE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(.+)$", re.DOTALL)
 # ``[`` / ``]`` include a bound, ``{`` / ``}`` exclude it, mixed freely.
 _RANGE_RE = re.compile(r"^([\[{])\s*(.+?)\s+TO\s+(.+?)\s*([\]}])$", re.IGNORECASE)
 _SLOPPY_PHRASE_RE = re.compile(r'^"(.*)"~(\d+)$', re.DOTALL)
+_FIELD_NAME_RE = re.compile(r"(?<![\w.])([A-Za-z_][A-Za-z0-9_]*):")
 _CMP_RE = re.compile(r"^(>=|<=|>|<)(.+)$")
-_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -185,11 +186,11 @@ def _compile(
             return None
     if spec.value is FieldValue.UINT:
         return _uint_range(spec, value, schema)
-    # TEXT (default/stem tokenizer): quoted → phrase (``"a b"~N`` sloppy),
+    # TEXT fields use the index analyser: quoted → phrase (``"a b"~N`` sloppy),
     # single word → term.
     sloppy = _SLOPPY_PHRASE_RE.match(value)
     raw, slop = (sloppy.group(1), int(sloppy.group(2))) if sloppy else (_strip_quotes(value), 0)
-    words = [w.lower() for w in _WORD_RE.findall(raw)]
+    words = analyse(raw)
     if not words:
         return None
     if len(words) == 1:
@@ -277,3 +278,13 @@ def extract_filters(
         else:
             filters.append(compiled)
     return ExtractResult(content=" ".join(content), filters=filters)
+
+
+def has_unlifted_filter(query: str, schema: tantivy.Schema) -> bool:
+    """True when a known field clause stays in the content, as one beside a
+    boolean operator does; only the query parser can honour it there."""
+    content = extract_filters(query, schema).content
+    return any(
+        m.group(1) in ("has", "exists") or resolve(m.group(1)) is not None
+        for m in _FIELD_NAME_RE.finditer(content)
+    )

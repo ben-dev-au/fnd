@@ -656,12 +656,13 @@ def _process_one_file(
     # Extract in full before deleting, so a failure leaves the prior document
     # (and any sibling collection's membership on it) untouched. One file's
     # chunks are held in memory only for the duration of its own write.
-    from fnd.index import _parent_delete_query
+    from fnd.index import _parent_delete_query, file_content_hash
 
     # Per-page beats from the PDF worker feed the live-progress channel so the
     # modal's 1Hz ETA can refine mid-extraction, not only at file_complete.
     from fnd.tui.live_progress import report_heartbeat as _report_heartbeat
 
+    content_hash = non_pdf_sha or file_content_hash(path)
     has_textured = False
     docs = []
     try:
@@ -674,6 +675,7 @@ def _process_one_file(
                     memberships=memberships,
                     meta_blob_bytes=meta_blob_bytes,
                     tags=file_tags,
+                    content_hash=content_hash,
                 )
             )
     except ExtractError as e:

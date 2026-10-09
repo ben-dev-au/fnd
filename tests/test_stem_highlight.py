@@ -2,7 +2,7 @@
 
 User-reported bug: query "penfolds" returns "penfold" hits but doesn't
 highlight; query "penfold" highlights "penfold" but not the "penfold" in
-"penfolds". The search uses Tantivy's en_stem (Snowball English), so the
+"penfolds". The search uses the index analyser (fnd.analysis), so the
 preview highlighter has to use the same stemmer for parity.
 """
 

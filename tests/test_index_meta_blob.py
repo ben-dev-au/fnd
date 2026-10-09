@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fnd.analysis import register
 from fnd.config import CollectionConfig, SourceConfig
 from fnd.index import build_index_from_config
 from fnd.meta_blob import decode
@@ -25,7 +26,7 @@ def _meta_blob_for_first_hit(index_dir: Path, query: str) -> bytes:
     via the doc-store API."""
     from tantivy import Index
 
-    index = Index(build_schema(), path=str(index_dir))
+    index = register(Index(build_schema(), path=str(index_dir)))
     index.reload()
     searcher = index.searcher()
     parsed = index.parse_query(query, default_field_names=["body"])

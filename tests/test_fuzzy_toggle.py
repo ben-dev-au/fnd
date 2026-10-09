@@ -24,7 +24,7 @@ from fnd.query import Searcher
 
 @pytest.fixture
 def tpl_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A single MD file containing 'templates' (en_stem → ``templat``)."""
+    """A single MD file containing 'templates' (index analyser → ``templat``)."""
     root = tmp_path / "docs"
     root.mkdir(parents=True)
     (root / "tpl.md").write_text(
@@ -51,10 +51,13 @@ def test_terms_with_fuzzy_clamps_distance_to_two() -> None:
     assert _terms_with_fuzzy("term~5") == [("term", 2)]
 
 
-def test_terms_with_fuzzy_ignores_bare_tilde() -> None:
-    # A bare ``~`` with no digit is not a fuzzy opt-in; the ``~`` is
-    # stripped and the term reads as exact.
-    assert _terms_with_fuzzy("term~") == [("term", None)]
+def test_a_bare_tilde_is_fuzzy_at_the_automatic_distance() -> None:
+    assert _terms_with_fuzzy("term~ glimmer~ ab~ plain") == [
+        ("term", 1),
+        ("glimmer", 2),
+        ("ab", 0),
+        ("plain", None),
+    ]
 
 
 def test_terms_with_fuzzy_ignores_phrase_proximity() -> None:

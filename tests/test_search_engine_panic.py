@@ -42,7 +42,7 @@ def test_a_panic_while_searching_is_a_query_error(
 
     monkeypatch.setattr("fnd.query_compile.compile_query", _panics)
     with pytest.raises(QueryEngineError) as caught:
-        searcher._raw_hits("saffron", limit=5, collection=None)
+        searcher._candidates("saffron", window=5, collection=None)
     assert isinstance(caught.value, QuerySyntaxError)
     assert caught.value.hint
 
@@ -53,7 +53,7 @@ def test_an_interrupt_still_interrupts(searcher: Searcher, monkeypatch: pytest.M
 
     monkeypatch.setattr("fnd.query_compile.compile_query", _interrupted)
     with pytest.raises(KeyboardInterrupt):
-        searcher._raw_hits("saffron", limit=5, collection=None)
+        searcher._candidates("saffron", window=5, collection=None)
 
 
 def test_a_query_tantivy_refuses_only_when_run_is_a_query_error(
@@ -64,7 +64,7 @@ def test_a_query_tantivy_refuses_only_when_run_is_a_query_error(
 
     monkeypatch.setattr("fnd.query_compile.compile_query", _refused)
     with pytest.raises(QueryEngineError):
-        searcher._raw_hits("saffron", limit=5, collection=None)
+        searcher._candidates("saffron", window=5, collection=None)
 
 
 def test_a_query_error_passes_through_unchanged(
@@ -75,5 +75,5 @@ def test_a_query_error_passes_through_unchanged(
 
     monkeypatch.setattr("fnd.query_compile.compile_query", _syntax)
     with pytest.raises(QuerySyntaxError) as caught:
-        searcher._raw_hits("saffron", limit=5, collection=None)
+        searcher._candidates("saffron", window=5, collection=None)
     assert not isinstance(caught.value, QueryEngineError)

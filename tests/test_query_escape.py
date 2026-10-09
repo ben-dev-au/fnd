@@ -8,6 +8,7 @@ import re
 import pytest
 import tantivy
 
+from fnd.analysis import register
 from fnd.query_escape import literal, literal_phrase
 from fnd.schema import F_BODY, build_schema
 from tests import _hostile_text
@@ -39,7 +40,7 @@ _TEXT = [
 
 @pytest.fixture(scope="module")
 def index() -> tantivy.Index:
-    return tantivy.Index(build_schema())
+    return register(tantivy.Index(build_schema()))
 
 
 def _terms(index: tantivy.Index, query: str) -> list[str]:

@@ -549,6 +549,11 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
         # Strict null: missing field is False for every comparison.
         return False
     actual = _canon(fm[field])
+    if isinstance(actual, list | tuple) and op in ("==", "!=", "~~"):
+        # Obsidian writes a property picked from a list as a one-item list.
+        positive = "==" if op == "!=" else op
+        held = any(_eval_compare({field: item}, field, positive, value) for item in actual)
+        return not held if op == "!=" else held
     if op in ("==", "!="):
         equal = _scalar_equal(actual, value)
         return equal if op == "==" else not equal
@@ -592,10 +597,9 @@ def _eval_field_in(
 ) -> bool:
     if field not in fm:
         return False  # strict null, as for every other comparison
-    actual = _canon(fm[field])
-    if isinstance(actual, list | tuple):
-        return False  # a list field belongs on the ``In`` form
-    member = any(_scalar_equal(actual, v) for v in values)
+    actual = fm[field]
+    items = actual if isinstance(actual, list | tuple) else (actual,)
+    member = any(_scalar_equal(_canon(item), v) for item in items for v in values)
     return (not member) if negated else member
 
 

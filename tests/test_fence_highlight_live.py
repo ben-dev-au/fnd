@@ -69,7 +69,7 @@ async def test_fence_highlights_subword_of_underscore_identifier() -> None:
     """Regression: ``iterator`` inside ``recursive_directory_iterator`` must
     highlight, like a standalone ``iterator`` does.
 
-    The ``en_stem`` analyzer splits on underscore, so ``iterator`` is an indexed
+    The index analyser splits on underscore, so ``iterator`` is an indexed
     token of ``recursive_directory_iterator`` and a search for it finds the
     chunk. The highlighter previously tokenised doc text with ``\\w+`` (keeps
     underscore), saw one token that failed to stem-match, and left that one

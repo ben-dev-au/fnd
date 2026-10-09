@@ -8,6 +8,7 @@ import pytest
 import tantivy
 
 from fnd import query_dsl
+from fnd.analysis import register
 from fnd.query_plan import QueryPlan
 from fnd.schema import F_BODY, build_schema
 
@@ -54,7 +55,7 @@ def test_documented_translation(doc_input: str, expected: str) -> None:
 
 @pytest.mark.parametrize("doc_input", [d for d, _ in DOCUMENTED_TRANSLATIONS] + DOCUMENTED_NATIVE)
 def test_documented_examples_parse_in_tantivy(doc_input: str) -> None:
-    index = tantivy.Index(build_schema())
+    index = register(tantivy.Index(build_schema()))
     plan = QueryPlan.from_user_text(doc_input)  # must not raise
     # The lexical (filter-stripped) form is what reaches the engine.
     index.parse_query(query_dsl.preprocess(plan.lexical), default_field_names=[F_BODY])

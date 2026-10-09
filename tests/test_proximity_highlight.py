@@ -9,11 +9,12 @@ import pytest
 from rich.text import Text
 from textual.content import Span
 
-from fnd.matching import MatchSpec, _stem, proximity_qualifying_indices
+from fnd.analysis import index_token
+from fnd.matching import MatchSpec, proximity_qualifying_indices
 
 
 def _stems(*words: str) -> tuple[str, ...]:
-    return tuple(_stem(w) for w in words)
+    return tuple(index_token(w) for w in words)
 
 
 def _tokens(index_to_stem: dict[int, str], length: int) -> list[str]:

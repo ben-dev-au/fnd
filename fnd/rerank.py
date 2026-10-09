@@ -2,26 +2,21 @@
 
 Tantivy hardcodes BM25 ``k1``/``b`` upstream and exposes no per-doc score
 callback. The high-leverage knobs (recency decay, per-kind weighting,
-query-term clustering) are applied here in Python after the raw search
-returns, then the hit list is re-sorted.
-
-Three pure functions plus an orchestrator. Each pure function is unit-tested
-for monotonicity / idempotence in :mod:`tests.test_rerank`.
+query-term clustering) scale each hit's :attr:`fnd.query.Hit.rank_key` here,
+after retrieval, and the list is re-sorted; the display BM25 is left alone.
 
 Design notes:
 
 * Recency uses **exponential decay with half-life**, not Tantivy's fixed
-  ``log2(2 + x)`` formula (`weight_by_field`) — the half-life shape is
-  configurable per profile, and the closed-form math is unit-testable.
-* Phrase proximity uses **stem equality** (Snowball English) so it agrees
+  ``log2(2 + x)`` formula (`weight_by_field`), so the shape is configurable
+  per profile and the closed-form math is unit-testable.
+* Phrase proximity uses **stem equality** (the index analyser) so it agrees
   with how the index tokenizes; otherwise a query for "penfold" would miss
   the "penfolds" in the body and never form a window.
 * Filetype boost is a flat multiplier per :attr:`Hit.kind`; absent kinds
   are neutral (multiplier 1.0).
 
-The orchestrator :func:`rerank_hits` is total: ``RankingProfile()`` (all
-zeros / empty) is the identity, so callers can opt-in by passing a non-
-default profile.
+``RankingProfile()`` (all zeros / empty) is the identity.
 """
 
 from __future__ import annotations
@@ -30,10 +25,15 @@ import dataclasses
 import math
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from fnd.query import Hit
-from fnd.render import _stem  # stem helper kept centralized in render.py
+from fnd.analysis import index_token
+from fnd.query import Hit, decoded_body
+
+if TYPE_CHECKING:
+    from fnd.config import Config
 
 
 @dataclass(slots=True, frozen=True)
@@ -59,6 +59,13 @@ class RankingProfile:
     # boost and a window > ``proximity_max_window`` tokens to 0x boost.
     phrase_proximity: float = 0.0
     proximity_max_window: int = 50
+
+    @property
+    def is_identity(self) -> bool:
+        """True when no adjustment is enabled."""
+        return (
+            self.recency_boost == 0.0 and not self.filetype_boosts and self.phrase_proximity == 0.0
+        )
 
 
 # ── pure adjustment functions ─────────────────────────────────────
@@ -110,13 +117,13 @@ def apply_phrase_proximity(
     """
     if profile.phrase_proximity == 0.0:
         return score
-    distinct_stems = {_stem(t) for t in terms if t}
+    distinct_stems = {index_token(t) for t in terms if t}
     if len(distinct_stems) < 2:
         return score
 
     positions: dict[str, list[int]] = {s: [] for s in distinct_stems}
     for i, m in enumerate(re.finditer(r"\w+", body)):
-        st = _stem(m.group(0))
+        st = index_token(m.group(0))
         if st in positions:
             positions[st].append(i)
 
@@ -175,36 +182,31 @@ def rerank_hits(
     query: str,
     now: int | None = None,
 ) -> list[Hit]:
-    """Apply every enabled adjustment to ``hits`` and return them re-sorted
-    by adjusted score (descending). Stable for ties.
-
-    Pure: returns a new list of new :class:`Hit` records (the originals are
-    immutable). The default :class:`RankingProfile` is the identity — order
-    is unchanged.
-    """
+    """``hits`` with each ``rank_score`` scaled by every enabled adjustment,
+    re-sorted on it (stable for ties); ``score`` is unchanged."""
     now_ts = int(now) if now is not None else int(time.time())
     terms = _terms_for_proximity(query) if profile.phrase_proximity else []
 
     out: list[Hit] = []
     for h in hits:
-        s = h.score
+        s = h.rank_key
         s = apply_recency_boost(score=s, mtime=h.mtime, profile=profile, now=now_ts)
         s = apply_filetype_boost(score=s, kind=h.kind, profile=profile)
         if terms:
             # Prefer the full decoded body; fall back to the snippet for
             # hits that predate body_text plumbing (e.g. external callers).
             s = apply_phrase_proximity(
-                score=s, body=h.body_text or h.snippet, terms=terms, profile=profile
+                score=s, body=decoded_body(h)[0] or h.snippet, terms=terms, profile=profile
             )
-        out.append(_replace_score(h, s))
-    out.sort(key=lambda x: x.score, reverse=True)
+        out.append(_with_rank_score(h, s))
+    out.sort(key=lambda x: x.rank_key, reverse=True)
     return out
 
 
-def _replace_score(h: Hit, score: float) -> Hit:
-    """``h`` with a new score — see :func:`fnd.fusion._with_score` on why this
-    is a ``dataclasses.replace`` and not an enumerated rebuild."""
-    return dataclasses.replace(h, score=score)
+def _with_rank_score(h: Hit, rank_score: float) -> Hit:
+    """``h`` with a new rank score; see :func:`fnd.fusion._with_pass_index` on why
+    this is a ``dataclasses.replace``."""
+    return dataclasses.replace(h, rank_score=rank_score)
 
 
 def _terms_for_proximity(query: str) -> list[str]:
@@ -235,3 +237,17 @@ def profile_from_config(cfg: object) -> RankingProfile:
         phrase_proximity=cfg.phrase_proximity,
         proximity_max_window=cfg.proximity_max_window,
     )
+
+
+def profile_for_scope(cfg: Config | None, collections: Sequence[str] | None) -> RankingProfile:
+    """The one scoped collection's ``ranking_profile``, else ``default``, else
+    the identity. Shared by the TUI and ``fnd search``."""
+    if cfg is None:
+        return RankingProfile()
+    name = "default"
+    if collections is not None and len(collections) == 1:
+        try:
+            name = cfg.collection(collections[0]).ranking_profile or "default"
+        except KeyError:
+            name = "default"
+    return profile_from_config(cfg.ranking_profile(name))

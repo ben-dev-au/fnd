@@ -20,6 +20,7 @@ is migrated on first launch by :func:`_migrate_legacy_cache_dir` and
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -60,8 +61,19 @@ def default_cache_dir() -> Path:
 
 def sha256_file(path: Path, *, chunk_size: int = 1 << 20) -> str:
     """Stream a file's bytes through sha256. Single-pass, bounded memory."""
+    st = path.stat()
+    return _sha256_unchanged(
+        str(path), (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns), chunk_size
+    )
+
+
+# The indexer hashes a PDF for its content hash and extraction again for the
+# cache key. Keyed by stat so the second is free; ctime and inode change even
+# when a copy keeps the old mtime and size (`cp -p`, `rsync -t`).
+@functools.lru_cache(maxsize=64)
+def _sha256_unchanged(path: str, _stat: tuple[int, int, int, int], chunk_size: int) -> str:
     h = hashlib.sha256()
-    with path.open("rb") as f:
+    with open(path, "rb") as f:
         while chunk := f.read(chunk_size):
             h.update(chunk)
     return h.hexdigest()

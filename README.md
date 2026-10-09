@@ -593,7 +593,9 @@ Suffix `~1` or `~2` to allow that many edits per term. An adjacent transposition
 | `kubernates~2`   | `kubernetes` and near spellings.      |
 
 Works on a single term or alongside others (`powerhouse mitochondira~1`). Use
-sparingly on short terms: `cat~2` matches almost everything.
+sparingly on short terms: `cat~2` matches almost everything. A typed `~N` may
+change the first letter (`kryptography~1` finds `cryptography`); automatic
+fuzzy keeps it, and a plain misspelling is respelt instead.
 
 ### Field qualifiers
 
@@ -642,15 +644,16 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 
 ### Wildcards and regex
 
-| You type   | Matches                                      |
-| ---------- | -------------------------------------------- |
-| `crypto*`  | Words starting with `crypto`.                |
-| `gr?y`     | `?` = exactly one character: `gray`, `grey`. |
-| `/cryp.*/` | A regular expression over indexed words.     |
+| You type                 | Matches                                      |
+| ------------------------ | -------------------------------------------- |
+| `crypto*`                | Words starting with `crypto`.                |
+| `*ization`               | Words ending in `ization`.                   |
+| `crypt*aphy`             | `cryptography`.                              |
+| `gr?y`                   | `?` = exactly one character: `gray`, `grey`. |
+| `/cryptograph(y\|ic)/`   | A regular expression over whole words.       |
 
-> **`*` only works at the end of a word.** Leading or infix wildcards (`*tion`,
-> `de*ce`) match almost nothing: search strips word endings before matching.
-> Use a trailing `crypto*` or a `/regex/` instead.
+Wildcards and regexes match words as written (accents folded, any case), not
+their stems.
 
 You rarely need `*`: search already matches word variants (`entropy` finds
 `entropies`). Wildcards, fuzzy, regex, and phrases all work inside
@@ -667,6 +670,7 @@ with spaces (`"Due Date"`):
 | ------------------------------------------------------- | ----------------------------------------------------- |
 | `mitm [Course == 'Distributed Systems']`               | Notes where the `Course` field equals that value.     |
 | `[Notes_Type == 'Lecture' OR Notes_Type == 'Tutorial']` | Either value (there are no list literals, use `OR`). |
+| `[Notes_Type == 'Cheat Sheet']`                         | Also matches a list holding it, as Obsidian writes a list property. |
 | `entropy [Course == 'ML' AND Year >= 2024]`             | Compound predicate.                                   |
 | `['urgent' in tags]`                                    | `urgent` is an element of the `tags` list.            |
 | `[NOT ('private' in tags)]`                             | Exclude a tag, **keeping notes that have no `tags:`**. |
@@ -715,8 +719,6 @@ crypto* AND wallet                                 # a wildcard required inside 
   phrase that includes them, quote it: `"man in the middle"`.
 - **Proximity is per-chunk.** A phrase or `{N}` query can't span a chunk
   boundary. If the terms are paragraphs apart, drop to a loose multi-term query.
-- **`*` only works at the end of a word.** Leading/infix wildcards (`*tion`,
-  `de*ce`) match almost nothing: use `crypto*` or `/regex/`.
 
 ## Contributing
 
@@ -761,5 +763,5 @@ open-source projects:
   the score normalization `s / (1 + s)` that makes its thresholds (0.85
   score, 0.15 gap) corpus-stable, and the `intent:` line in the multi-line
   query DSL.
-- The Reciprocal Rank Fusion constant `k = 60` and rank-position bonuses
-  follow Cormack/Clarke/Buettcher (2009).
+- The Reciprocal Rank Fusion constant `k = 60` follows
+  Cormack/Clarke/Buettcher (2009).

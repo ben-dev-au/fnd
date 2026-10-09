@@ -2,15 +2,28 @@
 
 ``ResultsView`` rebuilds and relabels the results pane from the current
 result groups; it owns no state of its own.
+
+Search hits arrive light (see :mod:`fnd.query`): a section row shows its
+locator until its hit is materialised. The search worker materialises
+``UPFRONT_SECTIONS`` in result order; the rest of an expanded file's rows are
+materialised off the loop and relabelled in place. The auto-expanded top file
+waits out ``_FILL_DEFER_S`` first, the window the controller keeps clear for
+the top result's preview (its prefetch waits the same).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import asyncio
+import dataclasses
+from collections.abc import Sequence
+from functools import partial
+from typing import TYPE_CHECKING, Any, Final
 
 from textual.widgets import Tree
 
+from fnd.query import materialise_hits
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
+from fnd.tui.preview.presenter import decode_abandonable
 from fnd.tui.preview.warmth import WarmState
 from fnd.tui.results_labels import (
     _format_file_label,
@@ -24,10 +37,29 @@ from fnd.tui.widgets.results_tree import ResultsTree
 if TYPE_CHECKING:
     from textual.widgets.tree import TreeNode
 
+    from fnd.matching import MatchSpec
     from fnd.query import FileGroup, Hit
     from fnd.tui.app import FNDApp
 
-__all__ = ["ResultsView"]
+__all__ = ["UPFRONT_SECTIONS", "ResultsView", "materialise_upfront"]
+
+#: Section rows the search worker materialises before the tree is built: about
+#: 4 ms each, so the first screen of rows costs about a quarter of a second.
+UPFRONT_SECTIONS: Final = 60
+_FILL_DEFER_S: Final = 0.5
+
+
+def materialise_upfront(
+    groups: Sequence[FileGroup], spec: MatchSpec, *, intent: str | None
+) -> list[FileGroup]:
+    """Materialise section hits in result order until ``UPFRONT_SECTIONS`` are spent."""
+    budget = UPFRONT_SECTIONS
+    out: list[FileGroup] = []
+    for g in groups:
+        head = materialise_hits(g.hits[:budget], spec, intent=intent) if budget > 0 else []
+        budget -= len(head)
+        out.append(dataclasses.replace(g, hits=[*head, *g.hits[len(head) :]]))
+    return out
 
 
 def _count(n: int, mark: str, noun: str) -> str:
@@ -172,9 +204,7 @@ class ResultsView:
                 expand=(i == 0),
             )
             for h in g.hits:
-                visible = has_paintable_match(
-                    h, evidence_spec_for_pass(h.pass_index, strict=strict, painting=painting)
-                )
+                visible = self._match_visible(h, strict, painting)
                 unlocatable += not visible
                 file_node.add_leaf(
                     _format_hit_label(
@@ -190,6 +220,9 @@ class ResultsView:
                 f"results unlocatable={unlocatable} query={self._app._search.current_query!r}"
             )
         self._app._refresh_status()
+        for file_node in tree.root.children:
+            if file_node.is_expanded:
+                self._materialise_rows(file_node, defer=_FILL_DEFER_S)
         if not self._app._search.groups and self._searched():
             self._app._preview.show_pane_message(self.empty_state())
         if self._app._search.groups:
@@ -267,15 +300,91 @@ class ResultsView:
                         _format_hit_label(
                             hit,
                             max_score=max_score,
-                            match_visible=has_paintable_match(
-                                hit,
-                                evidence_spec_for_pass(
-                                    hit.pass_index, strict=strict, painting=painting
-                                ),
-                            ),
+                            match_visible=self._match_visible(hit, strict, painting),
                             body_budget=budget,
                         )
                     )
+
+    @staticmethod
+    def _match_visible(hit: Hit, strict: MatchSpec, painting: MatchSpec) -> bool:
+        """Whether the preview can paint ``hit``'s match; a light hit has not been
+        checked yet, so it carries no warning until it is materialised."""
+        if not hit.materialised:
+            return True
+        return has_paintable_match(
+            hit, evidence_spec_for_pass(hit.pass_index, strict=strict, painting=painting)
+        )
+
+    def on_file_expanded(self, node: TreeNode[Any]) -> None:
+        """An expanded file's light rows are materialised off the loop."""
+        self._materialise_rows(node)
+
+    def _materialise_rows(self, file_node: TreeNode[Any], *, defer: float = 0.0) -> None:
+        data = file_node.data
+        if not isinstance(data, dict) or data.get("kind") != "file":
+            return
+        group: FileGroup = data["group"]
+        light = [h for h in group.hits if not h.materialised]
+        if light:
+            self._app.run_worker(
+                self._fill_rows(file_node, light, defer),
+                group="materialise_rows",
+                exit_on_error=False,
+            )
+
+    async def _fill_rows(self, file_node: TreeNode[Any], light: list[Hit], defer: float) -> None:
+        search = self._app._search
+        groups = search.groups
+        if defer:
+            await asyncio.sleep(defer)
+            if search.groups is not groups:
+                return
+        done = await decode_abandonable(
+            partial(materialise_hits, light, search.match_spec, intent=search.intent)
+        )
+        self._apply_materialised(groups, file_node, done)
+
+    def _apply_materialised(
+        self, groups: list[FileGroup], file_node: TreeNode[Any], done: list[Hit]
+    ) -> None:
+        """Swap materialised hits into the group and relabel their rows, unless a
+        newer search has replaced the results since the work was scheduled."""
+        if self._app._search.groups is not groups:
+            return
+        data = file_node.data
+        if not isinstance(data, dict):
+            return
+        by_seq = {h.chunk_seq: h for h in done}
+        group: FileGroup = data["group"]
+        group.hits[:] = [by_seq.get(h.chunk_seq, h) for h in group.hits]
+        try:
+            tree = self._app.query_one("#results_pane", Tree)
+        except Exception:
+            return
+        max_score = max((g.top_score for g in groups), default=0.0)
+        budget = self.label_budget(tree)
+        strict = self._app._effective_evidence_spec
+        painting = self._app._effective_match_spec
+        unlocatable = 0
+        for leaf in file_node.children:
+            leaf_data = leaf.data
+            if not isinstance(leaf_data, dict) or leaf_data.get("kind") != "section":
+                continue
+            hit = by_seq.get(leaf_data["hit"].chunk_seq)
+            if hit is None or leaf_data["hit"].materialised:
+                continue
+            leaf_data["hit"] = hit
+            visible = self._match_visible(hit, strict, painting)
+            unlocatable += not visible
+            leaf.set_label(
+                _format_hit_label(
+                    hit, max_score=max_score, match_visible=visible, body_budget=budget
+                )
+            )
+        if unlocatable:
+            self._app._preview.diag_log(
+                f"results unlocatable={unlocatable} query={self._app._search.current_query!r}"
+            )
 
     def refresh_warmth(self) -> bool:
         """Repaint any file row whose readiness changed.
