@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fnd.config import Defaults, load, starter_config
@@ -32,10 +33,11 @@ def test_template_carries_no_personal_paths() -> None:
 
 
 def test_template_carries_no_personal_collections() -> None:
-    """Course-code collections from a real setup must never ship."""
-    lowered = starter_config().lower()
-    for leak in ("dpc", "cpl", "sfo", "ssd", "wbt", "dsa", "notes_type", "uni week"):
-        assert leak not in lowered, f"template leaks {leak!r}"
+    """A real setup's collections must never ship: the template defines only ``default``."""
+    template = starter_config()
+    assert set(re.findall(r"^\[+collections\.([^].]+)", template, re.M)) == {"default"}
+    for leak in ("notes_type", "uni week"):
+        assert leak not in template.lower(), f"template leaks {leak!r}"
 
 
 def test_template_documents_the_tag_settings() -> None:

@@ -490,7 +490,7 @@ class TestATypoCannotOpenTheIndex:
         [
             "file.size <= 1000",
             "'x' in file.tags.all",
-            "Course == 'DPwC' AND status == 'done'",
+            "Course == 'DevOps' AND status == 'done'",
         ],
     )
     def test_real_facts_and_frontmatter_keys_still_parse(self, text: str) -> None:

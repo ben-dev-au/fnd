@@ -29,19 +29,19 @@ def test_empty_query_is_bare_and_flagged_empty() -> None:
 
 
 def test_single_collection() -> None:
-    assert _cmd(query="q", full_collections=("wine",)) == "fnd q -c wine"
+    assert _cmd(query="q", full_collections=("cellar",)) == "fnd q -c cellar"
 
 
 def test_multiple_collections_comma_joined() -> None:
     # -c splits on commas, so several full collections join into one value.
-    assert _cmd(query="q", full_collections=("wine", "notes")) == "fnd q -c wine,notes"
+    assert _cmd(query="q", full_collections=("cellar", "notes")) == "fnd q -c cellar,notes"
 
 
 def test_partial_collection_widens_with_caveat() -> None:
     result = LaunchCommandSerializer(
-        SearchSnapshot(query="q", full_collections=("wine",), partial_collections=("notes",))
+        SearchSnapshot(query="q", full_collections=("cellar",), partial_collections=("notes",))
     ).serialize()
-    assert result.command == "fnd q -c wine,notes"
+    assert result.command == "fnd q -c cellar,notes"
     assert result.caveats == ["partial source selections widened to full collection(s)"]
 
 
@@ -89,8 +89,10 @@ def test_tags_union_across_sources() -> None:
 
 
 def test_special_characters_are_shell_quoted() -> None:
-    cmd = _cmd(query="a & b", full_collections=("my wine",), tag_include={"f": frozenset({"a'b"})})
-    assert cmd == "fnd 'a & b' -c 'my wine' --tag 'a'\"'\"'b'"
+    cmd = _cmd(
+        query="a & b", full_collections=("my cellar",), tag_include={"f": frozenset({"a'b"})}
+    )
+    assert cmd == "fnd 'a & b' -c 'my cellar' --tag 'a'\"'\"'b'"
 
 
 def test_every_arg_kind_is_quoted() -> None:
@@ -103,7 +105,7 @@ def test_full_command_ordering() -> None:
     assert (
         _cmd(
             query="cabernet aging",
-            full_collections=("wine",),
+            full_collections=("cellar",),
             filter_created="week",
             filter_date="month",
             filter_kinds=("pdf",),
@@ -111,7 +113,7 @@ def test_full_command_ordering() -> None:
             tag_exclude={"os": frozenset({"draft"})},
             tag_match_all=False,
         )
-        == "fnd 'cabernet aging' -c wine --created week --modified month "
+        == "fnd 'cabernet aging' -c cellar --created week --modified month "
         "--kind pdf --tag red --not-tag draft --tag-match any"
     )
 

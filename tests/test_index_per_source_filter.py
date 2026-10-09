@@ -18,7 +18,7 @@ def test_only_matching_md_files_indexed(tmp_path: Path, tmp_index_dir: Path) -> 
     notes = tmp_path / "notes"
     _touch(
         notes / "in_scope.md",
-        "---\nCourse: DPwC\n---\n# Note\npenguin sandwich\n",
+        "---\nCourse: DevOps\n---\n# Note\npenguin sandwich\n",
     )
     _touch(
         notes / "out_of_scope.md",
@@ -29,7 +29,7 @@ def test_only_matching_md_files_indexed(tmp_path: Path, tmp_index_dir: Path) -> 
             SourceConfig(
                 path=notes,
                 includes=["**/*.md"],
-                frontmatter_filter="Course == 'DPwC'",
+                frontmatter_filter="Course == 'DevOps'",
             )
         ]
     )

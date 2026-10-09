@@ -22,7 +22,7 @@ def _spans(query: str) -> list[tuple[str, str]]:
         ("'quick brown' x", [("phrase", "'quick brown'")]),
         ("'rock'n'roll' x", [("phrase", "'rock'n'roll'")]),
         ('"a b" c', [("phrase", '"a b"')]),
-        ('c:"Soft Eng" x', [("phrase", '"Soft Eng"')]),
+        ('c:"Compiler Theory" x', [("phrase", '"Compiler Theory"')]),
         ('("a b") x', [("phrase", '"a b"')]),
         ('-"a b"', [("phrase", '"a b"')]),
         ('"a b"~3 c', [("phrase", '"a b"')]),

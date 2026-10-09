@@ -28,11 +28,11 @@ def _kinds(text: str) -> list[TokenKind]:
 
 
 def test_tokenize_simple_equality() -> None:
-    toks = tokenize("Course == 'DPwC'")
+    toks = tokenize("Course == 'DevOps'")
     assert [(t.kind, t.value) for t in toks] == [
         (TokenKind.IDENT, "Course"),
         (TokenKind.OP, "=="),
-        (TokenKind.STRING, "DPwC"),
+        (TokenKind.STRING, "DevOps"),
         (TokenKind.EOF, ""),
     ]
 
@@ -91,14 +91,14 @@ def test_tokenize_quoted_identifier() -> None:
 
 def test_tokenize_unterminated_string_raises_with_column() -> None:
     with pytest.raises(FilterError) as exc:
-        tokenize("Course == 'DPwC")
+        tokenize("Course == 'DevOps")
     assert "unterminated" in exc.value.message.lower()
     assert exc.value.column == 11  # column of the opening quote (1-based)
 
 
 def test_parse_simple_compare() -> None:
-    tree = parse("Course == 'DPwC'")
-    assert tree == Compare("Course", "==", "DPwC")
+    tree = parse("Course == 'DevOps'")
+    assert tree == Compare("Course", "==", "DevOps")
 
 
 def test_parse_and_or_precedence() -> None:
@@ -156,8 +156,8 @@ def test_parse_unmatched_paren_raises() -> None:
 
 
 def test_eval_equality_match() -> None:
-    pred = compile_filter("Course == 'DPwC'")
-    assert pred({"Course": "DPwC"}) is True
+    pred = compile_filter("Course == 'DevOps'")
+    assert pred({"Course": "DevOps"}) is True
     assert pred({"Course": "Other"}) is False
 
 
@@ -170,8 +170,8 @@ def test_eval_inequality() -> None:
 def test_eval_missing_field_strict_null() -> None:
     """Per spec: missing field treats the predicate as False — even for !=
     and even for `not in`. The user opted into strict null."""
-    pred_eq = compile_filter("Course == 'DPwC'")
-    pred_neq = compile_filter("Course != 'DPwC'")
+    pred_eq = compile_filter("Course == 'DevOps'")
+    pred_neq = compile_filter("Course != 'DevOps'")
     pred_in = compile_filter("'x' in tags")
     pred_not_in = compile_filter("'x' not in tags")
     empty: dict[str, object] = {}
@@ -197,12 +197,12 @@ def test_eval_date_compare() -> None:
 def test_eval_type_mismatch_returns_false() -> None:
     """String < number doesn't crash; it's just False."""
     pred = compile_filter("Course < 5")
-    assert pred({"Course": "DPwC"}) is False
+    assert pred({"Course": "DevOps"}) is False
 
 
 def test_eval_glob_match() -> None:
-    pred = compile_filter("Course ~~ 'Design *'")
-    assert pred({"Course": "Design Patterns"}) is True
+    pred = compile_filter("Course ~~ 'Data *'")
+    assert pred({"Course": "Data Structures"}) is True
     assert pred({"Course": "Algorithms"}) is False
 
 
@@ -213,16 +213,16 @@ def test_eval_in_list() -> None:
 
 
 def test_eval_and_or_not() -> None:
-    pred = compile_filter("Course == 'DPwC' AND status != 'archived' AND 'active' in tags")
-    assert pred({"Course": "DPwC", "status": "active", "tags": ["active"]}) is True
-    assert pred({"Course": "DPwC", "status": "archived", "tags": ["active"]}) is False
+    pred = compile_filter("Course == 'DevOps' AND status != 'archived' AND 'active' in tags")
+    assert pred({"Course": "DevOps", "status": "active", "tags": ["active"]}) is True
+    assert pred({"Course": "DevOps", "status": "archived", "tags": ["active"]}) is False
 
 
 def test_parse_or_error_returns_predicate_for_valid() -> None:
-    pred, err = parse_or_error("Course == 'DPwC'")
+    pred, err = parse_or_error("Course == 'DevOps'")
     assert err is None
     assert pred is not None
-    assert pred({"Course": "DPwC"}) is True
+    assert pred({"Course": "DevOps"}) is True
 
 
 def test_parse_or_error_returns_error_for_invalid() -> None:

@@ -21,7 +21,7 @@ DOCUMENTED_TRANSLATIONS = [
     ("{500} race condition mitigations", '"race condition mitigations"~500'),
     # Worked example (README composing section): proximity stops at the qualifier.
     ("{10} buffer overflow exploit kind:pdf", '"buffer overflow exploit"~10 kind:pdf'),
-    ("c:wine attack", 'collection:"wine" attack'),
+    ("c:security attack", 'collection:"security" attack'),
     ("c:notes,papers transformer", '(collection:"notes" OR collection:"papers") transformer'),
     ("page:>20", f"page:[21 TO {query_dsl.FAR_FUTURE}]"),
     ("slide:<5", f"slide:[{query_dsl.FAR_PAST} TO 4]"),

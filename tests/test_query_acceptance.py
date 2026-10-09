@@ -122,7 +122,7 @@ _DOCS: list[tuple[str, _Doc]] = [
     ("kind-pdf", {"body": "diffusion model overview", "kind": "pdf"}),
     ("kind-docx", {"body": "diffusion model overview", "kind": "docx"}),
     ("kind-md", {"body": "diffusion model overview", "kind": "md"}),
-    ("col-wine", {"body": "attack on the cellar", "collection": "wine"}),
+    ("col-security", {"body": "attack on the cellar", "collection": "security"}),
     ("col-papers", {"body": "attack surface analysis", "collection": "papers"}),
     ("pg-5", {"body": "content located on a page", "kind": "pdf", "page": 5}),
     ("pg-15", {"body": "content located mid document", "kind": "pdf", "page": 15}),
@@ -162,7 +162,7 @@ _DOCS: list[tuple[str, _Doc]] = [
             "body": "mitm replay attack notes",
             "kind": "md",
             "fm": {
-                "Course": "Security Foundations",
+                "Course": "Distributed Systems",
                 "Year": 2024,
                 "Notes_Type": "Lecture",
                 "Tags": ["draft-1"],
@@ -278,14 +278,14 @@ _CASES: list[_Case] = [
     ),
     (
         "filter-collection",
-        "c:wine attack",
-        lambda r: "col-wine" in r and "col-papers" not in r,
+        "c:security attack",
+        lambda r: "col-security" in r and "col-papers" not in r,
         _OK,
     ),
     (
         "filter-collection-multi",
-        "c:wine,papers attack",
-        lambda r: {"col-wine", "col-papers"} <= r,
+        "c:security,papers attack",
+        lambda r: {"col-security", "col-papers"} <= r,
         _OK,
     ),
     (

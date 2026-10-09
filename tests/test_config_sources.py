@@ -24,10 +24,10 @@ def test_new_sources_shape_loads(tmp_path: Path) -> None:
         path     = "~/Notes"
         includes = ["**/*.md"]
         excludes = ["**/.trash/**"]
-        frontmatter_filter = "Course == 'DPwC'"
+        frontmatter_filter = "Course == 'DevOps'"
 
         [[collections.coursework.sources]]
-        path     = "~/Course/DPwC"
+        path     = "~/Course/DevOps"
         includes = ["**/*.pdf"]
     """,
     )
@@ -36,7 +36,7 @@ def test_new_sources_shape_loads(tmp_path: Path) -> None:
     assert len(coursework.sources) == 2
     assert isinstance(coursework.sources[0], SourceConfig)
     assert coursework.sources[0].includes == ["**/*.md"]
-    assert coursework.sources[0].frontmatter_filter == "Course == 'DPwC'"
+    assert coursework.sources[0].frontmatter_filter == "Course == 'DevOps'"
     assert coursework.sources[1].filters is not None
     assert coursework.sources[1].filters.kinds == ["pdf"]
     assert coursework.sources[1].frontmatter_filter is None

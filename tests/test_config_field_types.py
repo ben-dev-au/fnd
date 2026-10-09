@@ -229,7 +229,7 @@ def test_the_startup_rewrite_names_a_composed_collection(tmp_path: Path) -> None
     assert list(load(cfg_path).collections) == ["caf\N{LATIN SMALL LETTER E WITH ACUTE}"]
 
 
-@pytest.mark.parametrize("name", ["all", "Soft Eng Textbooks", "x" * 80, "Études"])
+@pytest.mark.parametrize("name", ["all", "Compiler Theory Books", "x" * 80, "Études"])
 def test_a_legacy_name_that_breaks_nothing_still_loads(name: str) -> None:
     """Style rules stay write-side, so an older hand-written config keeps loading."""
     cfg = Config.model_validate({"collections": {name: {"sources": [{"path": "/tmp"}]}}})

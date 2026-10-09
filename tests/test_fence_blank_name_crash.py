@@ -18,7 +18,7 @@ from textual.app import App, ComposeResult
 from fnd.tui.syntax_theme import _build_spans, highlight_fenced
 from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence
 
-# The exact chunk body that crashed ``fnd "AVL Tree" -c DSA`` on navigation.
+# The exact chunk body that crashed ``fnd "AVL Tree" -c GRAPH`` on navigation.
 CHECKLIST_FENCE = """### Image Buffer Implementation Checklist
 
 ```

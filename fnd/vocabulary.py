@@ -9,7 +9,7 @@ becomes a ``kind:`` clause against a field that only stores registry ids.
 
 Whether case matters is per-vocabulary, and it tracks what the engine
 actually does with the value. Collection names reach a ``raw``-tokenised
-field verbatim, so ``dpc2`` really is a different value from ``DPC2`` and the
+field verbatim, so ``algo2`` really is a different value from ``ALGO2`` and the
 user gets asked; file kinds are lowercased on the way into the query, so
 ``PDF`` is just a spelling of ``pdf`` and resolves without comment.
 
@@ -47,13 +47,13 @@ class Vocabulary:
     """The legal values for one filter, with typo-tolerant lookup.
 
     ``label`` is the noun used in error text ("collection" → *no collection
-    named 'dpc2'*), so it reads naturally for every filter that has one of
+    named 'algo2'*), so it reads naturally for every filter that has one of
     these.
 
     ``case_sensitive`` says whether case survives into the query. Set it when
     it does: a case variant then stops being a match and becomes the leading
     suggestion, which is the difference between silently searching the wrong
-    thing and being asked "did you mean 'DPC2'?".
+    thing and being asked "did you mean 'ALGO2'?".
     """
 
     def __init__(self, label: str, names: Iterable[str], *, case_sensitive: bool = False) -> None:
@@ -83,8 +83,8 @@ class Vocabulary:
         case-sensitive vocabulary it's the whole reason the value missed.
         Anything else has to fall inside the usual typo tolerance.
 
-        Only the closest tier is returned. With ``DPC`` and ``DPC2`` both
-        configured, ``dpc2`` is one exactly and the other with an edit; a
+        Only the closest tier is returned. With ``ALGO`` and ``ALGO2`` both
+        configured, ``algo2`` is one exactly and the other with an edit; a
         weaker candidate shouldn't turn an obvious fix into a choice. Ties
         within the tier are genuine ambiguity and are all returned (capped).
         """
@@ -152,7 +152,7 @@ def collection_vocabulary(config: Config) -> Vocabulary:
     """Collections defined in the user's config TOML.
 
     Case-sensitive: ``F_COLLECTION`` uses the ``raw`` tokenizer and stores the
-    config key verbatim, so ``dpc2`` would match nothing at all.
+    config key verbatim, so ``algo2`` would match nothing at all.
 
     The ``all`` pseudo-name is deliberately absent: callers check
     :func:`fnd.config.is_all_collections` first, which lets a real

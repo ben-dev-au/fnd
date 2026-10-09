@@ -21,8 +21,8 @@ def _touch(p: Path, body: str) -> None:
 def filter_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
     notes = tmp_path / "notes"
     _touch(
-        notes / "dpwc.md",
-        "---\nCourse: DPwC\nstatus: active\n---\n# A\npenguin sandwich here\n",
+        notes / "devops.md",
+        "---\nCourse: DevOps\nstatus: active\n---\n# A\npenguin sandwich here\n",
     )
     _touch(
         notes / "algos.md",
@@ -30,7 +30,7 @@ def filter_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
     )
     _touch(
         notes / "archived.md",
-        "---\nCourse: DPwC\nstatus: archived\n---\n# C\npenguin sandwich third\n",
+        "---\nCourse: DevOps\nstatus: archived\n---\n# C\npenguin sandwich third\n",
     )
     _touch(notes / "untagged.md", "# D\npenguin sandwich plain\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
@@ -44,10 +44,10 @@ def test_meta_filter_narrows_to_matching_md(filter_corpus: Path) -> None:
         "penguin sandwich",
         limit=10,
         collection="notes",
-        metadata_filter="Course == 'DPwC' AND status != 'archived'",
+        metadata_filter="Course == 'DevOps' AND status != 'archived'",
     )
     paths = {Path(h.path).name for h in hits}
-    assert "dpwc.md" in paths
+    assert "devops.md" in paths
     assert "algos.md" not in paths
     assert "archived.md" not in paths
     assert "untagged.md" not in paths  # strict null
@@ -85,12 +85,12 @@ def test_meta_filter_grouped_dedup_still_one_hit_per_file(
         "penguin sandwich",
         limit=10,
         collection="notes",
-        metadata_filter="Course == 'DPwC'",
+        metadata_filter="Course == 'DevOps'",
     )
     paths = {Path(g.path).name for g in groups}
-    # dpwc.md and archived.md both match Course == 'DPwC'; status filter
+    # devops.md and archived.md both match Course == 'DevOps'; status filter
     # not applied here, so both surface.
-    assert paths == {"dpwc.md", "archived.md"}
+    assert paths == {"devops.md", "archived.md"}
 
 
 def test_meta_filter_oversample_still_returns_limit_when_filter_strict(
@@ -99,9 +99,9 @@ def test_meta_filter_oversample_still_returns_limit_when_filter_strict(
     """Build many md files, most failing the filter. The post-filter must
     oversample-and-retry until ``limit`` survivors emerge."""
     notes = tmp_path / "notes"
-    # 50 notes, but only every 10th matches Course == 'DPwC'.
+    # 50 notes, but only every 10th matches Course == 'DevOps'.
     for i in range(50):
-        course = "DPwC" if i % 10 == 0 else "Other"
+        course = "DevOps" if i % 10 == 0 else "Other"
         _touch(
             notes / f"n{i:02}.md",
             f"---\nCourse: {course}\n---\n# {i}\npenguin sandwich {i}\n",
@@ -114,7 +114,7 @@ def test_meta_filter_oversample_still_returns_limit_when_filter_strict(
         "penguin sandwich",
         limit=5,
         collection="notes",
-        metadata_filter="Course == 'DPwC'",
+        metadata_filter="Course == 'DevOps'",
     )
     # 5 of the 50 match the filter; we asked for limit=5 — must get all 5.
     assert len(hits) == 5

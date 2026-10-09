@@ -139,7 +139,7 @@ def shutdown_pool() -> None:
     plus no GC raced the next ``_get_pool()`` and left stale FDs
     visible to ``_posixsubprocess.fork_exec`` in the new worker spawn
     ("bad value(s) in fds_to_keep") — the exact symptom of the
-    wine-chain bug.
+    chained-extraction bug.
     """
     import gc
 
@@ -411,7 +411,7 @@ def run_in_pool_sync_with_stall_detection[T](
                 # Tear down pool + manager so the next spawn starts
                 # with a clean FD set. Without this, every subsequent
                 # PDF in the run fails the same way (the original
-                # symptom in the wine-chain bug).
+                # symptom in the chained-extraction bug).
                 shutdown_pool()
                 continue
             raise

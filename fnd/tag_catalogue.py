@@ -108,7 +108,7 @@ def tag_catalogue(
     # Bucket by FILE, then by tag within each file, and count the file buckets
     # each tag appears in. The obvious shape (bucket by tag, cardinality over
     # parent_id) silently returns 0 for some buckets — measured on a real
-    # corpus, `exam` had 34 chunks and a cardinality of 0.0 — which would hide
+    # corpus, one tag had 34 chunks and a cardinality of 0.0 — which would hide
     # real tags behind a "(0)" count. This inversion is exact and, measured on
     # the same corpus, faster.
     agg: dict[str, object] = {

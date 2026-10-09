@@ -3,7 +3,7 @@ not the physical index. The Preview handler must keystroke ``page_label``
 when present (falling back to the physical page for label-less PDFs), or a
 book with front matter lands the user pages late.
 
-Regression: opening the Design Patterns book's State/Consequences match
+Regression: opening the Data Structures book's State/Consequences match
 (physical page 327, printed label "307") keystroked "327" and landed on
 physical 347 (the page printed "327").
 """

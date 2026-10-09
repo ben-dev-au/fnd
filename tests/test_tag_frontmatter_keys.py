@@ -52,7 +52,7 @@ def test_custom_keys_reach_the_index(tmp_path: Path) -> None:
     root = tmp_path / "corpus"
     root.mkdir()
     (root / "wk1.md").write_text(
-        '---\ntags: []\nCourse: "[[Design Patterns with C++]]"\n'
+        '---\ntags: []\nCourse: "[[Data Structures with C++]]"\n'
         "Notes_Type: [Study Notes]\n---\n\n# W\n\nsaffron\n",
         encoding="utf-8",
     )
@@ -76,7 +76,7 @@ def test_custom_keys_reach_the_index(tmp_path: Path) -> None:
         return {Path(h.path).name for h in hits}
 
     # The wikilink brackets are stripped, and the value is namespaced.
-    assert names("course/design patterns with c++") == {"wk1.md"}
+    assert names("course/data structures with c++") == {"wk1.md"}
     assert names("notes_type/study notes") == {"wk1.md"}
     # The namespace itself selects everything under it.
     assert names("course") == {"wk1.md", "other.md"}

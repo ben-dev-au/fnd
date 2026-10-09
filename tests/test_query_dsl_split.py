@@ -12,21 +12,21 @@ def test_no_brackets_returns_query_unchanged() -> None:
 
 
 def test_brackets_at_start() -> None:
-    q, m = split_metadata_filter("[Course == 'DPwC'] strategy pattern")
+    q, m = split_metadata_filter("[Course == 'DevOps'] strategy pattern")
     assert q == "strategy pattern"
-    assert m == "Course == 'DPwC'"
+    assert m == "Course == 'DevOps'"
 
 
 def test_brackets_at_end() -> None:
-    q, m = split_metadata_filter("strategy pattern [Course == 'DPwC']")
+    q, m = split_metadata_filter("strategy pattern [Course == 'DevOps']")
     assert q == "strategy pattern"
-    assert m == "Course == 'DPwC'"
+    assert m == "Course == 'DevOps'"
 
 
 def test_brackets_in_middle() -> None:
-    q, m = split_metadata_filter("foo [Course == 'DPwC'] bar")
+    q, m = split_metadata_filter("foo [Course == 'DevOps'] bar")
     assert q == "foo bar"
-    assert m == "Course == 'DPwC'"
+    assert m == "Course == 'DevOps'"
 
 
 def test_brackets_inside_quoted_phrase_left_alone() -> None:

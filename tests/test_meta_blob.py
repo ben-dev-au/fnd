@@ -14,7 +14,7 @@ def test_empty_dict_roundtrip() -> None:
 
 
 def test_string_int_float_roundtrip() -> None:
-    fm = {"Course": "DPwC", "priority": 3, "weight": 1.5}
+    fm = {"Course": "DevOps", "priority": 3, "weight": 1.5}
     assert decode(encode(fm)) == fm
 
 

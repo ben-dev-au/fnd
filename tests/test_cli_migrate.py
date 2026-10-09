@@ -25,7 +25,7 @@ def stale_corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.Monkey
     schema bump. Also write a config TOML pointing at the source so the
     rebuild flow knows what to do."""
     notes = tmp_path / "notes"
-    _touch(notes / "a.md", "---\nCourse: DPwC\n---\n# A\nlightning rod\n")
+    _touch(notes / "a.md", "---\nCourse: DevOps\n---\n# A\nlightning rod\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="notes", index_dir=tmp_index_dir)
 

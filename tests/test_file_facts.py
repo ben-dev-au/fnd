@@ -41,25 +41,25 @@ class TestLaziness:
         assert reader.calls == 0
 
     def test_frontmatter_key_reads_once(self, tmp_path: Path) -> None:
-        reader = _CountingReader({"Course": "DPwC"})
+        reader = _CountingReader({"Course": "DevOps"})
         facts = _facts(tmp_path, read_frontmatter=reader)
-        assert facts["Course"] == "DPwC"
-        assert facts["Course"] == "DPwC"
+        assert facts["Course"] == "DevOps"
+        assert facts["Course"] == "DevOps"
         assert reader.calls == 1
 
     def test_contains_then_getitem_reads_once(self, tmp_path: Path) -> None:
         """``Mapping.__contains__`` falls through to ``__getitem__``; the
         evaluator does both for every field, so the cache is load-bearing."""
-        reader = _CountingReader({"Course": "DPwC"})
+        reader = _CountingReader({"Course": "DevOps"})
         facts = _facts(tmp_path, read_frontmatter=reader)
         assert "Course" in facts
-        assert facts["Course"] == "DPwC"
+        assert facts["Course"] == "DevOps"
         assert reader.calls == 1
 
     def test_predicate_short_circuits_before_the_expensive_fact(self, tmp_path: Path) -> None:
-        reader = _CountingReader({"Course": "DPwC"})
+        reader = _CountingReader({"Course": "DevOps"})
         facts = _facts(tmp_path, name="a.txt", read_frontmatter=reader)
-        assert compile_filter("file.ext == '.md' AND Course == 'DPwC'")(facts) is False
+        assert compile_filter("file.ext == '.md' AND Course == 'DevOps'")(facts) is False
         assert reader.calls == 0
 
 
@@ -148,7 +148,7 @@ class TestFactValues:
 
 class TestMappingContract:
     def test_iter_and_len_include_both_namespaces(self, tmp_path: Path) -> None:
-        facts = _facts(tmp_path, read_frontmatter=_CountingReader({"Course": "DPwC"}))
+        facts = _facts(tmp_path, read_frontmatter=_CountingReader({"Course": "DevOps"}))
         keys = set(facts)
         assert RESERVED_FACTS <= keys
         assert "Course" in keys

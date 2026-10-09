@@ -26,7 +26,7 @@ def test_validate_passes_for_valid_filter(monkeypatch: pytest.MonkeyPatch, tmp_p
         """
         [[collections.x.sources]]
         path = "~/x"
-        frontmatter_filter = "Course == 'DPwC'"
+        frontmatter_filter = "Course == 'DevOps'"
     """,
     )
     result = runner.invoke(app, ["config", "validate"])

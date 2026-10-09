@@ -42,12 +42,12 @@ def test_md_chunk_carries_frontmatter_in_meta_blob(tmp_path: Path, tmp_index_dir
     notes = tmp_path / "notes"
     _touch(
         notes / "a.md",
-        "---\nCourse: DPwC\ntags: [course, active]\n---\n# A\nbody one\n",
+        "---\nCourse: DevOps\ntags: [course, active]\n---\n# A\nbody one\n",
     )
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="x", index_dir=tmp_index_dir)
     blob = _meta_blob_for_first_hit(tmp_index_dir, "body")
-    assert decode(blob) == {"Course": "DPwC", "tags": ["course", "active"]}
+    assert decode(blob) == {"Course": "DevOps", "tags": ["course", "active"]}
 
 
 def test_non_md_chunk_meta_blob_is_empty(tmp_path: Path, tmp_index_dir: Path) -> None:

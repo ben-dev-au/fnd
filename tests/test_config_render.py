@@ -64,7 +64,7 @@ def _sample() -> conf.Config:
                     )
                 ]
             ),
-            "Soft Eng Books": conf.CollectionConfig(
+            "Compiler Theory Books": conf.CollectionConfig(
                 sources=[conf.SourceConfig(path=Path("~/Books"))]
             ),
         },
@@ -149,7 +149,7 @@ def _maximal() -> conf.Config:
                 follow_symlinks=True,
                 ranking_profile="tuned",
             ),
-            "Soft Eng Books": conf.CollectionConfig(sources=[]),
+            "Compiler Theory Books": conf.CollectionConfig(sources=[]),
         },
         ranking={
             "tuned": conf.RankingProfileConfig(
@@ -211,8 +211,8 @@ class TestTheWholeSurfaceRoundTrips:
 
     def test_an_empty_collection_is_not_lost(self) -> None:
         back = _reload(render_config(_maximal()))
-        assert "Soft Eng Books" in back.collections
-        assert back.collections["Soft Eng Books"].sources == []
+        assert "Compiler Theory Books" in back.collections
+        assert back.collections["Compiler Theory Books"].sources == []
 
 
 class TestDocumentationCannotDrift:
@@ -337,7 +337,7 @@ class TestPortability:
         assert tomllib.loads(f"p = {path_value(outside)}")["p"] == str(outside)
 
     def test_a_collection_name_needing_quotes_gets_them(self) -> None:
-        assert key("Soft Eng Books") == '"Soft Eng Books"'
+        assert key("Compiler Theory Books") == '"Compiler Theory Books"'
         assert key("notes") == "notes"
         tomllib.loads(render_config(_sample()))  # would raise if unquoted
 

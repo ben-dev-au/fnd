@@ -20,7 +20,7 @@ def _touch(p: Path, body: str) -> None:
 @pytest.fixture
 def cli_corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     notes = tmp_path / "notes"
-    _touch(notes / "dpwc.md", "---\nCourse: DPwC\n---\n# A\nlightning rod\n")
+    _touch(notes / "devops.md", "---\nCourse: DevOps\n---\n# A\nlightning rod\n")
     _touch(notes / "other.md", "---\nCourse: Other\n---\n# B\nlightning rod\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="notes", index_dir=tmp_index_dir)
@@ -38,11 +38,11 @@ def test_search_meta_flag_filters_results(cli_corpus: Path) -> None:
             "--collection",
             "notes",
             "--meta",
-            "Course == 'DPwC'",
+            "Course == 'DevOps'",
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "dpwc.md" in result.output
+    assert "devops.md" in result.output
     assert "other.md" not in result.output
 
 
@@ -50,7 +50,7 @@ def test_search_no_meta_returns_both(cli_corpus: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["search", "lightning rod", "--collection", "notes"])
     assert result.exit_code == 0
-    assert "dpwc.md" in result.output
+    assert "devops.md" in result.output
     assert "other.md" in result.output
 
 

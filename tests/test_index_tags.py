@@ -132,17 +132,17 @@ def test_build_index_from_config_writes_tags(tmp_path: Path) -> None:
     root = tmp_path / "corpus"
     root.mkdir()
     (root / "a.md").write_text(
-        "---\ntags: [Exam, project/alpha]\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
+        "---\ntags: [Draft, project/alpha]\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
     )
     (root / "b.md").write_text("# B\n\nsaffron plain\n", encoding="utf-8")
 
     cc = CollectionConfig(sources=[SourceConfig(path=root)])
     index_dir = tmp_path / "idx"
-    build_index_from_config(config=cc, collection="DPC", index_dir=index_dir)
+    build_index_from_config(config=cc, collection="ALGO", index_dir=index_dir)
 
     searcher = Searcher(index_dir=index_dir)
     hits = searcher.search(
-        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"exam"})})
+        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"draft"})})
     )
     assert {Path(h.path).name for h in hits} == {"a.md"}
 
@@ -160,7 +160,7 @@ def test_build_index_from_config_expands_nested_tags(tmp_path: Path) -> None:
     )
     cc = CollectionConfig(sources=[SourceConfig(path=root)])
     index_dir = tmp_path / "idx"
-    build_index_from_config(config=cc, collection="DPC", index_dir=index_dir)
+    build_index_from_config(config=cc, collection="ALGO", index_dir=index_dir)
 
     searcher = Searcher(index_dir=index_dir)
     hits = searcher.search(

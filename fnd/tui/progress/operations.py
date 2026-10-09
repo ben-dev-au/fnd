@@ -516,7 +516,7 @@ class IndexProgressTracker:
                 # Shared with IndexerScreen's title so the two cannot drift —
                 # and so this keeps the clamp, which it was missing: a state
                 # where chain_remaining still holds every collection rendered
-                # as "CPL (0 of 4)".
+                # as "COMP (0 of 4)".
                 from fnd.tui.indexer_service import chain_position
 
                 parts.append(f"{collection} ({chain_position(service)} of {chain_total})")
