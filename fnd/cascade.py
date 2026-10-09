@@ -44,9 +44,11 @@ from fnd.query import (
 )
 from fnd.query_ast import FUZZY_MAX
 from fnd.query_errors import QuerySyntaxError
-from fnd.query_spans import has_phrase
+from fnd.query_spans import literal_spans
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from fnd.tag_query import TagFilter
 from fnd.analysis import index_token
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
@@ -60,12 +62,14 @@ def _carries_precision_intent(query: str) -> bool:
     fuzzy pass would violate, so the fuzzy pass must be skipped:
 
     * a quoted phrase, ``{N}`` proximity, or ``NEAR/N``;
-    * a ``*``/``?`` wildcard (the fuzzy pass strips these and fuzzy-matches the
-      bare stem — ``crypto*`` would re-admit ``cryptid``);
+    * a ``*``/``?`` wildcard or a ``/regex/`` (the fuzzy pass strips these and
+      fuzzy-matches the bare stem — ``crypto*`` would re-admit ``cryptid``);
     * an explicit exclusion (``NOT x`` / ``-x``): the fuzzy pass strips the
       operator and would re-admit the excluded docs.
     """
-    if any(ch in query for ch in '"{*?') or "NEAR/" in query or has_phrase(query):
+    if any(ch in query for ch in '"{*?') or "NEAR/" in query:
+        return True
+    if any(span.kind in ("phrase", "regex") for span in literal_spans(query)):
         return True
     # ``-word`` or ``-(group)`` exclusion (the ``(`` case would otherwise slip
     # past and the fuzzy pass would re-admit the excluded branch).
@@ -123,11 +127,8 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
 
 
 def _strip_fuzzy_modifiers(query: str) -> str:
-    """Remove ``~N`` / bare ``~`` after a word char. Used to clean the
-    query before the literal + synonym passes, which submit through
-    tantivy's QueryParser (the parser silently no-ops ``~N`` for
-    indexed-non-fast body fields; we strip to make the literal probe
-    look like the user's intended exact match)."""
+    """Remove ``~N`` / bare ``~`` after a word char, for the synonym and compound
+    rewrites, which read plain words."""
     return _STRIP_FUZZY_MOD_RE.sub("", query)
 
 
@@ -137,6 +138,7 @@ def fuzzy_body_clauses(
     *,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
+    corrections: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[tuple[tantivy.Occur, tantivy.Query]] | None:
     """The fuzzy pass's body clauses, or None where it would not run.
 
@@ -152,7 +154,8 @@ def fuzzy_body_clauses(
     ``fuzzy_term_query`` output.
 
     Shared with the filters pane, which needs the same expansion to describe
-    the results a fuzzy-only query put on screen.
+    the results a fuzzy-only query put on screen. A respelt word (``corrections``)
+    also reaches as far from each respelling, as :meth:`MatchSpec.with_corrections` paints.
     """
     term_dists = _terms_with_fuzzy(query)
     if not term_dists:
@@ -170,9 +173,19 @@ def fuzzy_body_clauses(
         stems_with_dists.append((stem, d, explicit is not None))
     if all(d == 0 for _, d, _ in stems_with_dists):
         return None
+    respelt = {
+        index_token(word): [index_token(o) for o in options]
+        for word, options in (corrections or {}).items()
+    }
     clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
     for stem, dist, front in stems_with_dists:
-        variants = _fuzzy_term_variants(searcher, stem, dist, front=front)
+        variants = list(
+            dict.fromkeys(
+                v
+                for s in (stem, *respelt.get(stem, ()))
+                for v in _fuzzy_term_variants(searcher, s, dist, front=front)
+            )
+        )
         if not variants:
             # No indexed stem within distance, so the AND of fuzzy term clauses
             # can never match.
@@ -204,6 +217,7 @@ def _fuzzy_pass(
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
+    corrections: Mapping[str, tuple[str, ...]] | None = None,
 ) -> CandidatePool:
     """Build a Boolean query of fuzzy term queries over the body field,
     AND-combined so all query terms must fuzzy-match.
@@ -228,6 +242,7 @@ def _fuzzy_pass(
         query,
         auto_fuzzy_enabled=auto_fuzzy_enabled,
         min_term_chars=min_term_chars,
+        corrections=corrections,
     )
     if body is None:
         return CandidatePool([], exhausted=True, all_files=True)
@@ -290,6 +305,7 @@ def cascade_search(
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
+    corrections: Mapping[str, tuple[str, ...]] | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -308,6 +324,7 @@ def cascade_search(
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
+    corrections: Mapping[str, tuple[str, ...]] | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], CascadeTrace]: ...
 
@@ -325,6 +342,7 @@ def cascade_search(
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
+    corrections: Mapping[str, tuple[str, ...]] | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], CascadeTrace]:
     """Run literal → fuzzy → synonym → compound passes until ``threshold`` hits found.
@@ -403,15 +421,13 @@ def cascade_search(
                 )
             )
 
-    # Literal + synonym passes go through tantivy's QueryParser, which
-    # silently no-ops ``~N`` on indexed-non-fast body fields. Strip the
-    # modifiers so those passes see the user's intended exact spelling;
-    # the fuzzy pass (below) reads them off the original query.
+    # The synonym and compound rewrites read plain words; the literal pass runs the
+    # query as typed, so an excluded ``-word~1`` still excludes its variants.
     literal_query = _strip_fuzzy_modifiers(query)
 
-    # Pass 0: literal query through the standard parse_query path.
-    pool = _pass(literal_query)
-    _trace(0, "literal", literal_query, pool, pool.hits, _ingest(pool.hits, 0))
+    # Pass 0: the query as typed, compiled as fusion compiles it.
+    pool = _pass(query)
+    _trace(0, "literal", query, pool, pool.hits, _ingest(pool.hits, 0))
     if len(out) >= threshold:
         return _trace_result() if with_trace else out
 
@@ -433,6 +449,7 @@ def cascade_search(
             auto_fuzzy_enabled=auto_fuzzy_enabled,
             min_term_chars=min_term_chars,
             tag_filter=tag_filter,
+            corrections=corrections,
         )
     )
     _trace(1, "fuzzy", query, pool, pool.hits, _ingest(pool.hits, 1))

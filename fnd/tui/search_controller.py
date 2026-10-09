@@ -73,6 +73,7 @@ class _SearchRequest:
     auto_fuzzy_enabled: bool
     min_term_chars: int
     collapse_copies: bool
+    as_typed: bool
     match_spec: MatchSpec
     evidence_spec: MatchSpec
     profile: RankingProfile
@@ -135,6 +136,9 @@ class SearchController:
         # completion and still arrives, it just finds its generation gone.
         self._generation: int = 0
         self._committed_generation: int = 0
+        # The query to search as typed (``search_as_typed``); it lapses on
+        # another query, or with auto-fuzzy off.
+        self._as_typed: str | None = None
 
     def resolve_profile(self) -> RankingProfile:
         """The ranking profile for the current scope (see :func:`profile_for_scope`)."""
@@ -322,6 +326,9 @@ class SearchController:
             profile = self.resolve_profile()
         except Exception:
             profile = self.ranking_profile
+        auto_fuzzy = defaults.fuzzy_enabled if defaults else True
+        if self._as_typed != query.strip() or not auto_fuzzy:
+            self._as_typed = None
 
         return _SearchRequest(
             generation=generation,
@@ -342,9 +349,10 @@ class SearchController:
             sections_score_threshold=(
                 cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
             ),
-            auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
+            auto_fuzzy_enabled=auto_fuzzy,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
             collapse_copies=defaults.collapse_copies if defaults else True,
+            as_typed=self._as_typed is not None,
             match_spec=match_spec,
             evidence_spec=evidence_spec,
             profile=profile,
@@ -357,6 +365,7 @@ class SearchController:
         self._show_query_notice(err)
         self.groups = []
         self.latest_trace = None
+        self._as_typed = None
         self._committed_generation = self._generation
         self._app._results.refresh()
 
@@ -400,7 +409,7 @@ class SearchController:
         # time-of-use gap: anything on the loop that reassigns it between the
         # reads would pass a different snapshot — or None — into the search.
         handle = self.searcher
-        if handle is None or not request.lexical.strip():
+        if handle is None or not (request.lexical.strip() or request.metadata_filter):
             return [], None
         from fnd.layered import search_layered
         from fnd.tui.results_view import materialise_upfront
@@ -426,6 +435,7 @@ class SearchController:
             auto_fuzzy_enabled=request.auto_fuzzy_enabled,
             min_term_chars=request.min_term_chars,
             collapse_copies=request.collapse_copies,
+            as_typed=request.as_typed,
             with_trace=True,
         )
         spec = trace.paint_spec(request.match_spec, request.evidence_spec)
@@ -469,7 +479,7 @@ class SearchController:
         self._clear_query_notice()
         self.latest_trace = trace
         self.groups = groups
-        fixes = trace.corrections if trace is not None else {}
+        fixes = trace.respellings if trace is not None else {}
         self.match_spec = (
             trace.paint_spec(request.match_spec, request.evidence_spec)
             if trace is not None
@@ -592,7 +602,8 @@ class SearchController:
         it, toggling highlights re-uses the opposite-state cached
         container for the same file + query and the toggle has no
         visible effect."""
-        return f"{self.current_query}|{self.intent or ''}|hl={int(self.highlights_enabled)}"
+        typed = int(self._as_typed is not None)
+        return f"{self.current_query}|{self.intent or ''}|hl={int(self.highlights_enabled)}|typed={typed}"
 
     def toggle_highlights(self) -> None:
         """Flip the search-highlight overlay on/off without re-running
@@ -630,6 +641,28 @@ class SearchController:
         )
         if self.current_query.strip():
             self.run(self.current_query)
+
+    def search_as_typed(self) -> None:
+        """Rerun the current query with no word respelt, or respelt again if it was."""
+        query = self.current_query.strip()
+        if not self.idle:
+            return
+        if self._as_typed == query:
+            self._as_typed = None
+        elif self.latest_trace is not None and self.latest_trace.respellings:
+            self._as_typed = query
+        else:
+            self._app.notify("Nothing was respelt.", timeout=1.5)
+            return
+        self.run(self.current_query)
+
+    @property
+    def respell_hint(self) -> str | None:
+        """The footer label for ``search_as_typed`` while it would change the results."""
+        if self._as_typed is not None:
+            return "Respell"
+        trace = self.latest_trace
+        return "As typed" if trace is not None and trace.respellings else None
 
     def clear_results(self) -> None:
         """Drop the current result set and preview without re-running.

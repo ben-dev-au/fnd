@@ -194,6 +194,18 @@ def _is_guessable(key: str) -> bool:
     return key.strip().lower() in _GUESSABLE
 
 
+def as_typed_key() -> str:
+    """The search-as-typed key the footer can promise. Shift+Esc arrives only
+    under the Kitty keyboard protocol (Kitty, Ghostty), which tmux drops."""
+    import os
+
+    term = os.environ.get("TERM", "")
+    kitty = term in {"xterm-kitty", "xterm-ghostty"} or os.environ.get("TERM_PROGRAM") == "ghostty"
+    if not kitty or os.environ.get("TMUX"):
+        return "^T"
+    return "⇧Esc" if os_labels.is_macos() else "Shift+Esc"
+
+
 class _HintBar:
     """The hint bar, refitted to the width it is painted at.
 
@@ -964,24 +976,18 @@ class FNDApp(PlainToastApp):
         # The same disambiguation the results rows use: two files sharing a
         # basename gave both panes the same title, so the tree could tell them
         # apart and the pane above it could not.
-        from fnd.tui.results_labels import copies_note, disambiguated_names
+        from fnd.tui.results_labels import disambiguated_names
 
         g = self._previewed_group()
         if g is None:
             return "Preview"
         name = disambiguated_names([g.path for g in self._search.groups]).get(g.path)
         name = name or Path(g.path).name
-        tail = ""
-        if g.copies:
-            tail = " · also at " + ", ".join(Path(*Path(c).parts[-2:]).as_posix() for c in g.copies)
         if edge_width > 0:
             prefix = "Preview: "
             # A round border keeps 6 cells of the edge: 2 corners, 2 pads, 2 dashes (measured).
-            budget = edge_width - 6 - len(prefix)
-            if tail and len(name) + len(tail) > budget:
-                tail = copies_note(len(g.copies))
-            name = _elide_middle_keep_suffix(name, budget - len(tail))
-        return f"Preview: {name}{tail}"
+            name = _elide_middle_keep_suffix(name, edge_width - 6 - len(prefix))
+        return f"Preview: {name}"
 
     def _refresh_results_title(self) -> None:
         """Just the title. `_refresh_status` also queues a sidebar reflow, and
@@ -1095,9 +1101,10 @@ class FNDApp(PlainToastApp):
         pass_index = 0
         try:
             node = self.query_one("#results_pane", Tree).cursor_node
-            data = node.data if node is not None else None
-            if isinstance(data, dict) and data.get("kind") == "section":
-                pass_index = int(data["hit"].pass_index)
+            # A collapsed file row previews its first hit, so that hit's pass judges it.
+            target = ResultsView.target_for_node(node) if node is not None else None
+            if target is not None:
+                pass_index = int(target[1].pass_index)
         except Exception:
             pass_index = 0
         return evidence_spec_for_pass(
@@ -1260,6 +1267,11 @@ class FNDApp(PlainToastApp):
             and nav.current_chunk_has_stops()
         ):
             contextual = (("n/b", "Matches"), *contextual)
+
+        search = getattr(self, "_search", None)
+        respell = search.respell_hint if search is not None else None
+        if respell is not None and overlay_hint is None and not self._reading_mode:
+            contextual = ((as_typed_key(), respell), *contextual)
 
         # Every anchor reaches a focused text box as a character, so naming
         # them while the query bar (the app's opening focus) has focus
@@ -2175,6 +2187,9 @@ class FNDApp(PlainToastApp):
 
     def action_toggle_fuzzy(self) -> None:
         self._search.toggle_fuzzy()
+
+    def action_search_as_typed(self) -> None:
+        self._search.search_as_typed()
 
     def action_nav_next_match(self) -> None:
         # Reading View is pure scroll-nav — no result-driven match jumps there.

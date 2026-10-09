@@ -127,10 +127,13 @@ def _expand_numeric_compare(q: str) -> str:
             return f"{field}:[{n + 1} TO {FAR_FUTURE}]"
         if op == ">=":
             return f"{field}:[{n} TO {FAR_FUTURE}]"
+        from fnd.query_fields import REGISTRY  # query_fields imports this module
+
+        low = REGISTRY[field].first if field in REGISTRY else FAR_PAST
         if op == "<":
-            return f"{field}:[{FAR_PAST} TO {n - 1}]"
+            return f"{field}:[{low} TO {n - 1}]"
         if op == "<=":
-            return f"{field}:[{FAR_PAST} TO {n}]"
+            return f"{field}:[{low} TO {n}]"
         return match.group(0)
 
     return pat.sub(repl, q)
@@ -146,6 +149,8 @@ _BRACE_PROX: Final = re.compile(rf"\{{(\d+)\}}\s*((?:{_RUN_TOKEN})(?:\s+{_RUN_TO
 
 # A residual brace group that is a proximity attempt (no ``TO`` — that would be
 # a Tantivy exclusive range, which we leave alone).
+_NEAR_WORD: Final = r"[\w*?]+(?:~\d*)?"
+
 _PROX_RESIDUAL: Final = re.compile(r"\{(?![^}]*\bTO\b)[^}]*\}")
 
 
@@ -168,9 +173,9 @@ def _expand_proximity_aliases(q: str) -> str:
 
     q = _BRACE_PROX.sub(brace_repl, q)
 
-    # `a NEAR/N b` form — strict: two single-word terms with NEAR/<N> between.
+    # `a NEAR/N b` form: two single words (a glob or `term~N` included) with NEAR/<N> between.
     q = re.sub(
-        r"\b(\w+)\s+NEAR/(\d+)\s+(\w+)\b",
+        rf"(?<![\w*?~])({_NEAR_WORD})\s+NEAR/(\d+)\s+({_NEAR_WORD})(?![\w*?~])",
         lambda m: f'"{m.group(1)} {m.group(3)}"~{m.group(2)}',
         q,
     )

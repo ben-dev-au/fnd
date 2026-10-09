@@ -1,11 +1,18 @@
-"""Corrections for query words the index has never seen.
+"""Corrections for query words the index has never seen, and the rare ones it
+holds beside a far commoner neighbour.
 
-A plain query word whose analysed token is in no body chunk is respelt: every
-surface word one edit away (insert, delete, substitute, or swap two neighbours)
-is analysed, and the ones the index holds become the word's corrections, most
-frequent first. Editing the surface word rather than the stem catches suffix
-typos: "polymorphsim" is three edits from the stem "polymorph" but one swap
-from "polymorphism". Fusion runs the respelt query as its own pass.
+A plain query word whose stem no chunk holds is respelt: every surface word one
+edit away (insert, delete, substitute, or swap two neighbours) that the files
+write becomes a correction, most often written first. Editing the surface word
+catches suffix typos: "polymorphsim" is three edits from the stem "polymorph"
+but one swap from "polymorphism". Fusion runs the respelt query as its own pass.
+
+A word search finds in few chunks is respelt only to neighbours far commoner as
+written, and those matches fill the free result slots below every exact one
+(``layered``). That covers a typo sharing its stem with an unrelated rare word
+("risling" stems as "risle" does).
+
+A search run as typed (``search_layered(as_typed=True)``) respells nothing.
 """
 
 from __future__ import annotations
@@ -27,6 +34,10 @@ _MIN_LETTERS: Final = 3
 _MAX_CORRECTIONS: Final = 3
 # A respelling this much rarer than the best one is noise ("recurso" beside "recursion").
 _MIN_SHARE: Final = 0.05
+# An indexed word in at most this many chunks, beside a one-edit neighbour this many
+# times commoner, reads as a typo the files share.
+_RARE_CHUNKS: Final = 20
+_RARE_RATIO: Final = 50
 
 
 def _one_edit(word: str) -> set[str]:
@@ -52,19 +63,42 @@ def corrections(searcher: Searcher, words: list[str]) -> dict[str, tuple[str, ..
         # One edit from a stopword ("teh"), the likely word is one search drops.
         if edits & STOPWORDS:
             continue
-        best: dict[str, tuple[int, int, str]] = {}
+        best: dict[str, tuple[int, str]] = {}
         for candidate in sorted(edits):
             token = index_token(candidate)
-            freq = index.doc_freq(F_BODY, token)
-            if not freq:
-                continue
             written = index.doc_freq(F_WORDS, word_token(candidate))
-            if token not in best or written > best[token][1]:
-                best[token] = (freq, written, candidate)
-        ranked = sorted(best.values(), key=lambda b: (-b[0], b[2]))[:_MAX_CORRECTIONS]
+            if written and (token not in best or written > best[token][0]):
+                best[token] = (written, candidate)
+        ranked = sorted(best.values(), key=lambda b: (-b[0], b[1]))[:_MAX_CORRECTIONS]
         if ranked:
-            floor = ranked[0][0] * _MIN_SHARE
-            out[word] = tuple(candidate for freq, _, candidate in ranked if freq >= floor)
+            share = ranked[0][0] * _MIN_SHARE
+            out[word] = tuple(candidate for written, candidate in ranked if written >= share)
+    return out
+
+
+def rare_spellings(searcher: Searcher, words: list[str]) -> dict[str, tuple[str, ...]]:
+    """Each word of ``words`` search finds in few chunks that reads as a typo the files
+    share, mapped to its far commoner one-edit neighbours, counted as written."""
+    index = searcher._searcher
+    out: dict[str, tuple[str, ...]] = {}
+    for word in words:
+        if not _WORD_RE.fullmatch(word) or len(word) < _MIN_LETTERS:
+            continue
+        freq = index.doc_freq(F_BODY, index_token(word))
+        if not 0 < freq <= _RARE_CHUNKS:
+            continue
+        edits = _one_edit(word.lower())
+        if edits & STOPWORDS:
+            continue
+        best: dict[str, tuple[int, str]] = {}
+        for candidate in sorted(edits):
+            written = index.doc_freq(F_WORDS, word_token(candidate))
+            token = index_token(candidate)
+            if written >= freq * _RARE_RATIO and (token not in best or written > best[token][0]):
+                best[token] = (written, candidate)
+        ranked = sorted(best.values(), key=lambda b: (-b[0], b[1]))[:_MAX_CORRECTIONS]
+        if ranked:
+            out[word] = tuple(candidate for _, candidate in ranked)
     return out
 
 

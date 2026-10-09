@@ -29,7 +29,7 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
         seen.update(kwargs)
         seen["filter_clauses"] = getattr(searcher, "filter_clauses", ())
-        return [], SimpleNamespace(corrections={}, paint_spec=lambda paint, strict: strict)
+        return [], SimpleNamespace(respellings={}, paint_spec=lambda paint, strict: strict)
 
     monkeypatch.setattr("fnd.query.Searcher.__init__", lambda self, **kw: None)
     monkeypatch.setattr("fnd.layered.search_layered", fake_search)

@@ -331,6 +331,15 @@ REGISTRY: tuple[Action, ...] = (
         priority=True,
     ),
     Action(
+        id="search_as_typed",
+        description="Search the current query with no word respelt; "
+        "again to respell. Shift+Esc needs the Kitty keyboard protocol, so Ctrl+T too.",
+        default_key="shift+escape,ctrl+t",
+        command="as-typed",
+        footer_label="As typed",
+        show_in_footer=False,
+    ),
+    Action(
         id="open_collections_form",
         description="Open the Collections form (add / edit / delete collections).",
         default_key=None,

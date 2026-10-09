@@ -1028,7 +1028,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id="pref.collapse_copies",
             label="Collapse exact copies",
-            description="Show byte-identical copies of a file as one result, noting the copies.",
+            description="Show byte-identical copies of a file as one result.",
             kind=KIND_TOGGLE,
             toggle_getter=lambda app: (  # type: ignore[arg-type]
                 app._config.defaults.collapse_copies  # type: ignore[attr-defined]

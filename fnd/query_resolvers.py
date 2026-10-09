@@ -18,7 +18,8 @@ import tantivy
 
 from fnd import regex_terms
 from fnd.analysis import index_token
-from fnd.matching import glob_to_regex, leading_edits, osa_within
+from fnd.matching import auto_fuzzy_distance, glob_to_regex, leading_edits, osa_within
+from fnd.query_ast import fuzzy_word
 from fnd.schema import F_BODY, F_WORDS
 
 if TYPE_CHECKING:
@@ -97,8 +98,13 @@ PHRASE_MEMBER_WORDS = 512
 
 
 def phrase_member_stems(searcher: Searcher, glob: str) -> frozenset[str] | None:
-    """The F_BODY stems a phrase's wildcard word searches (those of the words it
-    matches), or None where it runs as a glob over the stems themselves."""
+    """The F_BODY stems a phrase's pattern word searches: a fuzzy term's variants, a
+    wildcard's matched words' stems, or None where the glob runs over the stems."""
+    fuzzy = fuzzy_word(glob)
+    if fuzzy is not None:
+        stem = index_token(fuzzy.term)
+        dist = fuzzy.distance if fuzzy.distance is not None else auto_fuzzy_distance(stem)
+        return frozenset(fuzzy_variants(searcher, stem, dist, front=True))
     variants = pattern_variants(searcher, glob_to_regex(glob), glob=True) or {}
     if len(variants) > PHRASE_MEMBER_WORDS:
         return None
