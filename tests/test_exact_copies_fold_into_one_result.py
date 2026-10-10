@@ -64,7 +64,7 @@ def test_collapsing_off_or_an_unknown_hash_keeps_every_file() -> None:
     assert [g.parent_id for g in collapsed] == ["a", "c", "d"]
 
 
-def test_the_row_notes_the_copies() -> None:
+def test_the_row_never_mentions_the_copies() -> None:
     from fnd.tui.results_labels import _format_file_label
 
     group = group_by_file(
@@ -72,7 +72,7 @@ def test_the_row_notes_the_copies() -> None:
         limit=9,
         collapse_copies=True,
     )[0]
-    assert str(_format_file_label(group)).endswith("note.md +2 copies")
+    assert str(_format_file_label(group)).endswith("note.md")
 
 
 def test_search_lists_one_result_with_its_copies(tmp_path: Path, tmp_index_dir: Path) -> None:
@@ -123,10 +123,9 @@ def test_the_cli_prints_where_the_copies_are(
 
 
 @pytest.mark.asyncio
-async def test_the_preview_header_names_a_copy_with_brackets_in_its_path(
+async def test_the_tui_shows_one_row_and_never_mentions_the_copy(
     tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A copy path is text: read as markup, "[old]" would vanish as a style tag."""
     import textwrap
 
     from fnd.config import load
@@ -134,7 +133,7 @@ async def test_the_preview_header_names_a_copy_with_brackets_in_its_path(
     from tests._pilot_wait import run_search, wait_until
 
     root = tmp_path / "notes"
-    for name in ("a/note.md", "b/x [old].md"):
+    for name in ("a/note.md", "b/note.md"):
         (root / name).parent.mkdir(parents=True)
         (root / name).write_text("# Note\n\nshared words here.\n")
     build_index(roots=[root], index_dir=tmp_index_dir, collection="c")
@@ -151,10 +150,9 @@ async def test_the_preview_header_names_a_copy_with_brackets_in_its_path(
     async with app.run_test(size=(200, 40)) as pilot:
         await run_search(pilot, app, "shared")
         pane = app.query_one("#preview_pane")
-        await wait_until(pilot, lambda: "also at" in str(pane.border_title or ""))
-        title = pane._border_title
-        assert title is not None
-        assert "x [old].md" in title.plain, title.plain
+        await wait_until(pilot, lambda: "note.md" in str(pane.border_title or ""))
+        assert len(app._search.groups) == 1
+        assert str(pane.border_title).count("note.md") == 1, pane.border_title
 
 
 def test_an_edited_file_is_hashed_afresh(tmp_path: Path) -> None:

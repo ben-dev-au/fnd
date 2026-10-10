@@ -361,6 +361,9 @@ def search(
         "--kind",
         help="Restrict to a file kind or category (e.g. pdf, python, code, ebooks). Repeatable.",
     ),
+    as_typed: bool = typer.Option(
+        False, "--as-typed", help="Search every word as typed, respelling none."
+    ),
     explain: int | None = typer.Option(
         None,
         "--explain",
@@ -466,6 +469,7 @@ def search(
             auto_fuzzy_enabled=cfg.defaults.fuzzy_enabled,
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
             collapse_copies=cfg.defaults.collapse_copies,
+            as_typed=as_typed,
             with_trace=True,
         )
         spec = trace.paint_spec(
@@ -477,8 +481,8 @@ def search(
             ),
             MatchSpec.from_query(lexical, synonyms=synonyms, auto_fuzzy=False),
         )
-        if trace.corrections:
-            echo(describe(trace.corrections), err=True)
+        if trace.respellings:
+            echo(f"{describe(trace.respellings)} --as-typed searches as typed.", err=True)
         shown_groups = [g for g in groups if g.hits]
         shown = materialise_hits([g.hits[0] for g in shown_groups], spec)
         for group, hit in zip(shown_groups, shown, strict=True):

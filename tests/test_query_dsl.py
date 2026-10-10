@@ -75,8 +75,8 @@ def test_slide_greater_than() -> None:
 
 
 def test_slide_less_or_equal() -> None:
-    out = query_dsl.preprocess("slide:<=5")
-    assert out == f"slide:[{query_dsl.FAR_PAST} TO 5]"
+    """Slides count from 1; 0 marks a chunk with no slide."""
+    assert query_dsl.preprocess("slide:<=5") == "slide:[1 TO 5]"
 
 
 def test_page_range_passthrough() -> None:

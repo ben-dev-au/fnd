@@ -837,7 +837,7 @@ class Defaults(_ConfigModel):
     fallback. When False, only per-term ``~N`` modifiers trigger fuzzy expansion."""
 
     collapse_copies: bool = True
-    """Show byte-identical copies of a file as one result, noting the copies."""
+    """Show byte-identical copies of a file as one result."""
 
     fuzzy_min_term_chars: int = Field(default=4, ge=0, le=10)
     """Shortest stem auto-fuzzy applies to. Shorter terms and numbers stay exact."""

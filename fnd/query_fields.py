@@ -47,6 +47,9 @@ class FieldSpec:
     tantivy_field: str
     value: FieldValue
     coerce: Callable[[str], int] | None = None  # UINT only
+    # The lowest real value: pages and slides count from 1, and 0 marks a chunk with
+    # none, which ``page:<5`` must not admit.
+    first: int = 0
 
 
 def _coerce_uint(token: str) -> int:
@@ -71,8 +74,8 @@ REGISTRY: Final[dict[str, FieldSpec]] = {
     "author": FieldSpec("author", F_AUTHOR, FieldValue.TEXT),
     "heading_path": FieldSpec("heading_path", F_HEADING_PATH, FieldValue.TEXT),
     "path_tokens": FieldSpec("path_tokens", F_PATH_TOKENS, FieldValue.TEXT),
-    "page": FieldSpec("page", F_PAGE, FieldValue.UINT, _coerce_uint),
-    "slide": FieldSpec("slide", F_SLIDE, FieldValue.UINT, _coerce_uint),
+    "page": FieldSpec("page", F_PAGE, FieldValue.UINT, _coerce_uint, first=1),
+    "slide": FieldSpec("slide", F_SLIDE, FieldValue.UINT, _coerce_uint, first=1),
     "chunk_seq": FieldSpec("chunk_seq", F_CHUNK_SEQ, FieldValue.UINT, _coerce_uint),
     "mtime": FieldSpec("mtime", F_MTIME, FieldValue.UINT, _coerce_mtime),
     "created": FieldSpec("created", F_CREATED, FieldValue.UINT, _coerce_mtime),

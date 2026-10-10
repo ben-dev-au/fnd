@@ -30,6 +30,8 @@ from fnd.query_ast import (
     Required,
     Term,
     Wildcard,
+    fuzzy_word,
+    is_phrase_pattern,
 )
 from fnd.query_errors import QuerySyntaxError
 from fnd.query_escape import literal, literal_phrase
@@ -140,17 +142,18 @@ class _Compiler:
 
     def _phrase(self, n: Phrase) -> Query:
         words = n.text.split()
-        if any("*" in w or "?" in w for w in words):
-            # parse_query drops ``*``, so this is a positional regex phrase on F_BODY.
-            return self._wildcard_phrase(words, n.slop)
+        if any(is_phrase_pattern(w) for w in words):
+            # parse_query drops ``*`` and ``~``, so this is a positional regex phrase on F_BODY.
+            return self._pattern_phrase(words, n.slop)
         return _parse_query(self._s._index, literal_phrase(n.text, slop=n.slop), **self._pk)
 
-    def _wildcard_phrase(self, words: list[str], slop: int) -> Query:
+    def _pattern_phrase(self, words: list[str], slop: int) -> Query:
         if len(words) == 1:
-            return self._wildcard(Wildcard(words[0], None))
+            fuzzy = fuzzy_word(words[0])
+            return self._fuzzy(fuzzy) if fuzzy else self._wildcard(Wildcard(words[0], None))
         patterns: list[str] = []
         for w in words:
-            if "*" in w or "?" in w:
+            if is_phrase_pattern(w):
                 member = self._phrase_member(fold(w))
                 if member is None:
                     return Query.empty_query()
@@ -172,7 +175,7 @@ class _Compiler:
             return Query.empty_query()  # malformed glob contributes nothing
 
     def _phrase_member(self, glob: str) -> str | None:
-        """A phrase's wildcard word as a regex over F_BODY stems, or None when it
+        """A phrase's pattern word as a regex over F_BODY stems, or None when it
         matches no word (see :func:`fnd.query_resolvers.phrase_member_stems`)."""
         from fnd.matching import glob_to_regex
         from fnd.query_resolvers import phrase_member_stems

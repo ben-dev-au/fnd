@@ -121,11 +121,19 @@ class SearchTrace:
     sections_truncated: bool = False
     # The stems each phrase or proximity wildcard searched (MatchSpec.phrase_globs).
     phrase_globs: tuple[tuple[str, frozenset[str] | None], ...] = ()
+    # Rare query words some file holds, and the commoner respellings that filled
+    # the free result slots below every exact match.
+    widened: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def corrections(self) -> dict[str, tuple[str, ...]]:
         """Query words no document holds, and the respellings searched instead."""
         return self.fusion.corrections if self.fusion else {}
+
+    @property
+    def respellings(self) -> dict[str, tuple[str, ...]]:
+        """Every respelling searched: for unindexed words and for rare ones."""
+        return {**self.corrections, **self.widened}
 
     @property
     def fuzzy_matched(self) -> bool:
@@ -139,7 +147,11 @@ class SearchTrace:
 
     def resolve(self, spec: MatchSpec) -> MatchSpec:
         """``spec`` plus what this search resolved: respellings and phrase wildcards."""
-        return spec.with_corrections(self.corrections).with_phrase_globs(dict(self.phrase_globs))
+        return (
+            spec.with_corrections(self.corrections)
+            .with_corrections(self.widened, typed_written=True)
+            .with_phrase_globs(dict(self.phrase_globs))
+        )
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -152,6 +164,7 @@ class SearchTrace:
             "elapsed_ms": self.elapsed_ms,
             "files_truncated": self.files_truncated,
             "sections_truncated": self.sections_truncated,
+            "widened": {k: list(v) for k, v in self.widened.items()},
         }
 
 

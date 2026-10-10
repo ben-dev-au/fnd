@@ -28,7 +28,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Literal, overload
 
-from fnd.cascade import cascade_search
+from fnd.cascade import _with_pass, cascade_search
 from fnd.explain import CascadeTrace, SearchTrace, StrongSignalTrace
 from fnd.fusion import (
     STRONG_SIGNAL_MIN_NORM_GAP,
@@ -37,6 +37,7 @@ from fnd.fusion import (
     fusion_search,
     normalise_bm25,
     query_corrections,
+    query_rare_spellings,
     rank_by_position,
 )
 from fnd.query import (
@@ -54,6 +55,7 @@ from fnd.render import keep_shown
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
 from fnd.synonyms import SynonymTable
+from fnd.typos import respelt
 
 
 @overload
@@ -75,6 +77,7 @@ def search_layered(
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
     collapse_copies: bool = ...,
+    as_typed: bool = ...,
     with_trace: Literal[False] = False,
 ) -> list[FileGroup]: ...
 
@@ -98,6 +101,7 @@ def search_layered(
     min_term_chars: int = ...,
     tag_filter: TagFilter | None = ...,
     collapse_copies: bool = ...,
+    as_typed: bool = ...,
     with_trace: Literal[True],
 ) -> tuple[list[FileGroup], SearchTrace]: ...
 
@@ -120,17 +124,26 @@ def search_layered(
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
     collapse_copies: bool = False,
+    as_typed: bool = False,
     with_trace: bool = False,
 ) -> list[FileGroup] | tuple[list[FileGroup], SearchTrace]:
     """Run the regime-aware search and return ranked :class:`FileGroup`s.
 
     See module docstring for regime semantics. The probe doubles as
-    fusion's lex sub-query when bypass does NOT fire — saving one
-    Tantivy round-trip per non-bypass query.
+    fusion's lex sub-query when bypass does NOT fire, saving one
+    Tantivy round-trip per non-bypass query. ``as_typed`` respells nothing
+    (:mod:`fnd.typos`).
     """
     from fnd.query_plan import query_text, search_text
 
     query = search_text(query_text(query))
+    typed = query
+    if not query.strip() and metadata_filter:
+        # A frontmatter rule alone lists the notes it admits.
+        from fnd.file_facts import frontmatter_kinds
+
+        typed = f"[{metadata_filter}]"
+        query = f"kind:({' '.join(sorted(frontmatter_kinds()))})"
     if not query.strip():
         return ([], _empty_trace(query, intent)) if with_trace else []
 
@@ -151,7 +164,8 @@ def search_layered(
 
     # Step 2: strong-signal check, skipped with an intent (the obvious BM25 match
     # may not be what the caller wants) or a respelt word (the probe lacked it).
-    fixes = query_corrections(searcher, query) if auto_fuzzy_enabled else {}
+    respell = auto_fuzzy_enabled and not as_typed
+    fixes = query_corrections(searcher, query) if respell else {}
     ss_trace = _evaluate_strong_signal(probe.hits, intent_present=bool(intent), respelt=bool(fixes))
     fusion_trace = None
     cascade_trace: CascadeTrace | None = None
@@ -224,6 +238,7 @@ def search_layered(
                     tag_filter=tag_filter,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
                     min_term_chars=min_term_chars,
+                    corrections=fixes,
                     with_trace=True,
                 )
             else:
@@ -239,6 +254,7 @@ def search_layered(
                     tag_filter=tag_filter,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
                     min_term_chars=min_term_chars,
+                    corrections=fixes,
                 )
             if len(cascade_hits) > len(hits):
                 hits = rank_by_position(cascade_hits)
@@ -257,6 +273,37 @@ def search_layered(
         assert isinstance(profile, RankingProfile)
         if not profile.is_identity:
             hits = rerank_hits(hits, profile=profile, query=query, now=now)
+
+    # The cascade orders its passes; a respelling outranks its fuzzy and synonym rows.
+    cut = len(hits)
+    if regime.startswith("cascade"):
+        cut = next((i for i, h in enumerate(hits) if h.pass_index != 0), cut)
+    widened: dict[str, tuple[str, ...]] = {}
+    distinct = {file_key(h, collapse_copies=collapse_copies) for h in hits[:cut]}
+    if respell and len(distinct) < limit:
+        widened = query_rare_spellings(searcher, query)
+        fill = (
+            _respelt_fill(
+                searcher,
+                respelt(query.split(), widened),
+                hits[:cut],
+                window=window,
+                collection=collection,
+                metadata_filter=metadata_filter,
+                source_scope=source_scope,
+                tag_filter=tag_filter,
+                limit=limit,
+            )
+            if widened
+            else []
+        )
+        if fill:
+            filled = {(h.parent_id, h.chunk_seq) for h in fill}
+            rest = [h for h in hits[cut:] if (h.parent_id, h.chunk_seq) not in filled]
+            hits = hits[:cut] + fill + rest
+            regime += "(+respelt)"
+        else:
+            widened = {}
 
     groups = group_by_file(
         hits,
@@ -281,7 +328,7 @@ def search_layered(
                 ],
             )
         trace = SearchTrace(
-            query=query,
+            query=typed,
             intent=intent,
             regime=regime,
             # A pass pages until it holds more files than ``limit`` or has seen
@@ -301,20 +348,47 @@ def search_layered(
             cascade=cascade_trace,
             elapsed_ms=0,  # populated by caller via timer; left 0 here for unit tests
             phrase_globs=_phrase_globs(searcher, query),
+            widened=widened,
         )
         return groups, trace
     return groups
 
 
 def _phrase_globs(searcher: Searcher, query: str) -> tuple[tuple[str, frozenset[str] | None], ...]:
-    """The stems each wildcard word of ``query``'s phrases and proximity groups searched."""
-    if "*" not in query and "?" not in query:
+    """The stems each pattern word of ``query``'s phrases and proximity groups searched."""
+    if not any(ch in query for ch in "*?~"):
         return ()
     from fnd.matching import MatchSpec
     from fnd.query_resolvers import phrase_member_stems
 
-    globs = MatchSpec.from_query(query, auto_fuzzy=False).phrase_wildcards
+    globs = MatchSpec.from_query(query, auto_fuzzy=False).phrase_patterns
     return tuple((g, phrase_member_stems(searcher, g)) for g in sorted(globs))
+
+
+def _respelt_fill(
+    searcher: Searcher,
+    query: str,
+    found: list[Hit],
+    *,
+    window: int,
+    collection: str | list[str] | None,
+    metadata_filter: str | None,
+    source_scope: SourceScope | None,
+    tag_filter: TagFilter | None,
+    limit: int,
+) -> list[Hit]:
+    """``query``'s hits from files ``found`` lacks, to rank below every exact match."""
+    pool = searcher._candidates(
+        query,
+        window=window,
+        collection=collection,
+        metadata_filter=metadata_filter,
+        source_scope=source_scope,
+        tag_filter=tag_filter,
+        min_files=limit,
+    )
+    have = {h.parent_id for h in found}
+    return [_with_pass(h, 1) for h in pool.hits if h.parent_id not in have]
 
 
 def by_best_bm25(hits: list[Hit]) -> list[Hit]:

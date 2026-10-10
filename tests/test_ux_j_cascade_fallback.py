@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
+from textual.widgets import Tree
 
 from fnd.config import Config, load
 from fnd.index import build_index
+from fnd.query import FileGroup
 from fnd.tui import FNDApp
+from fnd.tui.match_evidence import has_paintable_match
 from tests._pilot_wait import run_search
 
 
@@ -98,3 +102,23 @@ async def test_cascade_path_honours_source_scope(cfg: Config, fuzzy_index: Path)
         source_scope={"notes": ["/no/such/source"]},
     )
     assert out == [], out
+
+
+@pytest.mark.asyncio
+async def test_a_collapsed_fuzzy_row_is_judged_by_what_it_paints(
+    cfg: Config, tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """A collapsed file row the fuzzy pass found shows its match, as its expanded rows do."""
+    for name in ("keys", "ciphers", "hashes"):
+        _write_md(tmp_path / "notes" / f"{name}.md", f"# {name}\ncryptographic {name} rotate.\n")
+    build_index(roots=[tmp_path / "notes"], index_dir=tmp_index_dir, collection="notes")
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "cryptography")
+        tree: Tree[dict[str, Any]] = app.query_one("#results_pane", Tree)
+        node = next(n for n in tree.root.children if not n.is_expanded)
+        tree.move_cursor(node)
+        hit = cast("FileGroup", (node.data or {})["group"]).hits[0]
+        assert hit.pass_index == 1
+        assert has_paintable_match(hit, app._evidence_spec_for_current_row())

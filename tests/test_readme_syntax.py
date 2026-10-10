@@ -25,7 +25,7 @@ DOCUMENTED_TRANSLATIONS = [
     ("c:security attack", 'collection:"security" attack'),
     ("c:notes,papers transformer", '(collection:"notes" OR collection:"papers") transformer'),
     ("page:>20", f"page:[21 TO {query_dsl.FAR_FUTURE}]"),
-    ("slide:<5", f"slide:[{query_dsl.FAR_PAST} TO 4]"),
+    ("slide:<5", "slide:[1 TO 4]"),
 ]
 
 # Documented inputs Tantivy/our DSL pass through unchanged.

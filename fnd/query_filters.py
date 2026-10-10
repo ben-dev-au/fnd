@@ -151,9 +151,10 @@ def _uint_range(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | 
                 return rng(n, None, inc_lo=False)
             if op == ">=":
                 return rng(n, None)
+            low = spec.first or None
             if op == "<":
-                return rng(None, n, inc_hi=False)
-            return rng(None, n)  # <=
+                return rng(low, n, inc_hi=False)
+            return rng(low, n)  # <=
         if spec.query_name in ("mtime", "created"):
             tok = date_token_range(value)
             if tok is not None:

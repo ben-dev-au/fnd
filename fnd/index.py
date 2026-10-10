@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from collections.abc import Collection, Iterable, Sequence
+from functools import lru_cache
 from pathlib import Path
 
 from tantivy import Document, Index, IndexWriter, Query, Schema
@@ -18,6 +19,7 @@ from fnd.extract import Chunk, ExtractError, extract, no_text_reason
 from fnd.fsmeta import path_is_absent
 from fnd.index_freshness import Ledger
 from fnd.membership import after_index, after_prune
+from fnd.meta_blob import decode as decode_meta_blob
 from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import (
     F_AUTHOR,
@@ -202,6 +204,17 @@ def add_body(doc: Document, text: str) -> None:
     doc.add_text(F_WORDS, text)
 
 
+@lru_cache(maxsize=64)
+def _frontmatter_author(meta_blob_bytes: bytes) -> str:
+    """A note's frontmatter ``author`` (any key case, a list joined), so ``author:`` sees it."""
+    value = next(
+        (v for k, v in decode_meta_blob(meta_blob_bytes).items() if k.lower() == "author"), None
+    )
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return "" if value is None else str(value)
+
+
 def _doc_for_chunk(
     chunk: Chunk,
     *,
@@ -228,7 +241,7 @@ def _doc_for_chunk(
     doc.add_text(F_KIND, chunk.kind)
     doc.add_text(F_HEADING_PATH, chunk.heading_path)
     doc.add_text(F_TITLE, chunk.title)
-    doc.add_text(F_AUTHOR, chunk.author)
+    doc.add_text(F_AUTHOR, chunk.author or _frontmatter_author(meta_blob_bytes))
     add_body(doc, chunk.body)
     doc.add_text(F_PAGE_LABEL, chunk.page_label)
     doc.add_unsigned(F_MTIME, max(chunk.mtime, 0))
