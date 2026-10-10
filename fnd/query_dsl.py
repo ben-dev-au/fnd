@@ -26,6 +26,7 @@ import re
 from typing import Final
 
 from fnd.query_spans import literal_spans, map_outside, without_literals
+from fnd.text_canon import quote_view
 
 # Far-future unix timestamp used as "no upper bound" in numeric ranges.
 FAR_FUTURE: Final = 99_999_999_999  # year ~5138
@@ -226,7 +227,8 @@ def split_metadata_filter(query: str) -> tuple[str, str | None]:
     Whitespace around the extracted clause is collapsed so the resulting
     lexical query reads naturally.
     """
-    literal_ends = {span.start: span.end for span in literal_spans(query)}
+    # Quotes are found in the view; the filter and the rest slice the text as typed.
+    literal_ends = {span.start: span.end for span in literal_spans(quote_view(query))}
     bracket_start: int | None = None
     depth = 0  # nesting inside the active filter ([... in [...] ...])
     found_range: tuple[int, int] | None = None

@@ -122,6 +122,33 @@ def _scan_string(text: str, start: int, quote: str) -> tuple[str, int] | None:
     return None
 
 
+def quote_positions(text: str) -> list[int]:
+    """Where ``text``'s strings and quoted names open and close, and the quotes
+    escaped inside them, read as :func:`_scan_string` reads them."""
+    found: list[int] = []
+    i = 0
+    while i < len(text):
+        quote = text[i]
+        if quote not in ('"', "'"):
+            i += 1
+            continue
+        for escaping in (True, False):
+            marks, j = [i], i + 1
+            while j < len(text) and text[j] != quote:
+                if escaping and text[j] == "\\" and text[j + 1 : j + 2] in (quote, "\\"):
+                    marks += [j + 1] if text[j + 1] == quote else []
+                    j += 2
+                    continue
+                j += 1
+            if j < len(text):
+                found += [*marks, j]
+                i = j + 1
+                break
+        else:
+            return [*found, i]
+    return found
+
+
 def tokenize(text: str) -> list[Token]:
     """Return the token stream ending with an EOF token. Raises FilterError
     on unterminated strings or unrecognised characters."""
