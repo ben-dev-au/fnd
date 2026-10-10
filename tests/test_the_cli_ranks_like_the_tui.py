@@ -65,3 +65,12 @@ def test_a_kind_flag_keeps_the_phrase_pass(cli_index: Path) -> None:
     trace = json.loads("{" + out.partition("\n{")[2])
     assert "phrase" in {s["source"] for s in trace["fusion"]["subqueries"]}
     assert "walls.txt" not in out.partition("\n{")[0]
+
+
+def test_as_typed_respells_nothing(cli_index: Path) -> None:
+    def corrections(*args: str) -> object:
+        out = _search("membrabe", "--explain", "1", *args)
+        return json.loads("{" + out.partition("\n{")[2])["fusion"]["corrections"]
+
+    assert corrections() == {"membrabe": ["membrane"]}
+    assert corrections("--as-typed") == {}

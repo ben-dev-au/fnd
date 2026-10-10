@@ -1160,7 +1160,7 @@ class ScopeController:
             if exact is None:
                 return None
             trace = self._app._search.latest_trace
-            fixes = trace.corrections if trace is not None else {}
+            fixes = trace.respellings if trace is not None else {}
             respelt_query = (
                 searcher.content_query(respelt(lexical.split(), fixes), DEFAULT_SEARCH_FIELDS)
                 if fixes
@@ -1173,11 +1173,13 @@ class ScopeController:
                 exact = tantivy.Query.boolean_query(
                     [(tantivy.Occur.Should, exact), (tantivy.Occur.Should, respelt_query)]
                 )
-            return self._widen_to_fuzzy(index, exact, lexical)
+            return self._widen_to_fuzzy(index, exact, lexical, fixes)
         except Exception:
             return None
 
-    def _widen_to_fuzzy(self, index: Any, exact: Any, lexical: str) -> Any:
+    def _widen_to_fuzzy(
+        self, index: Any, exact: Any, lexical: str, fixes: dict[str, tuple[str, ...]]
+    ) -> Any:
         """The fuzzy expansion too, where the exact query matches nothing.
 
         A typo the cascade recovers from put tagged files on screen while the
@@ -1200,6 +1202,7 @@ class ScopeController:
             lexical,
             auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
+            corrections=fixes,
         )
         if not clauses:
             return exact

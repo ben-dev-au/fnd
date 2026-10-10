@@ -183,6 +183,7 @@ its top level, like the others.
 | `:`            | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list.                                                                               |
 | `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                                                  |
 | `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                                                              |
+| `Shift+Esc` / `Ctrl+T` | Search the current query as typed, respelling no word; press again to respell. Shift+Esc needs the Kitty keyboard protocol (Kitty, Ghostty); Ctrl+T works everywhere. |
 | `h`            | Toggle search-term highlighting in the preview.                                                                                                                                    |
 | `w`            | Warm the focused file completely, so scrolling anywhere in it is instant. Asks first on a large file; press again on that file to stop.                                                          |
 | `q` / `Ctrl+C` | Quit. `Esc` backs out of any overlay or nested screen.                                                                                                                             |
@@ -552,6 +553,7 @@ markdown frontmatter filters. They compose freely.
 | `cross OR entropy`            | Either term.                                                                               |
 | `entropy NOT regression`      | Has `entropy`, excludes `regression`.                                                      |
 | `+rust -python`               | `+` require, `-` exclude (shorthand for `AND` / `NOT`).                                    |
+| `rust -(python OR java)`      | A sign applies to a whole group: excludes both.                                            |
 | `(loss OR cost) AND function` | Group with parentheses, to any depth.                                                      |
 
 ### Phrases
@@ -581,6 +583,7 @@ Find terms near each other, in any order. `{N}` and `NEAR/N` are equivalent:
   filter, so `{10} buffer overflow kind:pdf` slops only `buffer overflow`.
 - Can't cross a chunk boundary; if terms are far apart, drop the `{N}`.
 - `NEAR/N` takes exactly two words.
+- A word may carry `*` or `~N` (`{5} cryptography~ keys`).
 
 ### Fuzzy matching for typos and variants
 
@@ -589,13 +592,16 @@ Suffix `~1` or `~2` to allow that many edits per term. An adjacent transposition
 
 | You type         | Matches                               |
 | ---------------- | ------------------------------------- |
-| `mitochondira~1` | `mitochondria`, `mitochondrial`, etc. |
+| `mitochondira~1` | `mitochondria` (one swap).            |
 | `kubernates~2`   | `kubernetes` and near spellings.      |
 
 Works on a single term or alongside others (`powerhouse mitochondira~1`). Use
 sparingly on short terms: `cat~2` matches almost everything. A typed `~N` may
 change the first letter (`kryptography~1` finds `cryptography`); automatic
 fuzzy keeps it, and a plain misspelling is respelt instead.
+
+- A word no file holds is respelt, and the line under the query names it: "Also searched polymorphsim as polymorphism."
+- `Shift+Esc` or `Ctrl+T` searches as typed instead (`fnd search --as-typed`); a quoted word is never respelt.
 
 ### Field qualifiers
 
@@ -684,7 +690,7 @@ may use `_` as a digit separator, as in TOML (`50_000_000`). Inside a quoted
 string, `\'` is a literal quote and `\\` a literal backslash; a backslash
 before anything else stands for itself, so a path like `'C:\temp'` needs no
 escaping. Only notes can match (markdown and plain text); other kinds are left
-out.
+out. A rule on its own, with no search words, lists every note it admits.
 
 > **A missing field fails every comparison, including negative ones.** On a
 > note with no `tags:`, `['x' not in tags]` is *false*, so the note is dropped;

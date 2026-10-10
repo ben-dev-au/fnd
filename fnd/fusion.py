@@ -45,7 +45,7 @@ from fnd.query_errors import QuerySyntaxError
 from fnd.query_spans import has_phrase
 from fnd.render import keep_shown
 from fnd.synonyms import SynonymTable, compound_table, expand
-from fnd.typos import corrections, respelt
+from fnd.typos import corrections, rare_spellings, respelt
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -278,6 +278,11 @@ def _is_bag_of_words(query: str) -> bool:
 def query_corrections(searcher: Searcher, query: str) -> dict[str, tuple[str, ...]]:
     """Respellings for a plain-words query's unindexed words (see :mod:`fnd.typos`)."""
     return corrections(searcher, query.split()) if _is_bag_of_words(query) else {}
+
+
+def query_rare_spellings(searcher: Searcher, query: str) -> dict[str, tuple[str, ...]]:
+    """Respellings for a plain-words query's rare indexed words (see :mod:`fnd.typos`)."""
+    return rare_spellings(searcher, query.split()) if _is_bag_of_words(query) else {}
 
 
 def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> MultiInput:

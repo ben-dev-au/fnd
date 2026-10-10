@@ -45,6 +45,10 @@ def _found(searcher: Searcher, query: str) -> set[str]:
         ('"crypto* keeps"', {"crypto.md"}),
         ("{3}crypt*aphy keys", {"crypto.md"}),
         ("kryptography~1", {"crypto.md"}),
+        ('"cryptographic~ keeps"', {"crypto.md"}),
+        ("{3}kryptography~1 keys", {"crypto.md"}),
+        ("{2}cryptography~ hash", {"hash.md"}),
+        ("cryptographic~ NEAR/3 keys", {"crypto.md"}),
     ],
 )
 def test_a_pattern_finds_and_paints_the_written_word(

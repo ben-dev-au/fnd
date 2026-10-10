@@ -31,6 +31,7 @@ from itertools import pairwise
 
 from fnd import regex_terms
 from fnd.analysis import fold, index_token, word_token
+from fnd.query_ast import fuzzy_word, is_phrase_pattern
 from fnd.query_spans import literal_spans, map_outside
 from fnd.stopwords import STOPWORDS, is_all_stopwords
 from fnd.synonyms import SynonymTable, expand
@@ -70,17 +71,18 @@ _MODIFIER_RE = re.compile(r"(?:~\d*|\^[\d.]+)")
 # A proximity phrase in DSL-expanded form: ``"a b c"~N``. ``{N}``/``NEAR/N`` both
 # rewrite to this, so matching it captures every proximity group uniformly.
 _PROX_PHRASE = re.compile(r'"([^"]*)"~(\d+)')
+_QUOTED_FIELD_VALUE = re.compile(r"(?<![\w:])[A-Za-z_]\w*:(?:\"[^\"]*\"|'[^']*')")
 _HYPHENATED = re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b")
 
 
 def _proximity_members(phrase: str) -> tuple[list[str], list[str]]:
-    """``(members, words)`` for a ``"…"~N`` body: a glob survives whole, anything
-    else contributes its stem. Split on whitespace first — DOC_WORD_RE drops
-    ``*``/``?``, reducing ``respons*`` to a stem no document token carries."""
+    """``(members, words)`` for a ``"…"~N`` body: a pattern (glob or ``term~N``)
+    survives whole, anything else contributes its stem. Split on whitespace first:
+    DOC_WORD_RE drops ``*``/``?``/``~``, reducing ``respons*`` to a stem no token carries."""
     members: list[str] = []
     words: list[str] = []
     for raw in phrase.split():
-        if "*" in raw or "?" in raw:
+        if is_phrase_pattern(raw):
             members.append(raw.lower())
             words.append(raw.lower())
         else:
@@ -123,11 +125,17 @@ def glob_matches(
     glob: str, stem: str, word: str, phrase_globs: tuple[tuple[str, frozenset[str] | None], ...]
 ) -> bool:
     """Whether a token (its ``stem`` and word-field ``word``) matches ``glob`` as
-    search did: by stem where search resolved it in a phrase, else by word."""
+    search did: by stem where search resolved it in a phrase, else by word; a
+    ``term~N`` phrase word by the reach of a typed fuzzy term."""
     resolved = _resolved(phrase_globs)
     if glob in resolved:
         stems = resolved[glob]
         return _glob_pattern(glob).fullmatch(stem) is not None if stems is None else stem in stems
+    fuzzy = fuzzy_word(glob)
+    if fuzzy is not None:
+        base = index_token(fuzzy.term)
+        dist = fuzzy.distance if fuzzy.distance is not None else auto_fuzzy_distance(base)
+        return stem == base or fuzzy_reaches(stem, base, dist, front=True)
     return _glob_pattern(glob).fullmatch(word) is not None
 
 
@@ -157,13 +165,13 @@ def _split_shapes(query: str) -> str:
 
 
 def _phrase_word_lists(query: str) -> list[list[str]]:
-    """Raw word lists for each quoted phrase of two or more words; a wildcard
-    word stays one lowercased glob, as search keeps it."""
+    """Raw word lists for each quoted phrase of two or more words; a pattern word
+    (glob or ``term~N``) stays whole and lowercased, as search keeps it."""
     out: list[list[str]] = []
     for m in _QUOTED_PHRASE.finditer(query):
         words: list[str] = []
         for w in m.group(1).split():
-            if _HL_GLOB.search(w):
+            if is_phrase_pattern(w):
                 words.append(w.lower())
             else:
                 words.extend(DOC_WORD_RE.findall(w))
@@ -413,6 +421,8 @@ class MatchSpec:
         # Globs and regexes match folded index tokens, so fold their accents too.
         query = fold(query)
         expanded_query = map_outside(query, _expand_proximity_aliases, kinds={"regex"})
+        # A quoted field value (``title:"a b"``) filters; it is no body phrase.
+        expanded_query = _QUOTED_FIELD_VALUE.sub(" ", expanded_query)
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
         for pm in _PROX_PHRASE.finditer(expanded_query):
@@ -433,7 +443,7 @@ class MatchSpec:
         )
         quoted_word_lists = _phrase_word_lists(contiguous_src)
         phrases = tuple(
-            tuple(w if _HL_GLOB.search(w) else index_token(w) for w in words)
+            tuple(w if is_phrase_pattern(w) else index_token(w) for w in words)
             for words in quoted_word_lists
         )
         # Loose terms come from the EXPANDED query so ``{N}``/``NEAR/N`` aliases
@@ -639,29 +649,47 @@ class MatchSpec:
         )
 
     @property
-    def phrase_wildcards(self) -> frozenset[str]:
-        """The wildcard words of this spec's phrases and proximity groups."""
+    def phrase_patterns(self) -> frozenset[str]:
+        """The pattern words (globs and ``term~N``) of this spec's phrases and proximity groups."""
         members = [m for p in self.phrases for m in p]
         members += [m for group, _ in self.proximity_groups for m in group]
-        return frozenset(m for m in members if _HL_GLOB.search(m))
+        return frozenset(m for m in members if is_phrase_pattern(m))
 
     def with_phrase_globs(self, resolved: Mapping[str, frozenset[str] | None]) -> MatchSpec:
-        """This spec with its phrase and proximity wildcards matched as search resolved them."""
+        """This spec with its phrase and proximity patterns matched as search resolved them."""
         if not resolved:
             return self
         return replace(self, phrase_globs=tuple(sorted(resolved.items(), key=lambda kv: kv[0])))
 
-    def with_corrections(self, fixes: Mapping[str, tuple[str, ...]]) -> MatchSpec:
-        """This spec plus the typo pass's respellings; the first of each paints in
-        its typed word's colour, since the typed word itself is in no document."""
+    def with_corrections(
+        self, fixes: Mapping[str, tuple[str, ...]], *, typed_written: bool = False
+    ) -> MatchSpec:
+        """This spec plus the typo pass's respellings, each reaching as far as its typed
+        word does. The first paints in the typed word's colour when no file writes the
+        typed word; when one does (``typed_written``), in a colour of its own."""
         if not fixes:
             return self
         firsts = {index_token(word): index_token(options[0]) for word, options in fixes.items()}
+        reach = dict(self.fuzzy_per_stem)
+        respelt = tuple(
+            (index_token(o), reach[index_token(word)])
+            for word, options in fixes.items()
+            if reach.get(index_token(word))
+            for o in options
+        )
         return replace(
             self,
             exact_stems=self.exact_stems
             | {index_token(o) for options in fixes.values() for o in options},
-            order=tuple(
+            fuzzy_per_stem=self.fuzzy_per_stem + respelt,
+            order=self.order
+            + tuple(
+                ("term", firsts[key], dist)
+                for kind, key, dist in self.order
+                if kind == "term" and key in firsts
+            )
+            if typed_written
+            else tuple(
                 (kind, firsts.get(key, key) if kind == "term" else key, dist)
                 for kind, key, dist in self.order
             ),
@@ -744,9 +772,9 @@ def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
         n = len(plist)
         if n == 0:
             continue
-        if any(_HL_GLOB.search(p) for p in plist):
+        if any(is_phrase_pattern(p) for p in plist):
             words = [word_token(text[s:e]) for s, e in bounds]
-            globbed = [_HL_GLOB.search(p) is not None for p in plist]
+            globbed = [is_phrase_pattern(p) for p in plist]
             for i in range(len(stems) - n + 1):
                 if all(
                     glob_matches(p, stems[i + k], words[i + k], spec.phrase_globs)
@@ -787,7 +815,7 @@ def _group_matchers(
     that, ``{5}respons* respons* mobile`` would demand three distinct members
     from a group that only has two, and could never qualify."""
     distinct = tuple(dict.fromkeys(members))
-    literals = frozenset(m for m in distinct if "*" not in m and "?" not in m)
+    literals = frozenset(m for m in distinct if not is_phrase_pattern(m))
     globs = tuple((m, re.compile(glob_to_regex(m))) for m in distinct if m not in literals)
     return literals, globs
 
