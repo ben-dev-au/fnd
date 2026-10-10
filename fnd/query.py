@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from tantivy import Index, Query, Schema
 
-from fnd.analysis import fold, index_token, register
+from fnd.analysis import index_token, register
 from fnd.display_text import display_line
 from fnd.extract.base import Block
 from fnd.matching import DOC_WORD_RE, MatchSpec, prime, word_matches
@@ -680,7 +680,7 @@ class Searcher:
         from fnd.query_compile import compile_query
         from fnd.schema import build_schema
 
-        node = parse_query_ast(fold(text))
+        node = parse_query_ast(text)
         if node is None:
             return None
         with _engine_refusals():
@@ -764,7 +764,7 @@ class Searcher:
         # Building and running the query, not reading what it found back.
         with _engine_refusals():
             has_content = bool(content.strip())
-            node = parse_query_ast(fold(content)) if has_content else None
+            node = parse_query_ast(content) if has_content else None
             if has_content:
                 body_required = compile_query(
                     node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs

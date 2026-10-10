@@ -10,6 +10,7 @@ carries the human lexical so highlight/match code keeps the user's own words.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from fnd.extract._limits import LIMIT_QUERY_BOOLEAN_TOKENS, LIMIT_QUERY_BYTES
@@ -22,12 +23,28 @@ from fnd.text_canon import canonical
 _ASCII_QUOTES = str.maketrans(
     dict.fromkeys("\u201c\u201d\u201e\u201f", '"') | dict.fromkeys("\u2018\u2019\u201a\u201b", "'")
 )
+# Full-width forms (CJK input methods type ``＊（）：``) as their ASCII syntax, in
+# search text only: a frontmatter value keeps its ``：``. ``［］`` stay text unless
+# they open a range after ``:``, or a bracketed word would become a filter.
+_ASCII_SYNTAX = str.maketrans(
+    {0xFF01 + i: 0x21 + i for i in range(0x5E) if 0xFF01 + i not in (0xFF3B, 0xFF3D)}
+    | {0x3000: " "}
+)
+# A range may mix bounds (``[lo TO hi}``), and ``｛｝`` are already ASCII here.
+_FULL_WIDTH_RANGE = re.compile(r"(?<=:)([［{])([^［］{}\[\]]*)([］}])")
+_RANGE_ENDS = str.maketrans("［］", "[]")
 
 
 def query_text(raw: str) -> str:
     """``raw`` as the query language reads it: :func:`~fnd.text_canon.canonical`,
     with typographic quotes as their ASCII syntax."""
     return canonical(raw).translate(_ASCII_QUOTES)
+
+
+def search_text(lexical: str) -> str:
+    """``lexical`` (search text, no ``[…]`` filter) with full-width syntax as ASCII."""
+    text = lexical.translate(_ASCII_SYNTAX)
+    return _FULL_WIDTH_RANGE.sub(lambda m: m.group(0).translate(_RANGE_ENDS), text)
 
 
 def enforce_query_bounds(query: str) -> None:
@@ -93,6 +110,8 @@ class QueryPlan:
             lexical, metadata_filter = split_metadata_filter(raw)
         except ValueError as e:
             raise QuerySyntaxError(str(e), hint="check that [ ] brackets are balanced") from e
+        lexical = search_text(lexical)
+        _refuse_unclosed_quote(lexical)
         # Validate proximity against the expanded form (well-formed {N} a b is
         # already "a b"~N, so a surviving brace is a real mistake).
         check_proximity(preprocess(lexical))
