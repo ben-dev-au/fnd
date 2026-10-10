@@ -298,8 +298,8 @@ class TestSourceRowsCanBeToldApart:
         segment that separates."""
         from fnd.tui.menu import _source_labels
 
-        assert _source_labels(["/x/uni/2026/notes", "/x/work/2026/notes"]) == _native(
-            "uni/2026/notes", "work/2026/notes"
+        assert _source_labels(["/x/home/2026/notes", "/x/work/2026/notes"]) == _native(
+            "home/2026/notes", "work/2026/notes"
         )
 
     def test_a_lone_source_stays_short(self) -> None:

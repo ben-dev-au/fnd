@@ -73,10 +73,12 @@ def test_rebuilding_one_collection_keeps_the_other_and_refreshes_content(
     build_index(roots=[vault], index_dir=tmp_index_dir, collection="Obsidian")
 
     note.write_text("# Routing\n\n```csharp\nvar x = 1;\n```\n", encoding="utf-8")
-    build_index(roots=[vault], index_dir=tmp_index_dir, collection="RUST")
+    build_index(roots=[vault], index_dir=tmp_index_dir, collection="Learning")
 
     docs = _docs_for(tmp_index_dir, _pid(note))
-    assert _collections(docs) == {"Obsidian", "RUST"}, "the rebuild dropped the other collection"
+    assert _collections(docs) == {"Obsidian", "Learning"}, (
+        "the rebuild dropped the other collection"
+    )
     joined = "\n".join(
         bytes(doc.get_first("body_md") or b"").decode("utf-8", "replace") for doc in docs
     )

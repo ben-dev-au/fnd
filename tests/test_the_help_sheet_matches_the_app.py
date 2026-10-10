@@ -81,7 +81,7 @@ async def test_tab_does_nothing_until_there_is_a_sample(
         await pilot.pause()
         with_no_rule = type(app.focused).__name__
 
-        form._fields["filters"]["frontmatter"] = "Course == 'X'"
+        form._fields["filters"]["frontmatter"] = "Project == 'X'"
         form._populate_fields()
         for _ in range(10):
             await pilot.pause()

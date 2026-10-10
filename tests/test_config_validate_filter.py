@@ -26,7 +26,7 @@ def test_validate_passes_for_valid_filter(monkeypatch: pytest.MonkeyPatch, tmp_p
         """
         [[collections.x.sources]]
         path = "~/x"
-        frontmatter_filter = "Course == 'DevOps'"
+        frontmatter_filter = "Project == 'Website'"
     """,
     )
     result = runner.invoke(app, ["config", "validate"])
@@ -43,7 +43,7 @@ def test_validate_reports_filter_syntax_error(
         """
         [[collections.x.sources]]
         path = "~/x"
-        frontmatter_filter = "Course =="
+        frontmatter_filter = "Project =="
     """,
     )
     result = runner.invoke(app, ["config", "validate"])

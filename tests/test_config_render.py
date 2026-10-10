@@ -64,9 +64,7 @@ def _sample() -> conf.Config:
                     )
                 ]
             ),
-            "Compiler Theory Books": conf.CollectionConfig(
-                sources=[conf.SourceConfig(path=Path("~/Books"))]
-            ),
+            "Book Club": conf.CollectionConfig(sources=[conf.SourceConfig(path=Path("~/Books"))]),
         },
     )
 
@@ -98,14 +96,14 @@ def _maximal() -> conf.Config:
         "created_before": dt.date(2030, 1, 1),
         "modified_after": dt.date(2021, 1, 1),
         "modified_before": dt.date(2031, 1, 1),
-        "frontmatter": "Course == 'X'",
+        "frontmatter": "Project == 'X'",
         "expression": "file.size > 1",
     }
     return conf.Config(
         defaults=conf.Defaults(
             collection="notes",
             tag_sources=["frontmatter"],
-            tag_frontmatter_keys=["Course"],
+            tag_frontmatter_keys=["Project"],
             result_limit=11,
             preview_chunks=6,
             debounce_ms=201,
@@ -150,7 +148,7 @@ def _maximal() -> conf.Config:
                 follow_symlinks=True,
                 ranking_profile="tuned",
             ),
-            "Compiler Theory Books": conf.CollectionConfig(sources=[]),
+            "Book Club": conf.CollectionConfig(sources=[]),
         },
         ranking={
             "tuned": conf.RankingProfileConfig(
@@ -212,8 +210,8 @@ class TestTheWholeSurfaceRoundTrips:
 
     def test_an_empty_collection_is_not_lost(self) -> None:
         back = _reload(render_config(_maximal()))
-        assert "Compiler Theory Books" in back.collections
-        assert back.collections["Compiler Theory Books"].sources == []
+        assert "Book Club" in back.collections
+        assert back.collections["Book Club"].sources == []
 
 
 class TestDocumentationCannotDrift:
@@ -338,7 +336,7 @@ class TestPortability:
         assert tomllib.loads(f"p = {path_value(outside)}")["p"] == str(outside)
 
     def test_a_collection_name_needing_quotes_gets_them(self) -> None:
-        assert key("Compiler Theory Books") == '"Compiler Theory Books"'
+        assert key("Book Club") == '"Book Club"'
         assert key("notes") == "notes"
         tomllib.loads(render_config(_sample()))  # would raise if unquoted
 
@@ -567,7 +565,7 @@ class TestMigration:
     def test_ensure_current_rewrites_a_legacy_file_and_keeps_a_backup(self, tmp_path: Path) -> None:
         path = tmp_path / "config.toml"
         path.write_text(
-            '[[collections.n.sources]]\npath = "~/Notes"\nfrontmatter_filter = "Course == \'X\'"\n',
+            '[[collections.n.sources]]\npath = "~/Notes"\nfrontmatter_filter = "Project == \'X\'"\n',
             encoding="utf-8",
         )
         applied = conf.ensure_current(path)
@@ -583,13 +581,13 @@ class TestMigration:
         transform that moves it the rule is silently deleted on first write."""
         path = tmp_path / "config.toml"
         path.write_text(
-            '[[collections.n.sources]]\npath = "~/Notes"\nfrontmatter_filter = "Course == \'X\'"\n',
+            '[[collections.n.sources]]\npath = "~/Notes"\nfrontmatter_filter = "Project == \'X\'"\n',
             encoding="utf-8",
         )
         conf.ensure_current(path)
         source = conf.load(path).collections["n"].sources[0]
         assert source.filters is not None
-        assert source.filters.frontmatter == "Course == 'X'"
+        assert source.filters.frontmatter == "Project == 'X'"
 
     def test_a_deprecated_field_still_set_is_written_not_dropped(self) -> None:
         """Fail-safe: a missing migration must not delete a user's rule."""
@@ -597,7 +595,7 @@ class TestMigration:
             collections={
                 "n": conf.CollectionConfig(
                     sources=[
-                        conf.SourceConfig(path=Path("~/N"), frontmatter_filter="Course == 'X'")
+                        conf.SourceConfig(path=Path("~/N"), frontmatter_filter="Project == 'X'")
                     ]
                 )
             }

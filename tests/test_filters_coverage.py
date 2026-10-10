@@ -35,7 +35,7 @@ VALUES: dict[str, tuple[Any, Any]] = {
     "created_before": (dt.date(2030, 1, 1), dt.date(2031, 1, 1)),
     "modified_after": (dt.date(2020, 6, 1), dt.date(2021, 6, 1)),
     "modified_before": (dt.date(2030, 6, 1), dt.date(2031, 6, 1)),
-    "frontmatter": ("Course == 'A'", "Course == 'B'"),
+    "frontmatter": ("Project == 'A'", "Project == 'B'"),
     "expression": ("file.size > 1", "file.size > 2"),
     "excludes": (["a/**"], ["b/**"]),
 }
@@ -111,21 +111,25 @@ def _corpus(root: Path) -> None:
     # Comfortably above min_size and below max_size, so neither bound removes
     # the file every case relies on surviving.
     body = "body here. " * 30
-    (root / "keep.md").write_text(f"---\nCourse: A\ntags: [keep]\n---\n{body}\n", encoding="utf-8")
+    (root / "keep.md").write_text(f"---\nProject: A\ntags: [keep]\n---\n{body}\n", encoding="utf-8")
     (root / "drop.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 400)
-    (root / "tiny.md").write_text("---\nCourse: A\ntags: [keep]\n---\n", encoding="utf-8")
+    (root / "tiny.md").write_text("---\nProject: A\ntags: [keep]\n---\n", encoding="utf-8")
     (root / "huge.md").write_text(
-        "---\nCourse: A\ntags: [keep]\n---\n" + "y" * 5000, encoding="utf-8"
+        "---\nProject: A\ntags: [keep]\n---\n" + "y" * 5000, encoding="utf-8"
     )
     (root / "other.md").write_text(
-        "---\nCourse: B\ntags: [nope]\n---\nbody here\n", encoding="utf-8"
+        "---\nProject: B\ntags: [nope]\n---\nbody here\n", encoding="utf-8"
     )
     (root / ".gitignore").write_text("ignored.md\n", encoding="utf-8")
     (root / ".fndignore").write_text("fndignored.md\n", encoding="utf-8")
     for name in ("ignored.md", "fndignored.md"):
-        (root / name).write_text("---\nCourse: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8")
+        (root / name).write_text(
+            "---\nProject: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8"
+        )
     old = dt.datetime(2015, 1, 1).timestamp()
-    (root / "old.md").write_text("---\nCourse: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8")
+    (root / "old.md").write_text(
+        "---\nProject: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8"
+    )
     os.utime(root / "old.md", (old, old))
 
 
@@ -143,7 +147,7 @@ REMOVES: dict[str, tuple[Any, str | None]] = {
     "modified_before": (dt.date(2100, 1, 1), None),
     "created_after": (dt.date(1990, 1, 1), None),
     "created_before": (dt.date(2100, 1, 1), None),
-    "frontmatter": ("Course == 'A'", "other.md"),
+    "frontmatter": ("Project == 'A'", "other.md"),
     "expression": ("file.name != 'other.md'", "other.md"),
     "excludes": (["**/other.md"], "other.md"),
 }
@@ -308,7 +312,7 @@ class TestDateFieldsFilter:
     ) -> None:
         _corpus(tmp_path)
         (tmp_path / "future.md").write_text(
-            "---\nCourse: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8"
+            "---\nProject: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8"
         )
         self._stub(monkeypatch)
         value, removed = DATE_REMOVES[field]
@@ -325,7 +329,7 @@ class TestDateFieldsFilter:
     ) -> None:
         _corpus(tmp_path)
         (tmp_path / "future.md").write_text(
-            "---\nCourse: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8"
+            "---\nProject: A\ntags: [keep]\n---\nbody here\n", encoding="utf-8"
         )
         self._stub(monkeypatch)
         value, removed = DATE_REMOVES[field]
@@ -490,7 +494,7 @@ class TestATypoCannotOpenTheIndex:
         [
             "file.size <= 1000",
             "'x' in file.tags.all",
-            "Course == 'DevOps' AND status == 'done'",
+            "Project == 'Website' AND status == 'done'",
         ],
     )
     def test_real_facts_and_frontmatter_keys_still_parse(self, text: str) -> None:

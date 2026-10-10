@@ -91,7 +91,7 @@ class TestIgnoreFiles:
 class TestRepositoryBoundary:
     """An outer .gitignore stops at a nested repository root, as git's does.
 
-    Found against the real corpus: cloned assignments sit inside a course
+    Found against the real corpus: cloned repos sit inside a project
     folder whose .gitignore names them, and git keeps them because the nested
     repo is its own scope.
     """
@@ -234,16 +234,16 @@ class TestStructuredDimensions:
 class TestFrontmatterScope:
     def test_legacy_filter_still_only_touches_notes(self, tmp_path: Path) -> None:
         """Non-note kinds must pass a frontmatter predicate untouched."""
-        _write(tmp_path, "match.md", "---\nCourse: DevOps\n---\n")
-        _write(tmp_path, "other.md", "---\nCourse: Other\n---\n")
+        _write(tmp_path, "match.md", "---\nProject: Website\n---\n")
+        _write(tmp_path, "other.md", "---\nProject: Other\n---\n")
         _write(tmp_path, "paper.pdf", "%PDF-1.4\n")
-        names = _names(tmp_path, frontmatter_filter="Course == 'DevOps'")
+        names = _names(tmp_path, frontmatter_filter="Project == 'Website'")
         assert names == {"match.md", "paper.pdf"}
 
     def test_filters_frontmatter_field_behaves_the_same(self, tmp_path: Path) -> None:
-        _write(tmp_path, "match.md", "---\nCourse: DevOps\n---\n")
+        _write(tmp_path, "match.md", "---\nProject: Website\n---\n")
         _write(tmp_path, "paper.pdf", "%PDF-1.4\n")
-        spec = DefaultFilters(frontmatter="Course == 'DevOps'")
+        spec = DefaultFilters(frontmatter="Project == 'Website'")
         assert _names(tmp_path, defaults=spec) == {"match.md", "paper.pdf"}
 
 
@@ -582,14 +582,14 @@ class TestAFrontmatterOnlyExpression:
 
     @staticmethod
     def _corpus(root: Path) -> None:
-        _write(root, "a.md", "---\nCourse: A\n---\nbody\n")
-        _write(root, "b.md", "---\nCourse: B\n---\nbody\n")
+        _write(root, "a.md", "---\nProject: A\n---\nbody\n")
+        _write(root, "b.md", "---\nProject: B\n---\nbody\n")
         _write(root, "c.txt", "plain\n")
 
     def test_it_filters_exactly_as_the_frontmatter_field_would(self, tmp_path: Path) -> None:
         self._corpus(tmp_path)
-        as_expression = _names(tmp_path, defaults=DefaultFilters(expression="Course == 'A'"))
-        as_frontmatter = _names(tmp_path, defaults=DefaultFilters(frontmatter="Course == 'A'"))
+        as_expression = _names(tmp_path, defaults=DefaultFilters(expression="Project == 'A'"))
+        as_frontmatter = _names(tmp_path, defaults=DefaultFilters(frontmatter="Project == 'A'"))
         assert as_expression == as_frontmatter
         assert "b.md" not in as_expression, "the rule filtered nothing"
 
@@ -601,7 +601,7 @@ class TestAFrontmatterOnlyExpression:
         """
         self._corpus(tmp_path)
         _write(tmp_path, "d.pdf", "%PDF-1.4")
-        kept = _names(tmp_path, defaults=DefaultFilters(expression="Course == 'A'"))
+        kept = _names(tmp_path, defaults=DefaultFilters(expression="Project == 'A'"))
         assert "d.pdf" in kept, kept
         assert "c.txt" not in kept, "a note with no block is judged and fails"
 

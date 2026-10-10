@@ -80,17 +80,17 @@ class TestRoundTripBehaviour:
         """The rule is skipped for a file with no frontmatter block, so the
         scope needs no spelling out. Writing it in produced a clause reading
         as "exclude Markdown" with no counterpart in any other tool."""
-        spec = FilterSpec(frontmatter="Course == 'DevOps'")
-        assert render(spec) == "Course == 'DevOps'"
-        assert parse(render(spec)).frontmatter == "Course == 'DevOps'"
+        spec = FilterSpec(frontmatter="Project == 'Website'")
+        assert render(spec) == "Project == 'Website'"
+        assert parse(render(spec)).frontmatter == "Project == 'Website'"
 
     def test_the_earlier_spelling_of_the_scope_still_parses(self) -> None:
         """A config holding either older form must keep working."""
         for old in (
-            "NOT (file.kind in ['md']) OR (Course == 'DevOps')",
-            "(Course == 'DevOps') OR file.kind not in ['md']",
+            "NOT (file.kind in ['md']) OR (Project == 'Website')",
+            "(Project == 'Website') OR file.kind not in ['md']",
         ):
-            assert parse(old).frontmatter == "Course == 'DevOps'", old
+            assert parse(old).frontmatter == "Project == 'Website'", old
 
     def test_an_unrecognised_clause_is_kept(self) -> None:
         spec = parse("file.name ~~ 'draft-*'")
@@ -222,10 +222,10 @@ class TestAConjunctiveRuleSurvives:
     @pytest.mark.parametrize(
         "rule",
         [
-            "Course == 'A'",
-            "Course == 'A' AND NOT ('private' in tags)",
-            "Course == 'A' AND Status == 'done' AND NOT ('private' in tags)",
-            "(Course == 'A' OR Course == 'B') AND NOT ('private' in tags)",
+            "Project == 'A'",
+            "Project == 'A' AND NOT ('private' in tags)",
+            "Project == 'A' AND Status == 'done' AND NOT ('private' in tags)",
+            "(Project == 'A' OR Project == 'B') AND NOT ('private' in tags)",
             "NOT ('private' in tags)",
         ],
     )

@@ -52,8 +52,8 @@ def test_the_message_names_the_field_and_the_alternatives() -> None:
         "file.path == 'a/b.md'",
         "'x' in file.tags.all",
         "'x' in file.tags.os",
-        "Course == 'Unstructured Data'",
-        "file.size <= 10 AND Course == 'x'",
+        "Project == 'Newsletter'",
+        "file.size <= 10 AND Project == 'x'",
     ],
 )
 def test_every_real_field_still_parses(text: str) -> None:

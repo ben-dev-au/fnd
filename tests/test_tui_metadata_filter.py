@@ -20,8 +20,8 @@ def _touch(p: Path, body: str) -> None:
 @pytest.fixture
 def tui_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
     notes = tmp_path / "notes"
-    _touch(notes / "in.md", "---\nCourse: DevOps\n---\n# A\nblue penguin\n")
-    _touch(notes / "out.md", "---\nCourse: Other\n---\n# B\nblue penguin\n")
+    _touch(notes / "in.md", "---\nProject: Website\n---\n# A\nblue penguin\n")
+    _touch(notes / "out.md", "---\nProject: Other\n---\n# B\nblue penguin\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="notes", index_dir=tmp_index_dir)
     return tmp_index_dir
@@ -33,7 +33,7 @@ async def test_tui_inline_filter_narrows_results(tui_corpus: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         inp = app.query_one("#query_bar", Input)
-        inp.value = "[Course == 'DevOps'] blue penguin"
+        inp.value = "[Project == 'Website'] blue penguin"
         await pilot.press("enter")
         await pilot.pause()
         paths = {Path(g.path).name for g in app._search.groups}  # type: ignore[attr-defined]
@@ -47,7 +47,7 @@ async def test_tui_invalid_filter_does_not_run_search(tui_corpus: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         inp = app.query_one("#query_bar", Input)
-        inp.value = "[Course ==] foo"
+        inp.value = "[Project ==] foo"
         await pilot.press("enter")
         await pilot.pause()
         # Filter has invalid DSL syntax — should clear groups, not crash.
@@ -60,7 +60,7 @@ async def test_tui_unclosed_bracket_does_not_run_search(tui_corpus: Path) -> Non
     async with app.run_test() as pilot:
         await pilot.pause()
         inp = app.query_one("#query_bar", Input)
-        inp.value = "[Course == 'DevOps' foo"  # unclosed [
+        inp.value = "[Project == 'Website' foo"  # unclosed [
         await pilot.press("enter")
         await pilot.pause()
         # ValueError from split_metadata_filter — should not run search,

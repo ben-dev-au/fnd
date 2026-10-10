@@ -181,7 +181,7 @@ def provider_label(path: Path) -> str:
 # A fetch blocks the worker thread that asked for it, so no progress event
 # can be emitted while it runs. The UI's periodic tick reads this snapshot
 # instead, which is what turns "the app is frozen" into "waiting 9s for
-# iCloud Drive to send Week 7 Notes.md".
+# iCloud Drive to send Team Meeting.md".
 
 
 class CloudFetchError(TimeoutError):

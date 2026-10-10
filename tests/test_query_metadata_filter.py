@@ -21,16 +21,16 @@ def _touch(p: Path, body: str) -> None:
 def filter_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
     notes = tmp_path / "notes"
     _touch(
-        notes / "devops.md",
-        "---\nCourse: DevOps\nstatus: active\n---\n# A\npenguin sandwich here\n",
+        notes / "website.md",
+        "---\nProject: Website\nstatus: active\n---\n# A\npenguin sandwich here\n",
     )
     _touch(
-        notes / "algos.md",
-        "---\nCourse: Algorithms\nstatus: active\n---\n# B\npenguin sandwich also\n",
+        notes / "budget.md",
+        "---\nProject: Budget\nstatus: active\n---\n# B\npenguin sandwich also\n",
     )
     _touch(
         notes / "archived.md",
-        "---\nCourse: DevOps\nstatus: archived\n---\n# C\npenguin sandwich third\n",
+        "---\nProject: Website\nstatus: archived\n---\n# C\npenguin sandwich third\n",
     )
     _touch(notes / "untagged.md", "# D\npenguin sandwich plain\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
@@ -44,11 +44,11 @@ def test_meta_filter_narrows_to_matching_md(filter_corpus: Path) -> None:
         "penguin sandwich",
         limit=10,
         collection="notes",
-        metadata_filter="Course == 'DevOps' AND status != 'archived'",
+        metadata_filter="Project == 'Website' AND status != 'archived'",
     )
     paths = {Path(h.path).name for h in hits}
-    assert "devops.md" in paths
-    assert "algos.md" not in paths
+    assert "website.md" in paths
+    assert "budget.md" not in paths
     assert "archived.md" not in paths
     assert "untagged.md" not in paths  # strict null
 
@@ -65,7 +65,7 @@ def test_meta_filter_empty_string_is_invalid(filter_corpus: Path) -> None:
 def test_meta_filter_invalid_raises(filter_corpus: Path) -> None:
     s = Searcher(index_dir=filter_corpus)
     with pytest.raises(FilterError):
-        s.search("penguin", limit=5, metadata_filter="Course ==")
+        s.search("penguin", limit=5, metadata_filter="Project ==")
 
 
 def test_meta_filter_passes_through_when_none(filter_corpus: Path) -> None:
@@ -85,12 +85,12 @@ def test_meta_filter_grouped_dedup_still_one_hit_per_file(
         "penguin sandwich",
         limit=10,
         collection="notes",
-        metadata_filter="Course == 'DevOps'",
+        metadata_filter="Project == 'Website'",
     )
     paths = {Path(g.path).name for g in groups}
-    # devops.md and archived.md both match Course == 'DevOps'; status filter
+    # website.md and archived.md both match Project == 'Website'; status filter
     # not applied here, so both surface.
-    assert paths == {"devops.md", "archived.md"}
+    assert paths == {"website.md", "archived.md"}
 
 
 def test_meta_filter_oversample_still_returns_limit_when_filter_strict(
@@ -99,12 +99,12 @@ def test_meta_filter_oversample_still_returns_limit_when_filter_strict(
     """Build many md files, most failing the filter. The post-filter must
     oversample-and-retry until ``limit`` survivors emerge."""
     notes = tmp_path / "notes"
-    # 50 notes, but only every 10th matches Course == 'DevOps'.
+    # 50 notes, but only every 10th matches Project == 'Website'.
     for i in range(50):
-        course = "DevOps" if i % 10 == 0 else "Other"
+        project = "Website" if i % 10 == 0 else "Other"
         _touch(
             notes / f"n{i:02}.md",
-            f"---\nCourse: {course}\n---\n# {i}\npenguin sandwich {i}\n",
+            f"---\nProject: {project}\n---\n# {i}\npenguin sandwich {i}\n",
         )
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="notes", index_dir=tmp_index_dir)
@@ -114,7 +114,7 @@ def test_meta_filter_oversample_still_returns_limit_when_filter_strict(
         "penguin sandwich",
         limit=5,
         collection="notes",
-        metadata_filter="Course == 'DevOps'",
+        metadata_filter="Project == 'Website'",
     )
     # 5 of the 50 match the filter; we asked for limit=5 — must get all 5.
     assert len(hits) == 5

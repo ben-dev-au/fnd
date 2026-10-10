@@ -15,13 +15,13 @@ def test_defaults_to_empty() -> None:
 
 
 def test_accepts_a_list_of_keys() -> None:
-    d = Defaults(tag_frontmatter_keys=["Course", "Notes_Type"])
-    assert d.tag_frontmatter_keys == ["Course", "Notes_Type"]
+    d = Defaults(tag_frontmatter_keys=["Project", "Type"])
+    assert d.tag_frontmatter_keys == ["Project", "Type"]
 
 
 def test_rejects_a_non_list() -> None:
     with pytest.raises(ValidationError):
-        Defaults(tag_frontmatter_keys="Course")  # type: ignore[arg-type]
+        Defaults(tag_frontmatter_keys="Project")  # type: ignore[arg-type]
 
 
 def test_round_trips_through_write_setting(tmp_path: Path) -> None:
@@ -30,15 +30,15 @@ def test_round_trips_through_write_setting(tmp_path: Path) -> None:
     updated: Config = write_setting(
         config_path=cfg_path,
         dotted_path="defaults.tag_frontmatter_keys",
-        value=["Course", "Topic"],
+        value=["Project", "Topic"],
     )
-    assert updated.defaults.tag_frontmatter_keys == ["Course", "Topic"]
+    assert updated.defaults.tag_frontmatter_keys == ["Project", "Topic"]
 
 
 def test_settings_row_parses_comma_text() -> None:
     from fnd.tui.menu import _coerce_str_list
 
-    assert _coerce_str_list("Course, Notes_Type ,Topic") == ["Course", "Notes_Type", "Topic"]
+    assert _coerce_str_list("Project, Type ,Topic") == ["Project", "Type", "Topic"]
     assert _coerce_str_list("") == []
     assert _coerce_str_list("  ,  ") == []
 
@@ -51,13 +51,13 @@ def test_custom_keys_reach_the_index(tmp_path: Path) -> None:
 
     root = tmp_path / "corpus"
     root.mkdir()
-    (root / "wk1.md").write_text(
-        '---\ntags: []\nCourse: "[[Data Structures with C++]]"\n'
-        "Notes_Type: [Study Notes]\n---\n\n# W\n\nsaffron\n",
+    (root / "plans.md").write_text(
+        '---\ntags: []\nProject: "[[Home Renovation Plans]]"\n'
+        "Type: [Book Notes]\n---\n\n# W\n\nsaffron\n",
         encoding="utf-8",
     )
     (root / "other.md").write_text(
-        "---\nCourse: Algebra\n---\n\n# O\n\nsaffron\n", encoding="utf-8"
+        "---\nProject: Kitchen\n---\n\n# O\n\nsaffron\n", encoding="utf-8"
     )
 
     index_dir = tmp_path / "idx"
@@ -65,7 +65,7 @@ def test_custom_keys_reach_the_index(tmp_path: Path) -> None:
         roots=[root],
         index_dir=index_dir,
         collection="default",
-        tag_frontmatter_keys=["Course", "Notes_Type"],
+        tag_frontmatter_keys=["Project", "Type"],
     )
     searcher = Searcher(index_dir=index_dir)
 
@@ -76,10 +76,10 @@ def test_custom_keys_reach_the_index(tmp_path: Path) -> None:
         return {Path(h.path).name for h in hits}
 
     # The wikilink brackets are stripped, and the value is namespaced.
-    assert names("course/data structures with c++") == {"wk1.md"}
-    assert names("notes_type/study notes") == {"wk1.md"}
+    assert names("project/home renovation plans") == {"plans.md"}
+    assert names("type/book notes") == {"plans.md"}
     # The namespace itself selects everything under it.
-    assert names("course") == {"wk1.md", "other.md"}
+    assert names("project") == {"plans.md", "other.md"}
     # Empty tags: contributes nothing.
     assert names("") == set()
 
@@ -92,11 +92,11 @@ def test_custom_keys_absent_by_default(tmp_path: Path) -> None:
 
     root = tmp_path / "corpus"
     root.mkdir()
-    (root / "a.md").write_text("---\nCourse: Algebra\n---\n\n# A\n\nsaffron\n", encoding="utf-8")
+    (root / "a.md").write_text("---\nProject: Kitchen\n---\n\n# A\n\nsaffron\n", encoding="utf-8")
     index_dir = tmp_path / "idx"
     build_index(roots=[root], index_dir=index_dir, collection="default")
     searcher = Searcher(index_dir=index_dir)
     hits = searcher.search(
-        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"course"})})
+        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"project"})})
     )
     assert hits == []

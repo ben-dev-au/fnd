@@ -130,7 +130,7 @@ def _collect(values: object, out: set[str]) -> None:
                 out |= expand_ancestors(tag)
 
 
-# Obsidian writes link-valued frontmatter as ``Course: "[[Name]]"``; the
+# Obsidian writes link-valued frontmatter as ``Project: "[[Name]]"``; the
 # brackets are link syntax, not part of the value.
 _WIKILINK_RE = re.compile(r"^\[\[(.*?)\]\]$")
 
@@ -145,9 +145,9 @@ class FrontmatterTagProvider:
 
     Reads ``tags:`` / ``tag:`` always. ``extra_keys`` opts additional
     frontmatter keys in as tag sources — many vaults keep their real taxonomy
-    in fields like ``Course:`` or ``Notes_Type:`` rather than ``tags:``.
+    in fields like ``Project:`` or ``Type:`` rather than ``tags:``.
 
-    Extra-key values are namespaced under the key (``course/algebra``) so they
+    Extra-key values are namespaced under the key (``project/kitchen``) so they
     group under one parent in the pane, stay filterable as a whole via the
     parent, and cannot collide with a same-named plain tag.
     """
@@ -179,7 +179,7 @@ class FrontmatterTagProvider:
                 if namespace not in wanted:
                     continue
                 # Strip Obsidian wikilink brackets BEFORE _collect splits on
-                # "/", or a subfolder link like "[[Notes/Algebra]]" is torn
+                # "/", or a subfolder link like "[[Notes/Kitchen]]" is torn
                 # into a malformed "[[notes" fragment plus the real path.
                 raw_items = raw_value if isinstance(raw_value, list) else [raw_value]
                 stripped = [_strip_wikilink(v) if isinstance(v, str) else v for v in raw_items]

@@ -124,7 +124,7 @@ _DOCS: list[tuple[str, _Doc]] = [
     ("kind-pdf", {"body": "diffusion model overview", "kind": "pdf"}),
     ("kind-docx", {"body": "diffusion model overview", "kind": "docx"}),
     ("kind-md", {"body": "diffusion model overview", "kind": "md"}),
-    ("col-security", {"body": "attack on the cellar", "collection": "security"}),
+    ("col-security", {"body": "attack on the home", "collection": "security"}),
     ("col-papers", {"body": "attack surface analysis", "collection": "papers"}),
     ("pg-5", {"body": "content located on a page", "kind": "pdf", "page": 5}),
     ("pg-15", {"body": "content located mid document", "kind": "pdf", "page": 15}),
@@ -164,9 +164,9 @@ _DOCS: list[tuple[str, _Doc]] = [
             "body": "mitm replay attack notes",
             "kind": "md",
             "fm": {
-                "Course": "Distributed Systems",
+                "Project": "Mobile App",
                 "Year": 2024,
-                "Notes_Type": "Lecture",
+                "Type": "Meeting",
                 "Tags": ["draft-1"],
             },
         },
@@ -176,7 +176,7 @@ _DOCS: list[tuple[str, _Doc]] = [
         {
             "body": "gradient descent corpustoken",
             "kind": "md",
-            "fm": {"Course": "ML", "Year": 2023, "Notes_Type": "Tutorial", "Tags": ["final"]},
+            "fm": {"Project": "Garden", "Year": 2023, "Type": "Idea", "Tags": ["final"]},
         },
     ),
 ]

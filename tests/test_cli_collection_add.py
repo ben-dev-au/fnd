@@ -30,10 +30,10 @@ def test_collection_add_minimal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     runner, cfg_path = _runner_with_config(monkeypatch, tmp_path)
     notes = tmp_path / "notes"
     notes.mkdir()
-    result = runner.invoke(app, ["collection", "add", "coursework", "--source", str(notes)])
+    result = runner.invoke(app, ["collection", "add", "learning", "--source", str(notes)])
     assert result.exit_code == 0, result.output
     cfg = load(cfg_path)
-    cw = cfg.collection("coursework")
+    cw = cfg.collection("learning")
     assert len(cw.sources) == 1
     assert cw.sources[0].path == notes
 
@@ -49,7 +49,7 @@ def test_collection_add_with_filter_and_globs(
         [
             "collection",
             "add",
-            "coursework",
+            "learning",
             "--source",
             str(notes),
             "--include",
@@ -57,16 +57,16 @@ def test_collection_add_with_filter_and_globs(
             "--exclude",
             "**/.trash/**",
             "--filter",
-            "Course == 'DevOps'",
+            "Project == 'Website'",
         ],
     )
     assert result.exit_code == 0, result.output
-    s = load(cfg_path).collection("coursework").sources[0]
+    s = load(cfg_path).collection("learning").sources[0]
     assert s.includes == ["**/*.md"]
     assert s.excludes == ["**/.trash/**"]
     # Asserted where the rule takes effect, not where it is stored: a new
     # write uses `filters.frontmatter`, the deprecated key still loads.
-    assert s.effective_filters.frontmatter == "Course == 'DevOps'"
+    assert s.effective_filters.frontmatter == "Project == 'Website'"
 
 
 def test_collection_add_invalid_filter_refuses(
@@ -80,17 +80,17 @@ def test_collection_add_invalid_filter_refuses(
         [
             "collection",
             "add",
-            "coursework",
+            "learning",
             "--source",
             str(notes),
             "--filter",
-            "Course ==",
+            "Project ==",
         ],
     )
     assert result.exit_code != 0
     assert "col" in result.output.lower()
     # Config file unchanged.
-    assert "coursework" not in cfg_path.read_text(encoding="utf-8")
+    assert "learning" not in cfg_path.read_text(encoding="utf-8")
 
 
 def test_collection_add_appends_to_existing_collection(
@@ -98,7 +98,7 @@ def test_collection_add_appends_to_existing_collection(
 ) -> None:
     """Adding `--source` to an existing collection appends, doesn't replace."""
     initial = """
-        [[collections.coursework.sources]]
+        [[collections.learning.sources]]
         path = "/tmp/notes"
         includes = ["**/*.md"]
     """
@@ -107,10 +107,10 @@ def test_collection_add_appends_to_existing_collection(
     pdfs.mkdir()
     result = runner.invoke(
         app,
-        ["collection", "add", "coursework", "--source", str(pdfs), "--include", "**/*.pdf"],
+        ["collection", "add", "learning", "--source", str(pdfs), "--include", "**/*.pdf"],
     )
     assert result.exit_code == 0, result.output
-    cw = load(cfg_path).collection("coursework")
+    cw = load(cfg_path).collection("learning")
     assert len(cw.sources) == 2
     # ``pdf`` has one suffix, so this glob is the whole kind and folds.
     assert cw.sources[1].filters is not None
@@ -127,16 +127,16 @@ def test_collection_add_keeps_the_notes_block(
         # I love this collection.
         # <<< notes
         [defaults]
-        collection = "coursework"
+        collection = "learning"
     """
     runner, cfg_path = _runner_with_config(monkeypatch, tmp_path, initial)
     notes = tmp_path / "notes"
     notes.mkdir()
-    result = runner.invoke(app, ["collection", "add", "coursework", "--source", str(notes)])
+    result = runner.invoke(app, ["collection", "add", "learning", "--source", str(notes)])
     assert result.exit_code == 0, result.output
     text = cfg_path.read_text(encoding="utf-8")
     assert "# I love this collection." in text
-    assert 'collection = "coursework"' in text
+    assert 'collection = "learning"' in text
 
 
 def test_collection_list_counts_sources_not_roots(
@@ -149,18 +149,18 @@ def test_collection_list_counts_sources_not_roots(
         monkeypatch,
         tmp_path,
         """
-        [[collections.coursework.sources]]
+        [[collections.learning.sources]]
         path = "/tmp/notes"
         includes = ["**/*.md"]
 
-        [[collections.coursework.sources]]
+        [[collections.learning.sources]]
         path = "/tmp/papers"
         includes = ["**/*.pdf"]
     """,
     )
     result = runner.invoke(app, ["collection", "list"])
     assert result.exit_code == 0, result.output
-    assert "coursework" in result.output
+    assert "learning" in result.output
     # Two sources configured; output must show 2, not 0.
     assert "2" in result.output
     assert "source" in result.output.lower()

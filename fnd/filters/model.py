@@ -50,8 +50,8 @@ class Rule:
     whatever its kind. Frontmatter is not a Markdown-only convention.
 
     It does NOT excuse a file that has no block: a note with none is exactly
-    the file a rule about ``Course`` is there to exclude, and skipping it made
-    "index this course" mean "index everything except other courses".
+    the file a rule about ``Project`` is there to exclude, and skipping it made
+    "index this project" mean "index everything except other projects".
     """
     unknown: Unknown = Unknown.PASS
 

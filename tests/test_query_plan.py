@@ -15,9 +15,9 @@ def test_plain_query() -> None:
 
 
 def test_splits_metadata_filter() -> None:
-    plan = QueryPlan.from_user_text('mitm [Course == "Security"]')
-    assert plan.lexical == "mitm"
-    assert plan.metadata_filter == 'Course == "Security"'
+    plan = QueryPlan.from_user_text('deadline [Project == "Payments"]')
+    assert plan.lexical == "deadline"
+    assert plan.metadata_filter == 'Project == "Payments"'
 
 
 def test_valid_proximity_passes_lexical_unexpanded() -> None:
@@ -34,7 +34,7 @@ def test_malformed_proximity_raises() -> None:
 
 def test_unbalanced_bracket_raises_syntax_error() -> None:
     with pytest.raises(QuerySyntaxError):
-        QueryPlan.from_user_text("foo [Course == ")
+        QueryPlan.from_user_text("foo [Project == ")
 
 
 def test_oversized_boolean_query_raises() -> None:

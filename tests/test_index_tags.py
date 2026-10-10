@@ -139,7 +139,7 @@ def test_build_index_from_config_writes_tags(tmp_path: Path) -> None:
 
     cc = CollectionConfig(sources=[SourceConfig(path=root)])
     index_dir = tmp_path / "idx"
-    build_index_from_config(config=cc, collection="ALGO", index_dir=index_dir)
+    build_index_from_config(config=cc, collection="Work", index_dir=index_dir)
 
     searcher = Searcher(index_dir=index_dir)
     hits = searcher.search(
@@ -161,7 +161,7 @@ def test_build_index_from_config_expands_nested_tags(tmp_path: Path) -> None:
     )
     cc = CollectionConfig(sources=[SourceConfig(path=root)])
     index_dir = tmp_path / "idx"
-    build_index_from_config(config=cc, collection="ALGO", index_dir=index_dir)
+    build_index_from_config(config=cc, collection="Work", index_dir=index_dir)
 
     searcher = Searcher(index_dir=index_dir)
     hits = searcher.search(

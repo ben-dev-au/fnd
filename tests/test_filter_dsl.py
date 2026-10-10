@@ -28,11 +28,11 @@ def _kinds(text: str) -> list[TokenKind]:
 
 
 def test_tokenize_simple_equality() -> None:
-    toks = tokenize("Course == 'DevOps'")
+    toks = tokenize("Project == 'Website'")
     assert [(t.kind, t.value) for t in toks] == [
-        (TokenKind.IDENT, "Course"),
+        (TokenKind.IDENT, "Project"),
         (TokenKind.OP, "=="),
-        (TokenKind.STRING, "DevOps"),
+        (TokenKind.STRING, "Website"),
         (TokenKind.EOF, ""),
     ]
 
@@ -91,14 +91,14 @@ def test_tokenize_quoted_identifier() -> None:
 
 def test_tokenize_unterminated_string_raises_with_column() -> None:
     with pytest.raises(FilterError) as exc:
-        tokenize("Course == 'DevOps")
+        tokenize("Project == 'Website")
     assert "unterminated" in exc.value.message.lower()
-    assert exc.value.column == 11  # column of the opening quote (1-based)
+    assert exc.value.column == 12  # column of the opening quote (1-based)
 
 
 def test_parse_simple_compare() -> None:
-    tree = parse("Course == 'DevOps'")
-    assert tree == Compare("Course", "==", "DevOps")
+    tree = parse("Project == 'Website'")
+    assert tree == Compare("Project", "==", "Website")
 
 
 def test_parse_and_or_precedence() -> None:
@@ -125,8 +125,8 @@ def test_parse_not() -> None:
 
 
 def test_parse_in_membership() -> None:
-    tree = parse("'course' in tags")
-    assert tree == In("course", "tags", negated=False)
+    tree = parse("'project' in tags")
+    assert tree == In("project", "tags", negated=False)
 
 
 def test_parse_not_in() -> None:
@@ -146,7 +146,7 @@ def test_parse_empty_raises() -> None:
 
 def test_parse_dangling_operator_raises_with_column() -> None:
     with pytest.raises(FilterError) as exc:
-        parse("Course ==")
+        parse("Project ==")
     assert exc.value.column >= 9
 
 
@@ -156,9 +156,9 @@ def test_parse_unmatched_paren_raises() -> None:
 
 
 def test_eval_equality_match() -> None:
-    pred = compile_filter("Course == 'DevOps'")
-    assert pred({"Course": "DevOps"}) is True
-    assert pred({"Course": "Other"}) is False
+    pred = compile_filter("Project == 'Website'")
+    assert pred({"Project": "Website"}) is True
+    assert pred({"Project": "Other"}) is False
 
 
 def test_eval_inequality() -> None:
@@ -170,8 +170,8 @@ def test_eval_inequality() -> None:
 def test_eval_missing_field_strict_null() -> None:
     """Per spec: missing field treats the predicate as False — even for !=
     and even for `not in`. The user opted into strict null."""
-    pred_eq = compile_filter("Course == 'DevOps'")
-    pred_neq = compile_filter("Course != 'DevOps'")
+    pred_eq = compile_filter("Project == 'Website'")
+    pred_neq = compile_filter("Project != 'Website'")
     pred_in = compile_filter("'x' in tags")
     pred_not_in = compile_filter("'x' not in tags")
     empty: dict[str, object] = {}
@@ -196,50 +196,48 @@ def test_eval_date_compare() -> None:
 
 def test_eval_type_mismatch_returns_false() -> None:
     """String < number doesn't crash; it's just False."""
-    pred = compile_filter("Course < 5")
-    assert pred({"Course": "DevOps"}) is False
+    pred = compile_filter("Project < 5")
+    assert pred({"Project": "Website"}) is False
 
 
 def test_eval_glob_match() -> None:
-    pred = compile_filter("Course ~~ 'Data *'")
-    assert pred({"Course": "Data Structures"}) is True
-    assert pred({"Course": "Algorithms"}) is False
+    pred = compile_filter("Project ~~ 'Home *'")
+    assert pred({"Project": "Home Renovation"}) is True
+    assert pred({"Project": "Budget"}) is False
 
 
 def test_eval_in_list() -> None:
-    pred = compile_filter("'course' in tags")
-    assert pred({"tags": ["course", "active"]}) is True
+    pred = compile_filter("'project' in tags")
+    assert pred({"tags": ["project", "active"]}) is True
     assert pred({"tags": ["something", "else"]}) is False
 
 
 def test_equality_on_a_list_asks_whether_it_holds_the_value() -> None:
     """Obsidian writes a property picked from a list as a one-item list."""
-    assert compile_filter("Notes_Type == 'Cheat Sheet'")({"Notes_Type": ["Cheat Sheet"]})
-    assert not compile_filter("Notes_Type == 'Cheat Sheet'")({"Notes_Type": ["Lecture"]})
-    assert compile_filter("Notes_Type != 'Cheat Sheet'")({"Notes_Type": ["Lecture"]})
-    assert not compile_filter("Notes_Type != 'Cheat Sheet'")({"Notes_Type": ["Cheat Sheet"]})
-    assert compile_filter("Notes_Type ~~ 'Cheat*'")({"Notes_Type": ["Cheat Sheet"]})
-    assert compile_filter("Notes_Type in ['Lecture', 'Tutorial']")({"Notes_Type": ["Lecture"]})
-    assert not compile_filter("Notes_Type not in ['Tutorial', 'Lecture']")(
-        {"Notes_Type": ["Lecture"]}
-    )
+    assert compile_filter("Type == 'Reading List'")({"Type": ["Reading List"]})
+    assert not compile_filter("Type == 'Reading List'")({"Type": ["Meeting"]})
+    assert compile_filter("Type != 'Reading List'")({"Type": ["Meeting"]})
+    assert not compile_filter("Type != 'Reading List'")({"Type": ["Reading List"]})
+    assert compile_filter("Type ~~ 'Reading*'")({"Type": ["Reading List"]})
+    assert compile_filter("Type in ['Meeting', 'Idea']")({"Type": ["Meeting"]})
+    assert not compile_filter("Type not in ['Idea', 'Meeting']")({"Type": ["Meeting"]})
 
 
 def test_eval_and_or_not() -> None:
-    pred = compile_filter("Course == 'DevOps' AND status != 'archived' AND 'active' in tags")
-    assert pred({"Course": "DevOps", "status": "active", "tags": ["active"]}) is True
-    assert pred({"Course": "DevOps", "status": "archived", "tags": ["active"]}) is False
+    pred = compile_filter("Project == 'Website' AND status != 'archived' AND 'active' in tags")
+    assert pred({"Project": "Website", "status": "active", "tags": ["active"]}) is True
+    assert pred({"Project": "Website", "status": "archived", "tags": ["active"]}) is False
 
 
 def test_parse_or_error_returns_predicate_for_valid() -> None:
-    pred, err = parse_or_error("Course == 'DevOps'")
+    pred, err = parse_or_error("Project == 'Website'")
     assert err is None
     assert pred is not None
-    assert pred({"Course": "DevOps"}) is True
+    assert pred({"Project": "Website"}) is True
 
 
 def test_parse_or_error_returns_error_for_invalid() -> None:
-    pred, err = parse_or_error("Course ==")
+    pred, err = parse_or_error("Project ==")
     assert pred is None
     assert err is not None
     assert err.column >= 9
@@ -268,7 +266,7 @@ def test_eval_bool_and_int_are_not_interchangeable() -> None:
 
 @st.composite
 def _fields_and_values(draw: st.DrawFn) -> tuple[str, object]:
-    field = draw(st.sampled_from(["a", "b", "c", "Course", "status"]))
+    field = draw(st.sampled_from(["a", "b", "c", "Project", "status"]))
     value = draw(
         st.one_of(
             st.text(min_size=1, max_size=10).filter(lambda s: "'" not in s and '"' not in s),

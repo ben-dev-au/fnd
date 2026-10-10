@@ -59,7 +59,7 @@ def test_detection_is_independent_of_location(
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "darwin")
     monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat(st_flags=0x40000000))
     for where in (
-        Path.home() / "Documents" / "Uni" / "notes.md",
+        Path.home() / "Documents" / "Work" / "notes.md",
         Path.home() / "Library" / "Mobile Documents" / "vault" / "notes.md",
         Path("/Volumes/External/notes.md"),
     ):

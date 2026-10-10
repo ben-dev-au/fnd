@@ -15,7 +15,7 @@ def _touch(p: Path, body: str = "x") -> None:
 
 def test_walks_two_sources_with_disjoint_filetypes(tmp_path: Path) -> None:
     md_root = tmp_path / "notes"
-    pdf_root = tmp_path / "course"
+    pdf_root = tmp_path / "project"
     _touch(md_root / "a.md")
     _touch(pdf_root / "b.pdf")
     _touch(pdf_root / "ignored.md")  # not in pdf_root's includes
@@ -30,21 +30,21 @@ def test_walks_two_sources_with_disjoint_filetypes(tmp_path: Path) -> None:
 def test_frontmatter_filter_excludes_non_matching_md(tmp_path: Path) -> None:
     """A note is judged by a frontmatter rule whether or not it has a block.
 
-    A note with no ``Course`` is not a note for that course, so the question
-    is answerable and the answer is no. Waiving it turned "index this course"
-    into "index everything except other courses": every untagged note in a
+    A note with no ``Project`` is not a note for that project, so the question
+    is answerable and the answer is no. Waiving it turned "index this project"
+    into "index everything except other projects": every untagged note in a
     vault reached the index. A file that could not carry a block at all is a
     different case, and the test below keeps it out of this one.
     """
     root = tmp_path / "notes"
-    _touch(root / "in.md", "---\nCourse: DevOps\n---\nbody\n")
-    _touch(root / "out.md", "---\nCourse: Algorithms\n---\nbody\n")
+    _touch(root / "in.md", "---\nProject: Website\n---\nbody\n")
+    _touch(root / "out.md", "---\nProject: Budget\n---\nbody\n")
     _touch(root / "no_fm.md", "no frontmatter here\n")
     sources = [
         SourceConfig(
             path=root,
             includes=["**/*.md"],
-            frontmatter_filter="Course == 'DevOps'",
+            frontmatter_filter="Project == 'Website'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))
@@ -55,13 +55,13 @@ def test_frontmatter_filter_only_applies_to_md(tmp_path: Path) -> None:
     """A filter on a source that contains pdf files leaves the pdfs alone —
     the filter is md-only by design (no other format has YAML frontmatter)."""
     root = tmp_path / "mixed"
-    _touch(root / "a.md", "---\nCourse: Other\n---\nbody\n")
+    _touch(root / "a.md", "---\nProject: Other\n---\nbody\n")
     _touch(root / "b.pdf", "%PDF-1.4 fake\n")
     sources = [
         SourceConfig(
             path=root,
             includes=["**/*.md", "**/*.pdf"],
-            frontmatter_filter="Course == 'DevOps'",
+            frontmatter_filter="Project == 'Website'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))
@@ -71,14 +71,14 @@ def test_frontmatter_filter_only_applies_to_md(tmp_path: Path) -> None:
 
 def test_excludes_still_apply_under_filter(tmp_path: Path) -> None:
     root = tmp_path / "notes"
-    _touch(root / ".trash" / "trashed.md", "---\nCourse: DevOps\n---\nbody\n")
-    _touch(root / "kept.md", "---\nCourse: DevOps\n---\nbody\n")
+    _touch(root / ".trash" / "trashed.md", "---\nProject: Website\n---\nbody\n")
+    _touch(root / "kept.md", "---\nProject: Website\n---\nbody\n")
     sources = [
         SourceConfig(
             path=root,
             includes=["**/*.md"],
             filters=SourceFilters(excludes=["**/.trash/**"]),
-            frontmatter_filter="Course == 'DevOps'",
+            frontmatter_filter="Project == 'Website'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))
@@ -91,12 +91,12 @@ def test_invalid_frontmatter_excludes_file(tmp_path: Path) -> None:
     silently included."""
     root = tmp_path / "notes"
     _touch(root / "bad.md", "---\nfoo:\n  nested: not allowed\n---\nbody\n")
-    _touch(root / "good.md", "---\nCourse: DevOps\n---\nbody\n")
+    _touch(root / "good.md", "---\nProject: Website\n---\nbody\n")
     sources = [
         SourceConfig(
             path=root,
             includes=["**/*.md"],
-            frontmatter_filter="Course == 'DevOps'",
+            frontmatter_filter="Project == 'Website'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))

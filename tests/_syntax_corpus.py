@@ -28,8 +28,8 @@ LETTER: Final = {
 # Notes: (text, age in days, or None for a fixed date below).
 NOTES: Final = {
     "alpha/notes/zephyr.md": (
-        "---\nCourse: Distributed Systems\nYear: 2024\nNotes_Type: Lecture\n"
-        "tags: [urgent, lecture]\nDue Date: 2025-06-01\nauthor: dijkstra\n---\n"
+        "---\nProject: Mobile App\nYear: 2024\nType: Meeting\n"
+        "tags: [urgent, meeting]\nDue Date: 2025-06-01\nauthor: dijkstra\n---\n"
         "# Zephyr Notes\n\n## Chapter 4\n\nThe zephyr crossed the tundra before dawn.\n\n"
         "A man in the middle attack intercepts traffic.\n\n### Proof\n\n"
         "The cross-entropy loss measures surprise. Cryptography keeps keys safe. "
@@ -37,7 +37,7 @@ NOTES: Final = {
         3,
     ),
     "alpha/notes/quokka.md": (
-        "---\nCourse: Machine Learning\nYear: 2023\nNotes_Type: [Tutorial, Cheat Sheet]\n"
+        "---\nProject: Garden\nYear: 2023\nType: [Idea, Reading List]\n"
         "tags: [private]\n---\n"
         "# Quokka Guide\n\nThe quokka eats marmalade daily.\n\n"
         "The middle man was not in the attack.\n\n"
@@ -51,7 +51,7 @@ NOTES: Final = {
         200,
     ),
     "beta/notes/old.md": (
-        "---\nCourse: Data Structures\ntags: private\n---\n"
+        "---\nProject: Home Renovation\ntags: private\n---\n"
         "# Old Ideas\n\nZephyr marmalade recipes. Mitochondria power cells.\n",
         None,
     ),

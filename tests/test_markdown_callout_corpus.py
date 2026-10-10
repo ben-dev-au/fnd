@@ -56,13 +56,13 @@ async def test_corpus_callout_renders(md: str, css_class: str, title: str) -> No
 @pytest.mark.asyncio
 async def test_inline_pass_runs_inside_the_widget() -> None:
     """The inline rewrites reach a mounted block, not just ``collect_edits``."""
-    md = "See [[Projects/Alpha|the Alpha note]] and ==this bit== under #uni/web.\n"
+    md = "See [[Projects/Alpha|the Alpha note]] and ==this bit== under #work/website.\n"
     app = _Host(md)
     async with app.run_test(size=(80, 30)) as pilot:
         await app.query_one(FNDMarkdown).update(md)
         await pilot.pause()
         para = next(iter(app.query(FNDMarkdownParagraph).results()))
-        assert para._content.plain == "See the Alpha note and this bit under #uni/web."
+        assert para._content.plain == "See the Alpha note and this bit under #work/website."
 
 
 @pytest.mark.asyncio

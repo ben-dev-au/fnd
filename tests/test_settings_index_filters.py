@@ -388,7 +388,7 @@ async def test_a_legacy_frontmatter_rule_is_visible_and_clearable(
         config_path=cfg_path,
         name="probe",
         collection=CollectionConfig(
-            sources=[SourceConfig(path=root, frontmatter_filter="Course == 'X'")]
+            sources=[SourceConfig(path=root, frontmatter_filter="Project == 'X'")]
         ),
     )
     from fnd.config import load
@@ -400,7 +400,7 @@ async def test_a_legacy_frontmatter_rule_is_visible_and_clearable(
         for _ in range(30):
             await pilot.pause()
         form = cast(SourceFormScreen, app.screen)
-        assert form._fields["filters"].get("frontmatter") == "Course == 'X'", (
+        assert form._fields["filters"].get("frontmatter") == "Project == 'X'", (
             "the browser is handed the overrides and would show '(none)'"
         )
 
@@ -545,7 +545,7 @@ class TestClearClearsWhatItClaims:
         before = FilterSpec(
             kinds=("md",),
             max_size=99,
-            frontmatter="Course == 'A'",
+            frontmatter="Project == 'A'",
             expression="file.size > 1",
         )
         after = FilterSpec()
@@ -608,7 +608,7 @@ class TestANoOpSaveChangesNothing:
         the same user action with two answers."""
         from fnd.tui.settings_screen import _merge_frontmatter
 
-        assert _merge_frontmatter({}, "", "Course == 'A'", had_override=False) == {}
+        assert _merge_frontmatter({}, "", "Project == 'A'", had_override=False) == {}
 
 
 def test_a_long_path_row_marks_what_it_dropped() -> None:
@@ -617,7 +617,7 @@ def test_a_long_path_row_marks_what_it_dropped() -> None:
     from fnd.tui.menu import KIND_SCALAR, MenuItem
     from fnd.tui.settings_screen import _render_row
 
-    path = "~/Documents/Uni/B. Software Engineering (Honours)/2026 Semester 2/Cloud"
+    path = "~/Documents/Work/Clients/Website Redesign (Phase 2)/2026 Launch/Cloud"
     item = MenuItem(
         id="form.path",
         label="Path",

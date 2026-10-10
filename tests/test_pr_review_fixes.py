@@ -46,9 +46,9 @@ def test_detect_obsidian_vault_path_returns_root_path(tmp_path: Path) -> None:
     ``.obsidian/``, walking up from any depth."""
     vault = tmp_path / "MyVault"
     (vault / ".obsidian").mkdir(parents=True)
-    nested = vault / "Notes" / "Course"
+    nested = vault / "Notes" / "Project"
     nested.mkdir(parents=True)
-    note = nested / "lecture.md"
+    note = nested / "talk.md"
     note.write_text("# x")
     assert detect_obsidian_vault_path(note) == vault
     # Name helper still works for the picker UI.
@@ -67,7 +67,7 @@ def test_open_smart_computes_file_in_vault_relative_to_vault_not_source(
 ) -> None:
     """The PR #4 bug: when source.path is a subdirectory of the
     vault (e.g. an Obsidian collection that indexes only one
-    course's notes folder), ``file_in_vault`` was computed relative
+    project's notes folder), ``file_in_vault`` was computed relative
     to source.path — Advanced URI would then look for the file at
     the wrong location in the vault."""
     from types import SimpleNamespace
@@ -76,13 +76,13 @@ def test_open_smart_computes_file_in_vault_relative_to_vault_not_source(
 
     vault = tmp_path / "MyVault"
     (vault / ".obsidian").mkdir(parents=True)
-    course_dir = vault / "Notes" / "Algorithms"
-    course_dir.mkdir(parents=True)
-    note = course_dir / "ch1.md"
+    project_dir = vault / "Notes" / "Budget"
+    project_dir.mkdir(parents=True)
+    note = project_dir / "ch1.md"
     note.write_text("# x")
 
     source = SimpleNamespace(
-        path=course_dir,
+        path=project_dir,
         app="obsidian",
         app_for={},
         app_params={"vault": "MyVault"},
@@ -124,7 +124,7 @@ def test_open_smart_computes_file_in_vault_relative_to_vault_not_source(
     assert captured, "obsidian handler was not invoked"
     req = captured[0]
     # MUST be relative to vault root, not source root.
-    assert req.file_in_vault == "Notes/Algorithms/ch1.md", req.file_in_vault
+    assert req.file_in_vault == "Notes/Budget/ch1.md", req.file_in_vault
 
 
 # ── #4 — KIND_ACTION + empty action_id is a no-op ──────────────────────────

@@ -131,8 +131,8 @@ def open_smart(
 
     # ``file_in_vault`` MUST be relative to the vault root (the dir
     # containing ``.obsidian/``), not the source's ``path``. A source
-    # configured as a subdirectory of the vault — e.g. an Obsidian
-    # collection that indexes only one course's notes — would otherwise
+    # configured as a subdirectory of the vault (e.g. an Obsidian
+    # collection that indexes only one project's notes) would otherwise
     # produce a vault-relative path that's missing the prefix between
     # vault root and source root, and Obsidian's Advanced URI would
     # create a new file at the wrong location. Fall back to source-

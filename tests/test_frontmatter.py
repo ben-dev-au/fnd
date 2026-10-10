@@ -23,8 +23,8 @@ def test_does_not_match_when_first_line_isnt_fence() -> None:
 
 
 def test_bare_scalar() -> None:
-    out = read_frontmatter_from_text("---\nCourse: Data Structures with C++\n---\nbody\n")
-    assert out == {"Course": "Data Structures with C++"}
+    out = read_frontmatter_from_text("---\nProject: Home Renovation Plans\n---\nbody\n")
+    assert out == {"Project": "Home Renovation Plans"}
 
 
 def test_quoted_string_double() -> None:
@@ -70,8 +70,8 @@ def test_invalid_line_no_colon_raises() -> None:
 
 
 def test_inline_list() -> None:
-    out = read_frontmatter_from_text("---\ntags: [course, active, devops]\n---\n")
-    assert out == {"tags": ["course", "active", "devops"]}
+    out = read_frontmatter_from_text("---\ntags: [project, active, website]\n---\n")
+    assert out == {"tags": ["project", "active", "website"]}
 
 
 def test_inline_list_quoted_items() -> None:
@@ -85,8 +85,8 @@ def test_inline_list_mixed_types() -> None:
 
 
 def test_block_list() -> None:
-    out = read_frontmatter_from_text("---\ntags:\n  - course\n  - active\n  - devops\n---\n")
-    assert out == {"tags": ["course", "active", "devops"]}
+    out = read_frontmatter_from_text("---\ntags:\n  - project\n  - active\n  - website\n---\n")
+    assert out == {"tags": ["project", "active", "website"]}
 
 
 def test_empty_inline_list() -> None:
@@ -96,4 +96,4 @@ def test_empty_inline_list() -> None:
 
 def test_unterminated_inline_list_raises() -> None:
     with pytest.raises(FrontmatterParseError, match="list"):
-        read_frontmatter_from_text("---\ntags: [course, active\n---\n")
+        read_frontmatter_from_text("---\ntags: [project, active\n---\n")

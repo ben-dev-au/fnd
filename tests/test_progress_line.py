@@ -470,7 +470,7 @@ def test_a_changing_label_counts_as_movement() -> None:
     session = facility.begin(ONE_PHASE, sampler=lambda _s: True)
     for page in range(1, 60):
         clock.advance(1.0)
-        session.set_label(f"Module_06.pdf · page {page} of 118")
+        session.set_label(f"Chapter_06.pdf · page {page} of 118")
         facility.tick()
         assert bar.visible, f"a line with a live page counter was retired at page {page}"
     assert session is facility.active
@@ -582,7 +582,7 @@ def settle(facility: ProgressFacility, clock: FakeClock, *, ticks: int = 40) -> 
 
 def test_a_navigation_takes_the_line_from_a_background_run() -> None:
     facility, bar, _clock = make_facility()
-    facility.begin(AMBIENT_PLAN, label="COMP · 3 of 40 files", sampler=lambda _s: True)
+    facility.begin(AMBIENT_PLAN, label="Work · 3 of 40 files", sampler=lambda _s: True)
     assert bar.ambient is True
 
     facility.begin(ONE_PHASE, sampler=lambda _s: True)
@@ -597,7 +597,7 @@ def test_a_background_run_never_paints_over_a_navigation() -> None:
     feedback for the navigation it triggered."""
     facility, bar, _clock = make_facility()
     facility.begin(ONE_PHASE, sampler=lambda _s: True)
-    facility.begin(AMBIENT_PLAN, label="COMP", sampler=lambda _s: True)
+    facility.begin(AMBIENT_PLAN, label="Work", sampler=lambda _s: True)
     assert bar.ambient is False
     assert bar.label == ""
 
@@ -611,7 +611,7 @@ def test_a_background_run_gets_the_line_back_after_a_navigation() -> None:
     then never again — and at launch the initial query beat it to that.
     """
     facility, bar, clock = make_facility()
-    index = facility.begin(AMBIENT_PLAN, label="COMP · 3 of 40 files", sampler=lambda _s: True)
+    index = facility.begin(AMBIENT_PLAN, label="Work · 3 of 40 files", sampler=lambda _s: True)
 
     nav = facility.begin(ONE_PHASE, sampler=lambda _s: True)
     nav.close()
@@ -620,7 +620,7 @@ def test_a_background_run_gets_the_line_back_after_a_navigation() -> None:
     assert not index.closed, "the background run was retired by an unrelated navigation"
     assert bar.visible
     assert bar.ambient is True
-    assert bar.label == "COMP · 3 of 40 files"
+    assert bar.label == "Work · 3 of 40 files"
 
 
 def test_a_background_run_that_ended_unseen_does_not_come_back() -> None:
@@ -630,7 +630,7 @@ def test_a_background_run_that_ended_unseen_does_not_come_back() -> None:
     keeps the two indistinguishable to the user."""
     facility, bar, clock = make_facility()
     alive = True
-    facility.begin(AMBIENT_PLAN, label="COMP", sampler=lambda _s: alive)
+    facility.begin(AMBIENT_PLAN, label="Work", sampler=lambda _s: alive)
 
     nav = facility.begin(ONE_PHASE, sampler=lambda _s: True)
     alive = False
@@ -646,7 +646,7 @@ def test_a_background_run_finishing_unseen_does_not_steal_the_completion() -> No
     """Its "done" belongs to the indexer's toast. Taking the line back to
     flash a full bar would interrupt the navigation the user is watching."""
     facility, bar, _clock = make_facility()
-    index = facility.begin(AMBIENT_PLAN, label="COMP", sampler=lambda _s: True)
+    index = facility.begin(AMBIENT_PLAN, label="Work", sampler=lambda _s: True)
     facility.begin(ONE_PHASE, sampler=lambda _s: True)
 
     index.close()
@@ -658,7 +658,7 @@ def test_a_background_run_outlasts_a_burst_of_navigation() -> None:
     """The stall cap counts silence, and a suspended session is silent by
     construction — so resuming has to forgive the gap it did not cause."""
     facility, bar, clock = make_facility()
-    index = facility.begin(AMBIENT_PLAN, label="COMP", sampler=lambda _s: True)
+    index = facility.begin(AMBIENT_PLAN, label="Work", sampler=lambda _s: True)
     for _ in range(30):
         nav = facility.begin(ONE_PHASE, sampler=lambda _s: True)
         clock.advance(0.5)

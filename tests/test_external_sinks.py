@@ -178,7 +178,7 @@ def test_an_empty_locator_still_collapses() -> None:
 # ── file names (finding 14) ──────────────────────────────────────────
 
 
-@pytest.mark.parametrize("name", ["notes", "Compiler Theory Books", "Notes v1.2", "Études"])
+@pytest.mark.parametrize("name", ["notes", "Book Club", "Notes v1.2", "Études"])
 def test_a_plain_name_is_its_own_file_name(name: str) -> None:
     from fnd.paths import safe_filename
 

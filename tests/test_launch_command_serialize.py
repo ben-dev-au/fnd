@@ -15,11 +15,11 @@ def _cmd(**kwargs: object) -> str:
 
 
 def test_plain_query() -> None:
-    assert _cmd(query="cabernet") == "fnd cabernet"
+    assert _cmd(query="risotto") == "fnd risotto"
 
 
 def test_query_with_spaces_is_quoted() -> None:
-    assert _cmd(query="cabernet aging") == "fnd 'cabernet aging'"
+    assert _cmd(query="risotto recipe") == "fnd 'risotto recipe'"
 
 
 def test_empty_query_is_bare_and_flagged_empty() -> None:
@@ -29,19 +29,19 @@ def test_empty_query_is_bare_and_flagged_empty() -> None:
 
 
 def test_single_collection() -> None:
-    assert _cmd(query="q", full_collections=("cellar",)) == "fnd q -c cellar"
+    assert _cmd(query="q", full_collections=("home",)) == "fnd q -c home"
 
 
 def test_multiple_collections_comma_joined() -> None:
     # -c splits on commas, so several full collections join into one value.
-    assert _cmd(query="q", full_collections=("cellar", "notes")) == "fnd q -c cellar,notes"
+    assert _cmd(query="q", full_collections=("home", "notes")) == "fnd q -c home,notes"
 
 
 def test_partial_collection_widens_with_caveat() -> None:
     result = LaunchCommandSerializer(
-        SearchSnapshot(query="q", full_collections=("cellar",), partial_collections=("notes",))
+        SearchSnapshot(query="q", full_collections=("home",), partial_collections=("notes",))
     ).serialize()
-    assert result.command == "fnd q -c cellar,notes"
+    assert result.command == "fnd q -c home,notes"
     assert result.caveats == ["partial source selections widened to full collection(s)"]
 
 
@@ -89,10 +89,8 @@ def test_tags_union_across_sources() -> None:
 
 
 def test_special_characters_are_shell_quoted() -> None:
-    cmd = _cmd(
-        query="a & b", full_collections=("my cellar",), tag_include={"f": frozenset({"a'b"})}
-    )
-    assert cmd == "fnd 'a & b' -c 'my cellar' --tag 'a'\"'\"'b'"
+    cmd = _cmd(query="a & b", full_collections=("my home",), tag_include={"f": frozenset({"a'b"})})
+    assert cmd == "fnd 'a & b' -c 'my home' --tag 'a'\"'\"'b'"
 
 
 def test_every_arg_kind_is_quoted() -> None:
@@ -104,8 +102,8 @@ def test_every_arg_kind_is_quoted() -> None:
 def test_full_command_ordering() -> None:
     assert (
         _cmd(
-            query="cabernet aging",
-            full_collections=("cellar",),
+            query="risotto recipe",
+            full_collections=("home",),
             filter_created="week",
             filter_date="month",
             filter_kinds=("pdf",),
@@ -113,7 +111,7 @@ def test_full_command_ordering() -> None:
             tag_exclude={"os": frozenset({"draft"})},
             tag_match_all=False,
         )
-        == "fnd 'cabernet aging' -c cellar --created week --modified month "
+        == "fnd 'risotto recipe' -c home --created week --modified month "
         "--kind pdf --tag red --not-tag draft --tag-match any"
     )
 

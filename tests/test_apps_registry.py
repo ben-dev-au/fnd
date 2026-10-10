@@ -375,12 +375,12 @@ def test_obsidian_handler_converts_breadcrumb_to_chained_anchor(
         kind="md",
         vault="MyVault",
         file_in_vault="note.md",
-        heading_path="Week 9 > Cyber Kill Chain > Reconnaissance",
+        heading_path="Q3 Plans > Mobile App > Launch",
     )
     apps.BUILTIN_APPS["obsidian"].handler(req)
     argv = captured[0]
-    # Chained-heading anchor (URL-encoded #): Week%209%23Cyber%20Kill%20Chain%23Reconnaissance.
-    assert "%23Cyber%20Kill%20Chain%23Reconnaissance" in argv[1], argv[1]
+    # Chained-heading anchor (URL-encoded #): Q3%20Plans%23Mobile%20App%23Launch.
+    assert "%23Mobile%20App%23Launch" in argv[1], argv[1]
     # The raw " > " breadcrumb separator MUST NOT survive into the URL —
     # spaces around ` > ` would percent-encode to %20%3E%20 and Obsidian
     # would fail to navigate.
@@ -544,11 +544,11 @@ def test_obsidian_advanced_uri_uses_resolved_match_line_not_chunk_line(
     (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
     note = vault / "notes.md"
     note.write_text(
-        "# Cyber Kill Chain\n"
+        "# Launch Plan\n"
         "intro line 2\n"
         "intro line 3\n"
         "intro line 4\n"
-        "the reconnaissance phase covers passive enumeration\n"
+        "the beta phase gathers early feedback\n"
         "more text\n"
     )
 
@@ -558,9 +558,9 @@ def test_obsidian_advanced_uri_uses_resolved_match_line_not_chunk_line(
         kind="md",
         vault="Vault",
         file_in_vault="notes.md",
-        heading_path="Cyber Kill Chain",
+        heading_path="Launch Plan",
         line=1,  # chunk start = heading line
-        query="reconnaissance",
+        query="feedback",
         source_path=vault,
     )
     apps.BUILTIN_APPS["obsidian"].handler(req)

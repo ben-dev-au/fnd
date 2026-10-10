@@ -130,7 +130,7 @@ async def test_a_rebuild_is_confirmed_before_it_runs(tmp_path: Path, tmp_index_d
 
     _record_clean(tmp_path, tmp_index_dir)
     cfg = _cfg(tmp_path)
-    cfg.defaults.tag_frontmatter_keys = ["Course"]
+    cfg.defaults.tag_frontmatter_keys = ["Project"]
     app = FNDApp(index_dir=tmp_index_dir, config=cfg)
     async with app.run_test(size=(120, 30)) as pilot:
         await _settle(pilot)
@@ -207,7 +207,7 @@ async def test_a_settings_change_redraws_the_sidebar_marker(
         screen = SettingsScreen(breadcrumb=("Filters",), items=(item,))
         app.push_screen(screen)
         await _settle(pilot)
-        screen.post_message(EditBar.EditCommitted(item, ["Course"]))
+        screen.post_message(EditBar.EditCommitted(item, ["Project"]))
         await _settle(pilot)
         assert MARKER in _row(app)
 

@@ -1,6 +1,6 @@
 """A filter value the user got wrong is reported, not silently obeyed.
 
-Before this, ``-c algo2`` against a ``ALGO2`` collection failed two ways:
+Before this, ``-c work2`` against a ``Work2`` collection failed two ways:
 ``fnd search`` built a hard term filter that matched nothing, and the TUI
 launch path dropped the unknown name and widened the search to every
 collection. Both were silent. So was ``--kind pdff``.
@@ -30,9 +30,9 @@ _built: list[dict[str, object]] = []
 
 @pytest.fixture
 def corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Two real collections — ``ALGO2`` (mixed case, the reported bug) and
+    """Two real collections: ``Work2`` (mixed case, the reported bug) and
     ``papers`` — indexed, with a config TOML the CLI actually loads."""
-    for name in ("ALGO2", "papers"):
+    for name in ("Work2", "papers"):
         root = tmp_path / name
         root.mkdir()
         (root / "a.md").write_text(f"# {name}\nlightning rod\n", encoding="utf-8")
@@ -45,8 +45,8 @@ def corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch)
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
         textwrap.dedent(f"""
-            [[collections.ALGO2.sources]]
-            path = "{(tmp_path / "ALGO2").as_posix()}"
+            [[collections.Work2.sources]]
+            path = "{(tmp_path / "Work2").as_posix()}"
             includes = ["**/*.md"]
 
             [[collections.papers.sources]]
@@ -91,17 +91,17 @@ def _search(*argv: str, input: str = "") -> tuple[int, str]:
 
 
 def test_wrong_case_collection_is_offered_and_accepted(corpus: Path, tty: None) -> None:
-    code, out = _search("lightning", "-c", "algo2", input="y\n")
+    code, out = _search("lightning", "-c", "work2", input="y\n")
     assert code == 0, out
-    assert "no collection named 'algo2'" in out
-    assert "Did you mean 'ALGO2'?" in out
+    assert "no collection named 'work2'" in out
+    assert "Did you mean 'Work2'?" in out
     # Accepting scopes the search — the papers copy must not appear.
-    assert "ALGO2" in out
+    assert "Work2" in out
     assert "papers" not in out
 
 
 def test_declining_the_suggestion_exits_without_searching(corpus: Path, tty: None) -> None:
-    code, out = _search("lightning", "-c", "algo2", input="n\n")
+    code, out = _search("lightning", "-c", "work2", input="n\n")
     assert code == 2, out
     assert "aborted" in out
     assert "a.md" not in out
@@ -109,10 +109,10 @@ def test_declining_the_suggestion_exits_without_searching(corpus: Path, tty: Non
 
 def test_non_tty_reports_instead_of_prompting(corpus: Path) -> None:
     """Piped or scripted, the prompt would hang — print the fix instead."""
-    code, out = _search("lightning", "-c", "algo2")
+    code, out = _search("lightning", "-c", "work2")
     assert code == 2, out
-    assert "no collection named 'algo2'" in out
-    assert "--collection ALGO2" in out
+    assert "no collection named 'work2'" in out
+    assert "--collection Work2" in out
     assert "a.md" not in out
 
 
@@ -120,7 +120,7 @@ def test_unknown_with_no_near_match_lists_what_exists(corpus: Path, tty: None) -
     code, out = _search("lightning", "-c", "zzzzzzzz")
     assert code == 2, out
     assert "no collection named 'zzzzzzzz'" in out
-    assert "ALGO2" in out
+    assert "Work2" in out
     assert "papers" in out
     assert "did you mean" not in out.lower()
 
@@ -142,9 +142,9 @@ def test_kind_case_is_canonicalised_silently(corpus: Path) -> None:
 def test_in_query_collection_token_reports_but_never_prompts(corpus: Path, tty: None) -> None:
     """A ``c:`` token inside the query is reported, not rewritten — silently
     editing text the user typed is worse than telling them what to change."""
-    code, out = _search("c:algo2 lightning", input="y\n")
+    code, out = _search("c:work2 lightning", input="y\n")
     assert code == 2, out
-    assert "no collection named 'algo2'" in out
+    assert "no collection named 'work2'" in out
     assert "[Y/n]" not in out
     assert "a.md" not in out
 
@@ -153,33 +153,33 @@ def test_in_query_collection_token_reports_but_never_prompts(corpus: Path, tty: 
 
 
 def test_two_bad_flags_share_one_confirmation(corpus: Path, tty: None) -> None:
-    code, out = _search("lightning", "-c", "algo2", "--kind", "pdff", input="y\n")
+    code, out = _search("lightning", "-c", "work2", "--kind", "pdff", input="y\n")
     assert code == 0, out
     assert "2 filter values weren't recognised" in out
-    assert "--collection algo2" in out
+    assert "--collection work2" in out
     assert "--kind pdff" in out
     # One prompt, not one per problem.
     assert out.count("Use these instead?") == 1
 
 
 def test_declining_a_batch_names_every_problem(corpus: Path, tty: None) -> None:
-    code, out = _search("lightning", "-c", "algo2", "--kind", "pdff", input="n\n")
+    code, out = _search("lightning", "-c", "work2", "--kind", "pdff", input="n\n")
     assert code == 2, out
-    assert "algo2" in out
+    assert "work2" in out
     assert "pdff" in out
 
 
 def test_two_unknown_names_in_one_flag_are_both_corrected(corpus: Path, tty: None) -> None:
-    code, out = _search("lightning", "-c", "algo2,PAPERS", input="y\n")
+    code, out = _search("lightning", "-c", "work2,PAPERS", input="y\n")
     assert code == 0, out
     assert "2 filter values weren't recognised" in out
 
 
 def test_one_unfixable_problem_suppresses_the_prompt(corpus: Path, tty: None) -> None:
     """Confirming would still leave a broken command, so don't offer."""
-    code, out = _search("lightning", "-c", "algo2", "--kind", "zzzzzzzz")
+    code, out = _search("lightning", "-c", "work2", "--kind", "zzzzzzzz")
     assert code == 2, out
-    assert "algo2" in out
+    assert "work2" in out
     assert "zzzzzzzz" in out
     assert "[Y/n]" not in out
     # A partial "re-run with" would still leave a broken command.
@@ -210,7 +210,7 @@ def test_blank_collection_value_is_an_error_not_everything(corpus: Path, blank: 
 def test_no_collection_flag_searches_everything(corpus: Path) -> None:
     code, out = _search("lightning")
     assert code == 0, out
-    assert "ALGO2" in out
+    assert "Work2" in out
     assert "papers" in out
 
 
@@ -218,12 +218,12 @@ def test_no_collection_flag_searches_everything(corpus: Path) -> None:
 def test_dash_c_all_still_searches_everything(corpus: Path, flag: str) -> None:
     code, out = _search("lightning", "-c", flag)
     assert code == 0, out
-    assert "ALGO2" in out
+    assert "Work2" in out
     assert "papers" in out
 
 
 def test_correct_name_is_unaffected(corpus: Path) -> None:
-    code, out = _search("lightning", "-c", "ALGO2")
+    code, out = _search("lightning", "-c", "Work2")
     assert code == 0, out
     assert "did you mean" not in out.lower()
     assert "papers" not in out
@@ -231,9 +231,9 @@ def test_correct_name_is_unaffected(corpus: Path) -> None:
 
 def test_comma_list_scopes_to_both(corpus: Path) -> None:
     """Regression: ``-c a,b`` used to become one phantom term matching nothing."""
-    code, out = _search("lightning", "-c", "ALGO2,papers")
+    code, out = _search("lightning", "-c", "Work2,papers")
     assert code == 0, out
-    assert "ALGO2" in out
+    assert "Work2" in out
     assert "papers" in out
 
 
@@ -280,9 +280,9 @@ def _launch(*argv: str, input: str = "") -> tuple[int, str, list[dict[str, objec
 
 def test_tui_launch_declined_never_builds_the_app(corpus: Path, tty: None, stub_app: None) -> None:
     """The prompt must land on a plain terminal, before Textual takes over."""
-    code, out, built = _launch("-c", "algo2", "lightning", input="n\n")
+    code, out, built = _launch("-c", "work2", "lightning", input="n\n")
     assert code == 2, out
-    assert "Did you mean 'ALGO2'?" in out
+    assert "Did you mean 'Work2'?" in out
     assert built == []
 
 
@@ -290,10 +290,10 @@ def test_tui_launch_accepted_opens_on_the_real_collection(
     corpus: Path, tty: None, stub_app: None
 ) -> None:
     """The reported bug: this used to widen the scope to every collection."""
-    code, out, built = _launch("-c", "algo2", "lightning", input="y\n")
+    code, out, built = _launch("-c", "work2", "lightning", input="y\n")
     assert code == 0, out
     assert built, out
-    assert built[0]["collection"] == "ALGO2"
+    assert built[0]["collection"] == "Work2"
 
 
 def test_tui_launch_unknown_collection_does_not_widen_to_everything(
@@ -305,10 +305,10 @@ def test_tui_launch_unknown_collection_does_not_widen_to_everything(
 
 
 def test_reindex_typo_gets_a_suggestion_not_a_traceback(corpus: Path) -> None:
-    result = runner.invoke(app, ["collection", "reindex", "algo2"], catch_exceptions=False)
+    result = runner.invoke(app, ["collection", "reindex", "work2"], catch_exceptions=False)
     assert result.exit_code == 2, result.output
-    assert "no collection named 'algo2'" in result.output
-    assert "ALGO2" in result.output
+    assert "no collection named 'work2'" in result.output
+    assert "Work2" in result.output
 
 
 def test_config_validate_flags_a_dangling_default(
@@ -318,9 +318,9 @@ def test_config_validate_flags_a_dangling_default(
     cfg_path.write_text(
         textwrap.dedent(f"""
             [defaults]
-            collection = "algo2"
+            collection = "work2"
 
-            [[collections.ALGO2.sources]]
+            [[collections.Work2.sources]]
             path = "{tmp_path.as_posix()}"
         """),
         encoding="utf-8",
@@ -331,4 +331,4 @@ def test_config_validate_flags_a_dangling_default(
     result = runner.invoke(app, ["config", "validate"], catch_exceptions=False)
     assert result.exit_code == 0, result.output
     assert "warning" in result.output.lower()
-    assert "ALGO2" in result.output
+    assert "Work2" in result.output

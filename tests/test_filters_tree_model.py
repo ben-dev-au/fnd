@@ -33,7 +33,7 @@ def _leaves(branches: list[Branch]) -> set[str]:
 def _sample() -> SourceSample:
     return SourceSample(
         kinds={"md": 439, "pdf": 7},
-        tags={"os": {"no_index": 3, "wk3": 2}, "frontmatter": {"private": 15}},
+        tags={"os": {"no_index": 3, "q3": 2}, "frontmatter": {"private": 15}},
     )
 
 
@@ -77,10 +77,10 @@ class TestBranches:
         self,
     ) -> None:
         """What is switched on must be visible without scrolling the corpus."""
-        spec = FilterSpec(exclude_tags={"os": ("wk3",)})
+        spec = FilterSpec(exclude_tags={"os": ("q3",)})
         tags = next(b for b in spec_branches(spec, _sample()) if b.id == "tags")
         os_group = next(g for g in tags.groups if g.id == "tags:os")
-        assert os_group.items[0][0] == "tag:os:wk3"
+        assert os_group.items[0][0] == "tag:os:q3"
 
     def test_a_tag_in_both_sources_gets_a_row_in_each(self) -> None:
         """A Finder tag and a note tag sharing a word are different rules."""
@@ -136,10 +136,10 @@ class TestSelectionRoundTrip:
 
     def test_the_expression_is_left_alone(self) -> None:
         """The tree edits the rows; anything it cannot show must survive."""
-        start = FilterSpec(expression="file.name ~~ 'draft-*'", frontmatter="Course == 'X'")
+        start = FilterSpec(expression="file.name ~~ 'draft-*'", frontmatter="Project == 'X'")
         spec, _g, _f = apply_selection(start, {"size:any"}, set())
         assert spec.expression == "file.name ~~ 'draft-*'"
-        assert spec.frontmatter == "Course == 'X'"
+        assert spec.frontmatter == "Project == 'X'"
 
 
 class TestBoundedScan:
@@ -151,8 +151,8 @@ class TestBoundedScan:
         assert got.tags.get("frontmatter", {}).get("alpha") == 1
 
     def test_it_records_frontmatter_keys(self, tmp_path: Path) -> None:
-        (tmp_path / "a.md").write_text("---\nCourse: DevOps\n---\n", encoding="utf-8")
-        assert "Course" in sample_source(tmp_path).frontmatter_keys
+        (tmp_path / "a.md").write_text("---\nProject: Website\n---\n", encoding="utf-8")
+        assert "Project" in sample_source(tmp_path).frontmatter_keys
 
     def test_the_file_budget_truncates_rather_than_running_on(self, tmp_path: Path) -> None:
         for i in range(30):

@@ -1,7 +1,7 @@
 """Walk-time junk-directory prune (fix for the DB-collection freeze).
 
 The walk skips ``node_modules`` / ``__pycache__`` / ``.venv`` / etc. at
-descent so a coursework folder that happens to contain cloned dev repos
+descent so a learning folder that happens to contain cloned dev repos
 doesn't pull tens of thousands of READMEs into the index. Verifies the
 prune set, the disable knob, and the user-extend list.
 """

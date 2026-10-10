@@ -350,7 +350,7 @@ def walk_sources(
         gate = build_gate(spec)
         # Scoped through the dimension, not by hand: strict null would fail a
         # frontmatter comparison on every PDF and drop the lot, and a hand-rolled
-        # scope lets a note with no block through the rule that names its course.
+        # scope lets a note with no block through the rule that names its project.
         frontmatter_dim = dimension("frontmatter")
         scoped = [
             rule

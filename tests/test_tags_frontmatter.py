@@ -130,30 +130,28 @@ def test_comma_form_expands_ancestors() -> None:
 
 def test_custom_keys_are_ignored_by_default() -> None:
     """Only tags:/tag: unless the user opts a key in."""
-    got = FrontmatterTagProvider().read(_ctx({"Course": "Data Structures"}))
+    got = FrontmatterTagProvider().read(_ctx({"Project": "Home Renovation"}))
     assert got == frozenset()
 
 
 def test_custom_key_values_become_namespaced_tags() -> None:
     """A vault's real taxonomy often lives in custom keys. Namespacing by key
     keeps them grouped in the pane and avoids colliding with tags: values."""
-    provider = FrontmatterTagProvider(extra_keys=["Course", "Notes_Type"])
-    got = provider.read(_ctx({"Course": "Data Structures", "Notes_Type": ["Assignment"]}))
-    assert got == frozenset(
-        {"course", "course/data structures", "notes_type", "notes_type/assignment"}
-    )
+    provider = FrontmatterTagProvider(extra_keys=["Project", "Type"])
+    got = provider.read(_ctx({"Project": "Home Renovation", "Type": ["Recipe"]}))
+    assert got == frozenset({"project", "project/home renovation", "type", "type/recipe"})
 
 
 def test_custom_key_strips_obsidian_wikilinks() -> None:
-    """Obsidian writes `Course: "[[Data Structures with C++]]"`."""
-    provider = FrontmatterTagProvider(extra_keys=["Course"])
-    got = provider.read(_ctx({"Course": "[[Data Structures with C++]]"}))
-    assert "course/data structures with c++" in got
+    """Obsidian writes `Project: "[[Home Renovation Plans]]"`."""
+    provider = FrontmatterTagProvider(extra_keys=["Project"])
+    got = provider.read(_ctx({"Project": "[[Home Renovation Plans]]"}))
+    assert "project/home renovation plans" in got
 
 
 def test_custom_key_matching_is_case_insensitive() -> None:
-    provider = FrontmatterTagProvider(extra_keys=["course"])
-    assert "course/algebra" in provider.read(_ctx({"Course": "Algebra"}))
+    provider = FrontmatterTagProvider(extra_keys=["project"])
+    assert "project/kitchen" in provider.read(_ctx({"Project": "Kitchen"}))
 
 
 def test_custom_key_handles_lists_and_commas() -> None:
@@ -168,10 +166,10 @@ def test_empty_custom_key_contributes_nothing() -> None:
 
 
 def test_custom_keys_coexist_with_plain_tags() -> None:
-    provider = FrontmatterTagProvider(extra_keys=["Course"])
-    got = provider.read(_ctx({"tags": ["draft"], "Course": "ALGO"}))
+    provider = FrontmatterTagProvider(extra_keys=["Project"])
+    got = provider.read(_ctx({"tags": ["draft"], "Project": "Work"}))
     assert "draft" in got
-    assert "course/algo" in got
+    assert "project/work" in got
 
 
 def test_tags_key_cannot_be_double_counted_as_a_custom_key() -> None:
@@ -181,18 +179,18 @@ def test_tags_key_cannot_be_double_counted_as_a_custom_key() -> None:
 
 
 def test_custom_key_wikilink_with_subfolder_path() -> None:
-    """`Course: "[[Notes/Algebra]]"` — the slash is inside the link, not a tag
+    """`Project: "[[Notes/Kitchen]]"`: the slash is inside the link, not a tag
     separator. Stripping must happen before ancestor expansion, or a malformed
-    `course/[[notes` fragment leaks alongside the real tag."""
-    provider = FrontmatterTagProvider(extra_keys=["Course"])
-    got = provider.read(_ctx({"Course": "[[Notes/Algebra]]"}))
-    assert got == frozenset({"course", "course/notes", "course/notes/algebra"})
+    `project/[[notes` fragment leaks alongside the real tag."""
+    provider = FrontmatterTagProvider(extra_keys=["Project"])
+    got = provider.read(_ctx({"Project": "[[Notes/Kitchen]]"}))
+    assert got == frozenset({"project", "project/notes", "project/notes/kitchen"})
     assert not any("[[" in t for t in got)
 
 
 def test_custom_key_wikilink_in_a_list() -> None:
-    provider = FrontmatterTagProvider(extra_keys=["Course"])
-    got = provider.read(_ctx({"Course": ["[[A/B]]", "Plain"]}))
-    assert "course/a/b" in got
-    assert "course/plain" in got
+    provider = FrontmatterTagProvider(extra_keys=["Project"])
+    got = provider.read(_ctx({"Project": ["[[A/B]]", "Plain"]}))
+    assert "project/a/b" in got
+    assert "project/plain" in got
     assert not any("[[" in t for t in got)

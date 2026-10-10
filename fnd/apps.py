@@ -920,7 +920,7 @@ def detect_obsidian_vault_path(path: Path) -> Path | None:
     Used by the opener to compute ``file_in_vault`` relative to the
     actual vault root — which Obsidian's Advanced URI expects — even
     when the source's ``path`` is a subdirectory of the vault (a
-    common layout for collections that index only one course's notes
+    common layout for collections that index only one project's notes
     out of a larger vault).
     """
     p = path.expanduser().resolve()

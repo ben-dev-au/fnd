@@ -265,7 +265,7 @@ def _compile(
     facts = referenced_fields(node)
     _reject_unknown_facts(facts)
     # A rule naming any frontmatter key is scoped to note kinds, even a mixed one
-    # (`Course == 'X' OR file.size < 10`): unscoped, its frontmatter half
+    # (`Project == 'X' OR file.size < 10`): unscoped, its frontmatter half
     # strict-nulls on every PDF and takes the whole clause down with it.
     if not needs_frontmatter and any(not is_fact_name(f) for f in facts):
         needs_frontmatter = True
