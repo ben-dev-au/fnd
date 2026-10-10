@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 from fnd.config import Defaults, load, starter_config
@@ -26,18 +27,23 @@ def test_template_yields_default_tag_settings(tmp_path: Path) -> None:
     assert cfg.defaults.tag_frontmatter_keys == Defaults().tag_frontmatter_keys
 
 
-def test_template_carries_no_personal_paths() -> None:
-    lowered = starter_config().lower()
-    for leak in ("/users/", "bendavidson", "obsidian vault", "icloud~md~obsidian"):
-        assert leak not in lowered, f"template leaks {leak!r}"
+def test_template_carries_no_machine_paths() -> None:
+    """Every source is home-relative, and no absolute home path appears anywhere."""
+    template = starter_config()
+    sources = [
+        s["path"] for c in tomllib.loads(template)["collections"].values() for s in c["sources"]
+    ]
+    assert sources
+    assert all(p.startswith("~/") for p in sources), sources
+    assert not re.search(r"(?i)/users/|/home/|[a-z]:\\users\\", template)
+    assert str(Path.home()) not in template
 
 
-def test_template_carries_no_personal_collections() -> None:
-    """A real setup's collections must never ship: the template defines only ``default``."""
+def test_template_defines_only_the_default_collection() -> None:
+    """A real setup's collections must never ship."""
     template = starter_config()
     assert set(re.findall(r"^\[+collections\.([^].]+)", template, re.M)) == {"default"}
-    for leak in ("notes_type", "uni week"):
-        assert leak not in template.lower(), f"template leaks {leak!r}"
+    assert set(tomllib.loads(template)["collections"]) == {"default"}
 
 
 def test_template_documents_the_tag_settings() -> None:

@@ -32,8 +32,8 @@ def test_trim_redundant_heading_strips_word_in_long_filename() -> None:
     matches one of them it should still be stripped."""
     out = _trim_redundant_heading(
         "Templates > Strategy",
-        title="ALGO Week 8 - Templates, Sorting & Streams",
-        path="/x/ALGO Week 8 - Templates, Sorting & Streams.md",
+        title="Design Patterns - Templates, Strategy & Streams",
+        path="/x/Design Patterns - Templates, Strategy & Streams.md",
     )
     assert out == "Strategy"
 
