@@ -683,7 +683,8 @@ single-quoted strings, numbers, ISO dates, or `true`/`false`/`null`. Numbers
 may use `_` as a digit separator, as in TOML (`50_000_000`). Inside a quoted
 string, `\'` is a literal quote and `\\` a literal backslash; a backslash
 before anything else stands for itself, so a path like `'C:\temp'` needs no
-escaping. Only markdown is filtered; other kinds pass through.
+escaping. Only notes can match (markdown and plain text); other kinds are left
+out.
 
 > **A missing field fails every comparison, including negative ones.** On a
 > note with no `tags:`, `['x' not in tags]` is *false*, so the note is dropped;

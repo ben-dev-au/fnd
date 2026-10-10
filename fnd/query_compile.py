@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import tantivy
 from tantivy import Occur, Query
 
-from fnd.analysis import index_token
+from fnd.analysis import fold, index_token
 from fnd.query_ast import (
     And,
     Boosted,
@@ -88,7 +88,7 @@ class _Compiler:
         if isinstance(n, Fuzzy):
             return self._fuzzy(n)
         if isinstance(n, Regex):
-            return self._ranked_pattern(n.pattern, glob=False)
+            return self._ranked_pattern(fold(n.pattern), glob=False)
         if isinstance(n, Boosted):
             return Query.boost_query(self.compile(n.child), n.factor)
         if isinstance(n, And):
@@ -151,7 +151,7 @@ class _Compiler:
         patterns: list[str] = []
         for w in words:
             if "*" in w or "?" in w:
-                member = self._phrase_member(w)
+                member = self._phrase_member(fold(w))
                 if member is None:
                     return Query.empty_query()
                 patterns.append(member)
@@ -188,11 +188,11 @@ class _Compiler:
         from fnd.query_resolvers import prefix_variants, term_or_query
 
         if n.prefix is not None:  # ``crypto*`` → fast prefix scan
-            q = term_or_query(self._schema, prefix_variants(self._s, n.prefix), F_WORDS)
+            q = term_or_query(self._schema, prefix_variants(self._s, fold(n.prefix)), F_WORDS)
             return q if q is not None else Query.empty_query()
         from fnd.matching import glob_to_regex  # infix/leading glob → regex
 
-        return self._ranked_pattern(glob_to_regex(n.token), glob=True)
+        return self._ranked_pattern(glob_to_regex(fold(n.token)), glob=True)
 
     def _fuzzy(self, n: Fuzzy) -> Query:
         from fnd.matching import auto_fuzzy_distance

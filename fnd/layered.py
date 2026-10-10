@@ -128,6 +128,9 @@ def search_layered(
     fusion's lex sub-query when bypass does NOT fire — saving one
     Tantivy round-trip per non-bypass query.
     """
+    from fnd.query_plan import query_text, search_text
+
+    query = search_text(query_text(query))
     if not query.strip():
         return ([], _empty_trace(query, intent)) if with_trace else []
 
