@@ -33,13 +33,15 @@ fmt:
 # command, because four remembered steps went unrun for 23 commits. The dev/
 # instruments live in a separate private tree and are skipped when absent.
 batch-close:
+	@uv run python scripts/proven_trees.py start $$PPID
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run pyright
 	uv run python scripts/run_tests.py -q
 	@if [ -f dev/tools/workflow_audit_tmux.py ]; then \
-		uv run python dev/tools/workflow_audit_tmux.py $(HARNESS_SCENARIOS); \
-	else echo "skip: dev/tools/workflow_audit_tmux.py absent"; fi
+		uv run python dev/tools/workflow_audit_tmux.py $(HARNESS_SCENARIOS) && \
+		uv run python scripts/proven_trees.py record $$PPID; \
+	else echo "skip: dev/tools/workflow_audit_tmux.py absent (tree not recorded)"; fi
 	@$(BATCH_CLOSE_DONE)
 
 # Detector A: the suite with `_wait_for_screen`'s bound shrunk to 1ms. Produces

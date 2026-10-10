@@ -24,13 +24,15 @@ repos:
         args: ["--fix"]
 
   - repo: local
+    # Each pre-push check skips a tree `make batch-close` already passed
+    # (scripts/proven_trees.py), so a push does not repeat the gate.
     hooks:
       - id: pyright
         name: pyright (strict)
         # Pre-push: kept with pytest-fast below so `git commit` stays
         # instant for WIP checkpoints; standalone cost is ~10s.
         stages: [pre-push]
-        entry: uv run pyright
+        entry: uv run python scripts/proven_trees.py check -- pyright
         language: system
         types: [python]
         pass_filenames: false
@@ -41,7 +43,7 @@ repos:
         # checkpoints. Forceselect, not plain --testmon: `-m` silently
         # deactivates the latter's selection and runs the whole suite.
         stages: [pre-push]
-        entry: uv run python scripts/run_tests.py -q -m "not slow" --testmon-forceselect
+        entry: uv run python scripts/proven_trees.py check -- python scripts/run_tests.py -q -m "not slow" --testmon-forceselect
         language: system
         types: [python]
         pass_filenames: false
@@ -55,7 +57,7 @@ repos:
         # validation lives behind FND_AUDIT_REAL_CORPUS=1 and is
         # opt-in via `pre-commit run --hook-stage manual`.
         stages: [pre-push]
-        entry: uv run python dev/tools/workflow_audit_tmux.py indexer_status_lines indexer_status_lines_md_only
+        entry: uv run python scripts/proven_trees.py check -- python dev/tools/workflow_audit_tmux.py indexer_status_lines indexer_status_lines_md_only
         language: system
         files: ^(fnd/extract/|fnd/index|fnd/walk\.py|fnd/tui/indexer_modal\.py|dev/tools/workflow_audit_tmux\.py)
         pass_filenames: false
