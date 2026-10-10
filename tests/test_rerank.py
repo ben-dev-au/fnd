@@ -153,7 +153,7 @@ def test_phrase_proximity_missing_term_no_bonus() -> None:
 
 
 def test_phrase_proximity_uses_stemming() -> None:
-    """Stems match Tantivy's en_stem so query 'penfold' clusters with body 'penfolds'."""
+    """Stems match the index analyser so query 'penfold' clusters with body 'penfolds'."""
     profile = RankingProfile(phrase_proximity=1.0)
     close = apply_phrase_proximity(
         score=1.0,
@@ -192,11 +192,12 @@ def test_rerank_hits_recency_flips_tied_scores() -> None:
     assert out[0].mtime == 1_000_000
 
 
-def test_rerank_hits_propagates_new_score() -> None:
+def test_rerank_hits_scales_the_rank_score_not_the_display_score() -> None:
     h = _hit(score=1.0, kind="pdf")
     profile = RankingProfile(filetype_boosts={"pdf": 2.0})
     out = rerank_hits([h], profile=profile, query="x", now=1_000)
-    assert out[0].score == pytest.approx(2.0)
+    assert out[0].rank_score == pytest.approx(2.0)
+    assert out[0].score == 1.0
 
 
 # ── end-to-end through Searcher (acceptance) ──────────────────────

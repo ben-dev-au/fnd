@@ -1150,6 +1150,7 @@ class ScopeController:
         try:
             from fnd.query_plan import QueryPlan
             from fnd.schema import DEFAULT_SEARCH_FIELDS
+            from fnd.typos import respelt
 
             lexical = QueryPlan.from_user_text(raw).lexical.strip()
             searcher = getattr(self._app._search, "searcher", None)
@@ -1158,11 +1159,27 @@ class ScopeController:
             exact = searcher.content_query(lexical, DEFAULT_SEARCH_FIELDS)
             if exact is None:
                 return None
-            return self._widen_to_fuzzy(index, exact, lexical)
+            trace = self._app._search.latest_trace
+            fixes = trace.respellings if trace is not None else {}
+            respelt_query = (
+                searcher.content_query(respelt(lexical.split(), fixes), DEFAULT_SEARCH_FIELDS)
+                if fixes
+                else None
+            )
+            if respelt_query is not None:
+                # The results include the respelt words, so the facets must too.
+                import tantivy
+
+                exact = tantivy.Query.boolean_query(
+                    [(tantivy.Occur.Should, exact), (tantivy.Occur.Should, respelt_query)]
+                )
+            return self._widen_to_fuzzy(index, exact, lexical, fixes)
         except Exception:
             return None
 
-    def _widen_to_fuzzy(self, index: Any, exact: Any, lexical: str) -> Any:
+    def _widen_to_fuzzy(
+        self, index: Any, exact: Any, lexical: str, fixes: dict[str, tuple[str, ...]]
+    ) -> Any:
         """The fuzzy expansion too, where the exact query matches nothing.
 
         A typo the cascade recovers from put tagged files on screen while the
@@ -1185,6 +1202,7 @@ class ScopeController:
             lexical,
             auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
+            corrections=fixes,
         )
         if not clauses:
             return exact

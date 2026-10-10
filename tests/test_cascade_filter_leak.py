@@ -1,9 +1,7 @@
 """The cascade's fuzzy pass must honour the Filters pane's field qualifiers.
 
-``_PrefixingSearcher`` re-attaches the filter prefix only on ``_raw_hits`` and
-``_filtered_raw_hits``; ``_fuzzy_pass`` reaches the inner searcher through
-``__getattr__`` and re-derives filters from the query string it was handed,
-which carries no prefix.
+``FilteredSearcher`` passes its clauses only through ``_candidates``;
+``_fuzzy_pass`` reaches the inner searcher through ``__getattr__`` and builds its own query, so it must read ``filter_clauses``.
 """
 
 from __future__ import annotations
@@ -14,8 +12,7 @@ from pathlib import Path
 
 from fnd.cascade import cascade_search
 from fnd.index import build_index
-from fnd.query import Searcher
-from fnd.tui.search_controller import _PrefixingSearcher
+from fnd.query import FilteredSearcher, Searcher
 
 
 def _index_two_kinds(tmp_path: Path, index_dir: Path) -> Path:
@@ -31,7 +28,7 @@ def _index_two_kinds(tmp_path: Path, index_dir: Path) -> Path:
 def test_fuzzy_pass_honours_kind_filter(tmp_path: Path, tmp_index_dir: Path) -> None:
     """``kind:md`` in the prefix must not be dropped by the fuzzy pass."""
     _index_two_kinds(tmp_path, tmp_index_dir)
-    searcher = _PrefixingSearcher(Searcher(index_dir=tmp_index_dir), clauses=["kind:md"])
+    searcher = FilteredSearcher(Searcher(index_dir=tmp_index_dir), clauses=["kind:md"])
 
     hits = cascade_search(
         searcher,  # type: ignore[arg-type]
@@ -67,7 +64,7 @@ def test_fuzzy_pass_honours_date_filter(tmp_path: Path, tmp_index_dir: Path) -> 
     os.utime(stale, (old, old))
     build_index(roots=[root], index_dir=tmp_index_dir, collection="c")
 
-    searcher = _PrefixingSearcher(Searcher(index_dir=tmp_index_dir), clauses=["mtime:week"])
+    searcher = FilteredSearcher(Searcher(index_dir=tmp_index_dir), clauses=["mtime:week"])
     hits = cascade_search(
         searcher,  # type: ignore[arg-type]
         query="glimer",
@@ -100,7 +97,7 @@ def test_fuzzy_pass_honours_two_filters_at_once(tmp_path: Path, tmp_index_dir: P
     os.utime(old_md, (old, old))
     build_index(roots=[root], index_dir=tmp_index_dir, collection="c")
 
-    searcher = _PrefixingSearcher(
+    searcher = FilteredSearcher(
         Searcher(index_dir=tmp_index_dir), clauses=["kind:md", "mtime:week"]
     )
     hits = cascade_search(
@@ -113,3 +110,33 @@ def test_fuzzy_pass_honours_two_filters_at_once(tmp_path: Path, tmp_index_dir: P
 
     names = {Path(h.path).name for h in hits}
     assert names == {"keep.md"}, f"a conjunction leaked: {sorted(names)}"
+
+
+def test_a_nested_filter_keeps_the_synonym_pass(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """The fuzzy pass stands down for ``(kind:md AND kind:md)``; the synonym pass keeps it."""
+    from fnd.synonyms import load_default_synonyms
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "login.md").write_text("# Login\nwe use single sign-on here.\n", encoding="utf-8")
+    (root / "login.txt").write_text("we use single sign-on here.\n", encoding="utf-8")
+    build_index(roots=[root], index_dir=tmp_index_dir, collection="c")
+    query = "(kind:md AND kind:md) AND sso"
+
+    hits = cascade_search(
+        Searcher(index_dir=tmp_index_dir),
+        query=query,
+        threshold=50,
+        limit=50,
+        collection="c",
+        synonyms=load_default_synonyms(),
+    )
+
+    assert {Path(h.path).name for h in hits} == {"login.md"}
+
+
+def test_highlighting_drops_fuzzy_where_the_fuzzy_pass_stands_down() -> None:
+    from fnd.matching import MatchSpec
+
+    assert MatchSpec.from_query("(kind:md AND kind:md) AND glimmer").fuzzy_per_stem == ()
+    assert MatchSpec.from_query("kind:md glimmer").fuzzy_per_stem != ()

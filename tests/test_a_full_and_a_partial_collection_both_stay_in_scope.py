@@ -97,20 +97,20 @@ def test_a_partial_selection_reaches_a_shared_file_only_through_its_source(
     vault = str((tmp_path / "Vault").resolve())
     personaldocs = str((tmp_path / "PersonalDocs").resolve())
 
-    via_vault = searcher._filtered_raw_hits(
+    via_vault = searcher._candidates(
         "markervault",
-        target=50,
+        window=50,
         collection=None,
         metadata_filter=None,
         source_scope={"Personal": [vault]},
-    )
-    via_personaldocs = searcher._filtered_raw_hits(
+    ).hits
+    via_personaldocs = searcher._candidates(
         "markervault",
-        target=50,
+        window=50,
         collection=None,
         metadata_filter=None,
         source_scope={"Personal": [personaldocs]},
-    )
+    ).hits
 
     assert len(via_vault) == 1, via_vault
     assert len(via_personaldocs) == 0, "the Vault note is not in Personal via PersonalDocs"

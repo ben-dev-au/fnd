@@ -80,7 +80,7 @@ __all__ = [
 # term inside a code block is as findable as one in prose.
 #
 # The match logic shells out to the same ``_terms_from_query`` /
-# ``_term_stems`` / Snowball stemmer used everywhere else in the app
+# ``_term_stems`` / index analyser used everywhere else in the app
 # (fnd/render.py:46) so the highlight semantics agree with snippet
 # detection and the per-line plain renderer.
 

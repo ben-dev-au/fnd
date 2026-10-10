@@ -112,9 +112,9 @@ async def test_fusion_preserves_bm25_score_range(cfg: Config, wide_index: Path) 
         # single-pass path. RRF would diverge.
         searcher = app._search.searcher
         assert searcher is not None
-        raw = searcher._filtered_raw_hits(
-            "templates", target=500, collection="notes", metadata_filter=None
-        )
+        raw = searcher._candidates(
+            "templates", window=500, collection="notes", metadata_filter=None
+        ).hits
         bm25 = {(h.parent_id, h.chunk_seq): h.score for h in raw}
         key = (top.parent_id, top.chunk_seq)
         assert key in bm25, "top hit absent from single-pass results"

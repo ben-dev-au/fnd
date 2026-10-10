@@ -12,6 +12,7 @@ from pathlib import Path
 
 import tantivy
 
+from fnd.analysis import register
 from fnd.query import Searcher
 from fnd.query_ast import Term, parse_query_ast
 from fnd.schema import build_schema
@@ -65,7 +66,7 @@ def _index(tmp_path: Path) -> Path:
     idx = tmp_path / "idx"
     idx.mkdir()
     (idx / ".fnd-schema-version").write_text(str(SCHEMA_VERSION))
-    index = tantivy.Index(build_schema(), path=str(idx))
+    index = register(tantivy.Index(build_schema(), path=str(idx)))
     w = index.writer(15_000_000)
     for pid, mt in (("a.md", 150), ("b.md", 5)):
         d = tantivy.Document()

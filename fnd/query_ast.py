@@ -102,7 +102,7 @@ Node = Term | Phrase | Wildcard | Fuzzy | Regex | Boosted | Not | Required | And
 
 
 # ── Tokeniser ────────────────────────────────────────────────────────
-# A token is (kind, value): LP RP AND OR NOT CARET ATOM.
+# A token is (kind, value): LP RP AND OR NOT REQ CARET ATOM.
 def _tokenize(s: str) -> list[tuple[str, str]]:
     toks: list[tuple[str, str]] = []
     buf: list[str] = []
@@ -163,6 +163,10 @@ def _tokenize(s: str) -> list[tuple[str, str]]:
                     j += 1
                 i = j
                 continue
+            if buf in (["-"], ["+"]):
+                # ``-(…)`` / ``+(…)``: the sign applies to the whole group.
+                toks.append(("NOT", "NOT") if buf[0] == "-" else ("REQ", "+"))
+                buf.clear()
             flush()
             toks.append(("LP", "("))
             i += 1
@@ -237,7 +241,7 @@ class _Parser:
             if kind == "OR":
                 self._next()
                 children.append(self._parse_and())
-            elif kind in ("ATOM", "LP", "NOT"):  # implicit adjacency = OR
+            elif kind in ("ATOM", "LP", "NOT", "REQ"):  # implicit adjacency = OR
                 children.append(self._parse_and())
             else:
                 break
@@ -257,10 +261,13 @@ class _Parser:
         return kept[0] if len(kept) == 1 else And(tuple(kept))
 
     def _parse_unary(self) -> Node | None:
-        if self._peek()[0] == "NOT":
+        kind = self._peek()[0]
+        if kind in ("NOT", "REQ"):
             self._next()
             child = self._parse_unary()
-            return Not(child) if child is not None else None
+            if child is None:
+                return None
+            return Not(child) if kind == "NOT" else Required(child)
         return self._parse_atom()
 
     def _parse_atom(self) -> Node | None:
@@ -312,9 +319,9 @@ def _classify_core(value: str) -> Node | None:
     rm = _REGEX_RE.match(value)
     if rm:
         return Regex(rm.group(1))  # verbatim — lowercasing corrupts \D/\B/named groups
-    fm = _FUZZY_RE.match(value)
-    if fm:
-        return Fuzzy(fm.group(1), min(int(fm.group(2)), FUZZY_MAX) if fm.group(2) else None)
+    fuzzy = fuzzy_word(value)
+    if fuzzy is not None:
+        return fuzzy
     wm = _WILDCARD_RE.match(value)
     if wm:
         return Wildcard(value, prefix=wm.group(1))
@@ -337,12 +344,26 @@ def walk(node: Node) -> Iterator[Node]:
 
 def resolves_in_body_only(node: Node) -> bool:
     """Whether ``node`` holds a leaf only the body's term dictionary resolves:
-    a wildcard, fuzzy or regex term, or a phrase with a wildcard in it."""
+    a wildcard, fuzzy or regex term, or a phrase with a pattern word in it."""
     return any(
         isinstance(n, Wildcard | Fuzzy | Regex)
-        or (isinstance(n, Phrase) and _GLOB_RE.search(n.text) is not None)
+        or (isinstance(n, Phrase) and any(is_phrase_pattern(w) for w in n.text.split()))
         for n in walk(node)
     )
+
+
+def fuzzy_word(word: str) -> Fuzzy | None:
+    """``word`` as a fuzzy term (``term~`` / ``term~N``), or None."""
+    fm = _FUZZY_RE.match(word)
+    if fm is None:
+        return None
+    return Fuzzy(fm.group(1), min(int(fm.group(2)), FUZZY_MAX) if fm.group(2) else None)
+
+
+def is_phrase_pattern(word: str) -> bool:
+    """Whether a phrase or proximity word is a pattern search resolves to the stems
+    it matches (a glob or a fuzzy term), not a literal word."""
+    return _GLOB_RE.search(word) is not None or _FUZZY_RE.match(word) is not None
 
 
 def parse_query_ast(content: str) -> Node | None:

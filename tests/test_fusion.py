@@ -22,6 +22,7 @@ import pytest
 
 from fnd.fusion import (
     SubQuery,
+    _attribute_sources,
     auto_subqueries,
     fusion_search,
     parse_multi_input,
@@ -77,15 +78,21 @@ def test_rrf_fuse_dedupes_across_rankings() -> None:
     assert len(fused) == 2
 
 
-def test_rrf_fuse_position_bonus_lifts_rank_1() -> None:
-    """A doc that is rank 1 in any sub-query gets a +0.05 position bonus,
-    rank 2/3 get +0.02; rank-1-in-one beats rank-2-in-one with same RRF base."""
-    # Two rankings; "a" is rank 1 in both, "b" is rank 2 in both.
-    r1 = [_hit("a"), _hit("b")]
-    r2 = [_hit("a"), _hit("b")]
-    fused = rrf_fuse([r1, r2], weights=[1.0, 1.0])
-    assert fused[0].parent_id == "a"
-    assert fused[1].parent_id == "b"
+def test_a_light_pass_top_does_not_jump_the_lex_runner_up() -> None:
+    """Fusion is RRF alone: rank 1 of a 0.6 pass (0.6/61) stays below lex rank 2
+    (1/62). The old rank-1 bonus put it above."""
+    lex = [_hit("z", score=2.0), _hit("x", score=1.0)]
+    syn = [_hit("y", score=9.0)]
+    fused = rrf_fuse([lex, syn], weights=[1.0, 0.6])
+    assert [h.parent_id for h in fused] == ["z", "x", "y"]
+
+
+def test_equal_scores_in_a_pass_share_a_rank() -> None:
+    """Tied sections fuse to tied scores, so grouping falls back to document order."""
+    ranking = [_hit("a", score=3.0), _hit("b", score=2.0), _hit("c", score=2.0)]
+    fused = rrf_fuse([ranking], weights=[1.0])
+    by_id = {h.parent_id: h.rank_score for h in fused}
+    assert by_id["b"] == by_id["c"] == pytest.approx(1.0 / 62.0)
 
 
 def test_rrf_fuse_weight_dominance() -> None:
@@ -98,31 +105,23 @@ def test_rrf_fuse_weight_dominance() -> None:
     assert fused[0].parent_id == "h"
 
 
-def test_rrf_position_bonus_scales_with_weight() -> None:
-    """The rank-1 position bonus is scaled by the sub-query weight, so the
-    top hit of a high-weight pass isn't out-bonused by a doc that merely
-    sits at rank 1 in several low-weight passes.
-
-    Mirrors the graduated-slop case: doc ``a`` is rank 1 in the heavy exact
-    phrase pass and rank 2 in the lighter slop/lex passes; doc ``b`` is
-    rank 1 in the three lighter passes only. ``a`` (the exact-phrase hit)
-    must win."""
-    a, b = _hit("a"), _hit("b")
-    heavy = [a]  # exact phrase, weight 2.0 — a at rank 1
-    near = [b, a]  # weight 1.5 — b rank 1, a rank 2
+def test_a_heavy_pass_top_beats_light_pass_tops() -> None:
+    """``a`` is rank 1 of the heavy exact-phrase pass and rank 2 of three
+    lighter ones; ``b`` is rank 1 of the lighter ones only. ``a`` must win."""
+    a, b = _hit("a", score=1.0), _hit("b", score=2.0)
+    heavy = [a]  # exact phrase, weight 2.0: a at rank 1
+    near = [b, a]  # weight 1.5: b rank 1, a rank 2
     loose = [b, a]  # weight 1.0
     lex = [b, a]  # weight 1.0
     fused = rrf_fuse([heavy, near, loose, lex], weights=[2.0, 1.5, 1.0, 1.0])
     assert fused[0].parent_id == "a"
 
 
-def test_rrf_fuse_score_field_holds_rrf_value() -> None:
-    """Fused hits' :attr:`Hit.score` is the RRF score, not the original BM25.
-    Required for downstream re-sorting and for displaying fusion ranks."""
-    fused = rrf_fuse([[_hit("a", score=999.0)]], weights=[1.0], k=60)
-    # The rank-1 entry: weight / (k + 1) + position_bonus(0.05) = 1/61 + 0.05
-    expected = 1.0 / 61.0 + 0.05
-    assert fused[0].score == pytest.approx(expected, rel=1e-6)
+def test_rrf_fuse_ranks_by_rrf_and_keeps_bm25_for_display() -> None:
+    """``rank_score`` is the RRF sum; ``score`` stays the best BM25."""
+    fused = rrf_fuse([[_hit("a", score=999.0)], [_hit("a", score=5.0)]], weights=[1.0, 0.5], k=60)
+    assert fused[0].rank_score == pytest.approx(1.0 / 61.0 + 0.5 / 61.0, rel=1e-6)
+    assert fused[0].score == 999.0
 
 
 def test_rrf_fuse_dedup_uses_parent_id_and_chunk_seq() -> None:
@@ -396,8 +395,8 @@ def test_fusion_search_pass_index_3_for_phrase_primary(
 def test_fusion_search_pass_index_2_for_synonym_primary(
     fusion_corpus: Path,
 ) -> None:
-    """A doc only reachable via the synonym sub-query is tagged pass_index=2,
-    matching the cascade synonym-pass glyph (⊕)."""
+    """A doc the synonym pass ranks above the literal pass is tagged pass_index=2,
+    matching the cascade synonym-pass glyph (⊕), though it also matches "breaking"."""
     s = Searcher(index_dir=fusion_corpus)
     table = SynonymTable.from_groups([["susy", "supersymmetry"]])
     hits = fusion_search(s, query="susy breaking", limit=10, synonyms=table)
@@ -461,3 +460,23 @@ def test_format_hit_label_shows_phrase_glyph_for_pass_index_3() -> None:
     assert phrase_label != lex_label
     assert "~" not in phrase_label  # not the fuzzy glyph
     assert "⊕" not in phrase_label  # not the synonym glyph
+
+
+def test_the_phrase_glyph_wins_wherever_the_phrase_pass_found_the_doc() -> None:
+    """``a`` is lex rank 1 and phrase rank 2; it still contains the exact phrase."""
+    a, b = _hit("a", score=2.0), _hit("b", score=1.0)
+    subs = [SubQuery("p", 2.0, "phrase"), SubQuery("l", 1.0, "lex")]
+    sources = _attribute_sources([[b, a], [a, b]], subs)
+    assert sources[("a", 0)] == "phrase"
+
+
+def test_lex_and_synonym_split_by_rank_with_lex_on_a_tie() -> None:
+    led, both = _hit("led", score=3.0), _hit("both", score=2.0)
+    lex = [_hit("x", score=9.0), _hit("y", score=8.0), both, led]
+    syn = [led, both]
+    subs = [SubQuery("l", 1.0, "lex"), SubQuery("s", 0.6, "syn")]
+    sources = _attribute_sources([lex, syn], subs)
+    assert sources[("led", 0)] == "syn"
+    assert sources[("both", 0)] == "syn"
+    tie = _attribute_sources([[_hit("t")], [_hit("t")]], subs)
+    assert tie[("t", 0)] == "lex"

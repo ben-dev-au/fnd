@@ -16,7 +16,7 @@ Auto-derived sub-queries:
   when the expansion actually changes the query string.
 
 A ``stem`` sub-query is omitted: the body field is already analysed with
-``en_stem`` (Snowball English), so an explicit stemmed pass would duplicate
+``fnd_text`` (folded Snowball English), so an explicit stemmed pass would duplicate
 the lex pass.
 
 Pass-index attribution: each fused hit is tagged with ``pass_index``
@@ -40,13 +40,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, overload
 
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
-from fnd.query import Hit, Searcher, SourceScope
+from fnd.query import CandidatePool, Hit, Searcher, SourceScope, candidate_window
 from fnd.query_errors import QuerySyntaxError
 from fnd.query_spans import has_phrase
 from fnd.render import keep_shown
 from fnd.synonyms import SynonymTable, compound_table, expand
+from fnd.typos import corrections, rare_spellings, respelt
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from fnd.tag_query import TagFilter
 
 # A field qualifier (``kind:pdf``, ``c:papers``) anywhere in the query — phrase
@@ -69,26 +72,27 @@ _OPERATOR_SYNTAX_RE: Final = re.compile(
 # paper and what QMD uses.
 _RRF_K_DEFAULT = 60
 
-# Tiny additive bonus for being rank 1 / 2 / 3 in any sub-query. Tunes RRF
-# (which is otherwise smooth) toward a slight preference for the "very top"
-# of any single sub-query. Scaled by the sub-query weight (see
-# :func:`_rrf_contribution`) so a heavy pass's rank-1 isn't out-bonused
-# by a doc sitting at rank 1 across several light passes.
-_POS_BONUS_RANK_1 = 0.05
-_POS_BONUS_RANK_2_3 = 0.02
-
 
 def _rrf_contribution(weight: float, rank: int, k: int = _RRF_K_DEFAULT) -> float:
-    """One sub-query's contribution to a doc's fused score: the RRF base
-    ``weight / (k + rank)`` plus a weight-scaled rank-1/2/3 position bonus.
-    Single source of truth for the fusion math (used by the fuser, the
-    source attributor, and the explain trace) so they can never drift."""
-    base = weight / (k + rank)
-    if rank == 1:
-        return base + weight * _POS_BONUS_RANK_1
-    if rank in (2, 3):
-        return base + weight * _POS_BONUS_RANK_2_3
-    return base
+    """One sub-query's contribution to a doc's fused score, ``weight / (k + rank)``.
+    Shared by the fuser, the source attributor and the explain trace."""
+    return weight / (k + rank)
+
+
+def _ranked(hits: list[Hit]) -> Iterator[tuple[int, Hit]]:
+    """``(rank, hit)`` in order, equal scores sharing a rank (1, 2, 2, 4), so a
+    pass's tied sections stay tied after fusion and fall to document order."""
+    rank = 0
+    previous: float | None = None
+    for i, h in enumerate(hits, start=1):
+        if h.score != previous:
+            rank, previous = i, h.score
+        yield rank, h
+
+
+def rank_by_position(hits: list[Hit]) -> list[Hit]:
+    """``hits`` with ``rank_score`` set from list position, on fusion's scale."""
+    return [dataclasses.replace(h, rank_score=_rrf_contribution(1.0, r)) for r, h in _ranked(hits)]
 
 
 # Default per-source weights.
@@ -97,6 +101,10 @@ _DEFAULT_WEIGHTS: dict[str, float] = {
     "lex": 1.0,
     "syn": 0.6,
 }
+
+# The query the user meant: it must outrank the literal pass, which holds a word
+# no document has. At the literal pass's weight the two only swap ranks and tie.
+_TYPO_WEIGHT = 2.0
 
 # Map source name → pass_index used by the TUI glyph table.
 # Keep aligned with cascade: 0 = neutral (lex/exact), 1 = fuzzy,
@@ -107,6 +115,7 @@ _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "compound": 1,
     "syn": 2,
     "phrase": 3,
+    "typo": 1,
 }
 
 # Strong-signal bypass thresholds. Operate on a normalised BM25 score
@@ -151,10 +160,10 @@ class MultiInput:
 
     ``intent`` does NOT produce a sub-query. It influences:
 
-    * regime triage — intent disables strong-signal bypass
+    * regime triage: intent disables strong-signal bypass
       (:func:`fnd.layered._evaluate_strong_signal`)
-    * snippet selection — chunks containing intent tokens preferred
-      (:func:`fnd.query._make_snippet`)
+    * snippet selection: chunks containing intent tokens preferred, once a
+      shown hit is materialised (:func:`fnd.query.materialise`)
     """
 
     subqueries: list[SubQuery]
@@ -167,48 +176,31 @@ def rrf_fuse(
     weights: list[float],
     k: int = _RRF_K_DEFAULT,
 ) -> list[Hit]:
-    """Fuse parallel ranked lists with Reciprocal Rank Fusion.
+    """Fuse ranked lists with Reciprocal Rank Fusion, deduplicated by
+    ``(parent_id, chunk_seq)`` and sorted by the fused score.
 
-    Formula (per ranking, per doc d at rank r, 1-indexed)::
-
-        contribution = weight / (k + r) + weight * position_bonus(r)
-
-    where ``position_bonus`` is +0.05 at rank 1, +0.02 at ranks 2-3,
-    0 otherwise (see :func:`_rrf_contribution`). The bonus is weight-scaled
-    so a heavy pass's top hit isn't out-bonused by a doc sitting at rank 1
-    across several light passes. Final score is the sum across all rankings;
-    output is deduplicated by ``(parent_id, chunk_seq)`` and sorted descending.
-
-    The returned :class:`Hit` records carry the *fused* score in ``score``
-    (the original BM25 is discarded after fusion — re-sorting downstream
-    must use this fused score).
+    A doc at rank ``r`` of a list with weight ``w`` earns ``w / (k + r)``; the
+    sum is its ``rank_score``. ``score`` becomes its best BM25 across the lists.
     """
     if not rankings or not any(rankings):
         return []
     assert len(rankings) == len(weights), "weights must match rankings count"
 
     fused_score: dict[tuple[str, int], float] = {}
+    best_bm25: dict[tuple[str, int], float] = {}
     representative: dict[tuple[str, int], Hit] = {}
-    # Track the source of the largest single contribution per doc; this drives
-    # ``pass_index`` attribution after fusion.
-    top_source_weight: dict[tuple[str, int], float] = {}
-
     for ranking, weight in zip(rankings, weights, strict=True):
-        for rank, hit in enumerate(ranking, start=1):
+        for rank, hit in _ranked(ranking):
             key = (hit.parent_id, hit.chunk_seq)
-            contribution = _rrf_contribution(weight, rank, k)
-            fused_score[key] = fused_score.get(key, 0.0) + contribution
-            # Keep the first-seen Hit object as the representative — its body
-            # snippet, page, etc. are equivalent across rankings (same chunk).
+            fused_score[key] = fused_score.get(key, 0.0) + _rrf_contribution(weight, rank, k)
+            best_bm25[key] = max(hit.score, best_bm25.get(key, hit.score))
             representative.setdefault(key, hit)
-            if contribution > top_source_weight.get(key, -1.0):
-                top_source_weight[key] = contribution
 
-    out: list[Hit] = []
-    for key, total in fused_score.items():
-        rep = representative[key]
-        out.append(_with_score(rep, total))
-    out.sort(key=lambda h: h.score, reverse=True)
+    out = [
+        dataclasses.replace(representative[key], score=best_bm25[key], rank_score=total)
+        for key, total in fused_score.items()
+    ]
+    out.sort(key=lambda h: h.rank_key, reverse=True)
     return out
 
 
@@ -240,24 +232,12 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # or ``""a b"~N`` — and crash the parser. Also skip when the query carries a
     # field qualifier (``kind:pdf``, ``c:papers``): a phrase over the raw qualifier
     # text is meaningless and quoting it mangles the qualifier.
-    carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q or has_phrase(q)
     carries_field_syntax = bool(_FIELD_SYNTAX_RE.search(q))
     carries_operator_syntax = bool(_OPERATOR_SYNTAX_RE.search(q))
-    if (
-        len(q.split()) >= 2
-        and not carries_phrase_intent
-        and not carries_field_syntax
-        and not carries_operator_syntax
-    ):
+    if len(q.split()) >= 2 and _is_bag_of_words(q):
         subs.append(SubQuery(query=f'"{q}"', weight=_DEFAULT_WEIGHTS["phrase"], source="phrase"))
     subs.append(SubQuery(query=q, weight=_DEFAULT_WEIGHTS["lex"], source="lex"))
-    if (
-        synonyms is not None
-        and synonyms.groups
-        and not carries_phrase_intent
-        and not carries_field_syntax
-        and not carries_operator_syntax
-    ):
+    if synonyms is not None and synonyms.groups and _is_bag_of_words(q):
         expanded = expand(q, synonyms)
         if expanded != q:
             subs.append(SubQuery(query=expanded, weight=_DEFAULT_WEIGHTS["syn"], source="syn"))
@@ -281,6 +261,28 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
                 )
             )
     return subs
+
+
+def _is_bag_of_words(query: str) -> bool:
+    """No phrase, proximity, field qualifier or operator: plain words only."""
+    return not (
+        '"' in query
+        or "{" in query
+        or "NEAR/" in query
+        or has_phrase(query)
+        or _FIELD_SYNTAX_RE.search(query)
+        or _OPERATOR_SYNTAX_RE.search(query)
+    )
+
+
+def query_corrections(searcher: Searcher, query: str) -> dict[str, tuple[str, ...]]:
+    """Respellings for a plain-words query's unindexed words (see :mod:`fnd.typos`)."""
+    return corrections(searcher, query.split()) if _is_bag_of_words(query) else {}
+
+
+def query_rare_spellings(searcher: Searcher, query: str) -> dict[str, tuple[str, ...]]:
+    """Respellings for a plain-words query's rare indexed words (see :mod:`fnd.typos`)."""
+    return rare_spellings(searcher, query.split()) if _is_bag_of_words(query) else {}
 
 
 def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> MultiInput:
@@ -338,9 +340,9 @@ def fusion_search(
     subqueries: list[SubQuery] | None = ...,
     metadata_filter: str | None = ...,
     source_scope: SourceScope | None = ...,
-    precomputed_lex_ranking: list[Hit] | None = ...,
-    intent: str | None = ...,
+    precomputed_lex: CandidatePool | None = ...,
     tag_filter: TagFilter | None = ...,
+    corrections: dict[str, tuple[str, ...]] | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -356,9 +358,9 @@ def fusion_search(
     subqueries: list[SubQuery] | None = ...,
     metadata_filter: str | None = ...,
     source_scope: SourceScope | None = ...,
-    precomputed_lex_ranking: list[Hit] | None = ...,
-    intent: str | None = ...,
+    precomputed_lex: CandidatePool | None = ...,
     tag_filter: TagFilter | None = ...,
+    corrections: dict[str, tuple[str, ...]] | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], FusionTrace]: ...
 
@@ -373,106 +375,82 @@ def fusion_search(
     subqueries: list[SubQuery] | None = None,
     metadata_filter: str | None = None,
     source_scope: SourceScope | None = None,
-    precomputed_lex_ranking: list[Hit] | None = None,
-    intent: str | None = None,
+    precomputed_lex: CandidatePool | None = None,
     tag_filter: TagFilter | None = None,
+    corrections: dict[str, tuple[str, ...]] | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], FusionTrace]:
-    """Run sub-queries in parallel and RRF-fuse the results.
-
-    When ``subqueries`` is None, calls :func:`auto_subqueries`. When
-    explicit sub-queries are supplied (e.g. from a ``:multi`` panel),
-    auto-derivation is skipped — only the supplied list runs.
-
-    Each sub-query is issued through ``searcher._filtered_raw_hits`` so
-    the metadata filter (frontmatter post-filter) and the ``source_path``
-    scope apply to every sub-ranking. Sub-queries see identical
-    analyzer/field-boost configuration as the single-pass search path.
-    Results are deduplicated by ``(parent_id, chunk_seq)`` and sorted
-    by RRF position; ``pass_index`` is set from the highest-weighted
-    contributing source.
-
-    **Score semantics**: RRF is used for *ordering*. The returned
-    ``Hit.score`` is the maximum BM25 score across the sub-queries that
-    surfaced the doc — so the TUI's score column stays in the BM25
-    range users can compare to (typically 1-40 for templates-style
-    queries) rather than the 0.0001-0.07 range RRF arithmetic would
-    produce. The internal RRF total still drives the sort order.
-
-    ``precomputed_lex_ranking``: when supplied, the lex sub-query reuses
-    this list instead of issuing a fresh ``_filtered_raw_hits`` call. Lets
-    the regime probe in :mod:`fnd.layered` double as fusion's lex pass,
-    saving one Tantivy round-trip on every non-bypass query.
-
-    ``with_trace``: when ``True``, returns ``(hits, FusionTrace)`` so
-    callers (CLI ``--explain`` / TUI ``:explain``) can inspect which
-    sub-queries ran, per-hit BM25 scores, RRF contributions, and
-    primary-source attribution. Default ``False`` returns the existing
-    ``list[Hit]`` unchanged.
-    """
+    """Run the sub-queries (``auto_subqueries`` unless given) and fuse them by RRF
+    position. Every fused chunk returns, light, for the caller to group to ``limit``
+    files; ``Hit.rank_score`` is the fused score, ``Hit.score`` the best BM25."""
     subs = subqueries if subqueries is not None else auto_subqueries(query, synonyms=synonyms)
+    fixes: dict[str, tuple[str, ...]] = {}
+    if subqueries is None:
+        fixes = query_corrections(searcher, query) if corrections is None else corrections
+        if fixes:
+            subs = [*subs, SubQuery(respelt(query.split(), fixes), _TYPO_WEIGHT, "typo")]
     if not subs:
         if with_trace:
             return [], _empty_fusion_trace(query)
         return []
 
-    def _issue(q: str) -> list[Hit]:
-        # Oversample per sub-query so the post-fusion grouper has enough chunks
-        # to fill ``limit`` files. Mirrors the ``target=limit * 10`` contract the
-        # old single-pass ``Searcher.search_grouped`` used.
-        return searcher._filtered_raw_hits(
+    def _issue(q: str) -> CandidatePool:
+        return searcher._candidates(
             q,
-            target=limit * 10,
+            window=candidate_window(limit),
             collection=collection,
             metadata_filter=metadata_filter,
             source_scope=source_scope,
-            intent=intent,
             tag_filter=tag_filter,
+            min_files=limit,
         )
 
     rankings: list[list[Hit]] = []
     degraded: list[bool] = []
+    exhausted: list[bool] = []
+    all_files: list[bool] = []
     for sub in subs:
         if sub.source == "lex":
             # The lex pass carries the user's literal query: reuse the regime
             # probe's result when supplied, else issue it. A syntax error here is
             # the user's to fix, so it must propagate — the Searcher safety-net
             # and the TUI's inline notice both rely on malformed queries raising.
-            rankings.append(
-                precomputed_lex_ranking
-                if precomputed_lex_ranking is not None
-                else _issue(sub.query)
-            )
+            pool = precomputed_lex if precomputed_lex is not None else _issue(sub.query)
+            rankings.append(pool.hits)
             degraded.append(False)
+            exhausted.append(pool.exhausted)
+            all_files.append(pool.all_files)
             continue
         # Auto-derived passes (phrase / syn): a malformed sub-query degrades to
         # an empty ranking rather than aborting the whole fused search.
         try:
-            issued = _issue(sub.query)
-            rankings.append(keep_shown(issued, query) if sub.source == "compound" else issued)
+            pool = _issue(sub.query)
+            rankings.append(keep_shown(pool.hits, query) if sub.source == "compound" else pool.hits)
             degraded.append(False)
+            exhausted.append(pool.exhausted)
+            all_files.append(pool.all_files)
         except QuerySyntaxError:
             rankings.append([])
             degraded.append(True)
+            exhausted.append(True)
+            all_files.append(True)
 
     weights = [s.weight for s in subs]
     fused = rrf_fuse(rankings, weights=weights)
 
     primary_source = _attribute_sources(rankings, subs)
-    bm25_scores = _bm25_score_map(rankings)
-    out: list[Hit] = []
-    for h in fused[:limit]:
-        key = (h.parent_id, h.chunk_seq)
-        src = primary_source.get(key, "lex")
-        # Restore the BM25 score from whichever sub-query surfaced this
-        # doc. RRF replaced ``score`` with the fused position-based
-        # value; for the user-facing score we want the original BM25.
-        bm25 = bm25_scores.get(key, h.score)
-        out.append(_with_pass_index(_with_score(h, bm25), _SOURCE_TO_PASS_INDEX.get(src, 0)))
+    out = [
+        _with_pass_index(
+            h, _SOURCE_TO_PASS_INDEX.get(primary_source.get((h.parent_id, h.chunk_seq), "lex"), 0)
+        )
+        for h in fused
+    ]
 
     if not with_trace:
         return out
-    trace = _build_fusion_trace(query, subs, rankings, degraded, primary_source, out)
+    trace = _build_fusion_trace(
+        query, subs, rankings, degraded, exhausted, all_files, primary_source, out, fixes
+    )
     return out, trace
 
 
@@ -481,8 +459,11 @@ def _build_fusion_trace(
     subs: list[SubQuery],
     rankings: list[list[Hit]],
     degraded: list[bool],
+    exhausted: list[bool],
+    all_files: list[bool],
     primary_source: dict[tuple[str, int], str],
     out: list[Hit],
+    fixes: dict[str, tuple[str, ...]],
 ) -> FusionTrace:
     sub_traces = [
         SubQueryTrace(
@@ -494,8 +475,10 @@ def _build_fusion_trace(
             bm25_second=r[1].score if len(r) > 1 else 0.0,
             rrf_k=_RRF_K_DEFAULT,
             degraded=d,
+            exhausted=e,
+            all_files=f,
         )
-        for s, r, d in zip(subs, rankings, degraded, strict=True)
+        for s, r, d, e, f in zip(subs, rankings, degraded, exhausted, all_files, strict=True)
     ]
     # Per-hit contributions: walk each ranking once, accumulate
     # rank/bm25/rrf for each (parent_id, chunk_seq) appearing in ``out``.
@@ -504,7 +487,7 @@ def _build_fusion_trace(
     rank_per: dict[tuple[str, int], dict[str, int]] = {k: {} for k in out_keys}
     rrf_per: dict[tuple[str, int], dict[str, float]] = {k: {} for k in out_keys}
     for ranking, sub in zip(rankings, subs, strict=True):
-        for rank, h in enumerate(ranking, start=1):
+        for rank, h in _ranked(ranking):
             key = (h.parent_id, h.chunk_seq)
             if key not in bm25_per:
                 continue
@@ -532,9 +515,8 @@ def _build_fusion_trace(
         subqueries=sub_traces,
         contributions=contribution_traces,
         rrf_k=_RRF_K_DEFAULT,
-        pos_bonus_rank_1=_POS_BONUS_RANK_1,
-        pos_bonus_rank_2_3=_POS_BONUS_RANK_2_3,
         default_weights=dict(_DEFAULT_WEIGHTS),
+        corrections=fixes,
     )
 
 
@@ -544,54 +526,32 @@ def _empty_fusion_trace(query: str) -> FusionTrace:
         subqueries=[],
         contributions=[],
         rrf_k=_RRF_K_DEFAULT,
-        pos_bonus_rank_1=_POS_BONUS_RANK_1,
-        pos_bonus_rank_2_3=_POS_BONUS_RANK_2_3,
         default_weights=dict(_DEFAULT_WEIGHTS),
     )
-
-
-def _bm25_score_map(rankings: list[list[Hit]]) -> dict[tuple[str, int], float]:
-    """Per-doc max BM25 score across sub-queries — the score the user
-    sees in the result row, regardless of which sub-query won fusion."""
-    out: dict[tuple[str, int], float] = {}
-    for ranking in rankings:
-        for hit in ranking:
-            key = (hit.parent_id, hit.chunk_seq)
-            if hit.score > out.get(key, float("-inf")):
-                out[key] = hit.score
-    return out
 
 
 def _attribute_sources(
     rankings: list[list[Hit]], subs: list[SubQuery]
 ) -> dict[tuple[str, int], str]:
-    """Pick a primary source for each doc — the sub-query whose RRF
-    contribution to that doc was largest. Ties favour the higher-weighted
-    sub-query (so ``phrase`` beats ``lex`` for adjacent-term docs)."""
+    """Each doc's primary source: ``phrase`` whenever the phrase pass found it,
+    else the sub-query that ranked it highest, the heavier one on a tie. By
+    contribution alone, a synonym-led doc matching one literal word reads as lex."""
     primary_source: dict[tuple[str, int], str] = {}
-    primary_value: dict[tuple[str, int], float] = {}
+    best: dict[tuple[str, int], tuple[bool, int, float]] = {}
     for ranking, sub in zip(rankings, subs, strict=True):
-        for rank, hit in enumerate(ranking, start=1):
-            contribution = _rrf_contribution(sub.weight, rank)
+        for rank, hit in _ranked(ranking):
             key = (hit.parent_id, hit.chunk_seq)
-            if contribution > primary_value.get(key, -1.0):
-                primary_value[key] = contribution
+            candidate = (sub.source != "phrase", rank, -sub.weight)
+            if key not in best or candidate < best[key]:
+                best[key] = candidate
                 primary_source[key] = sub.source
     return primary_source
 
 
-def _with_score(h: Hit, score: float) -> Hit:
-    """``h`` with a new score.
-
-    ``dataclasses.replace`` rather than an enumerated rebuild: listing the
-    fields by hand silently defaults any field the list forgets, which is how
-    ``line`` went missing on the way to the opener, and then ``body_md`` on the
-    way to the results pane. A replace cannot drop a field that is added later.
-    """
-    return dataclasses.replace(h, score=score)
-
-
 def _with_pass_index(h: Hit, pass_index: int) -> Hit:
-    """``h`` tagged with the pass that produced it — see :func:`_with_score`
-    on why this is a replace."""
+    """``h`` tagged with the pass that produced it.
+
+    A replace, not an enumerated rebuild: a hand-listed rebuild silently
+    defaults any field it forgets, as ``line`` and then ``body_md`` once were.
+    """
     return dataclasses.replace(h, pass_index=pass_index)

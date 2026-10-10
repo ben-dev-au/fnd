@@ -9,11 +9,12 @@ import pytest
 from rich.text import Text
 from textual.content import Span
 
-from fnd.matching import MatchSpec, _stem, proximity_qualifying_indices
+from fnd.analysis import index_token
+from fnd.matching import MatchSpec, proximity_qualifying_indices, proximity_tier_indices
 
 
 def _stems(*words: str) -> tuple[str, ...]:
-    return tuple(_stem(w) for w in words)
+    return tuple(index_token(w) for w in words)
 
 
 def _tokens(index_to_stem: dict[int, str], length: int) -> list[str]:
@@ -87,6 +88,13 @@ def test_brace_proximity_populates_group():
     assert spec.proximity_groups == ((_stems("vulnerability", "threat", "risk"), 5),)
     # Group terms still drive ordinary word matching.
     assert _stems("vulnerability", "threat", "risk")[0] in spec.exact_stems
+
+
+def test_a_fuzzy_member_reaches_its_near_misses_inside_the_window():
+    spec = MatchSpec.from_query("{3}cryptography~ keys")
+    assert spec.proximity_groups == ((("cryptography~", index_token("keys")), 3),)
+    toks = _tokens({1: index_token("cryptographic"), 2: index_token("keys")}, 4)
+    assert proximity_tier_indices(toks, spec.proximity_groups) == ({1, 2}, {1, 2})
 
 
 def test_near_proximity_populates_group():

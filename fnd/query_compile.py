@@ -1,9 +1,9 @@
 """Lower a :mod:`fnd.query_ast` tree into a Tantivy ``Query``.
 
-Leaves reuse the existing resolvers — plain terms/phrases through the analyzer
-(``parse_query`` for stemming parity), wildcards/fuzzy through the stemmed-
-dictionary expanders (BM25-scored ``term_query`` ORs), regex/glob through
-``regex_query``. Internal nodes become ``boolean_query`` clauses: ``AND``→Must,
+Leaves reuse the existing resolvers: plain terms/phrases through the analyser
+(``parse_query`` for stemming parity), fuzzy through the stem dictionary and
+wildcards/regexes through the word dictionary (BM25-scored ``term_query`` ORs,
+see :mod:`fnd.query_resolvers`). Internal nodes become ``boolean_query`` clauses: ``AND``→Must,
 ``OR``/adjacency→Should, ``NOT``/``-``→MustNot, ``+``→Must (forced). A group with
 no positive clause gets an implicit ``all_query`` Must so a pure-negative still
 matches a document set to subtract from.
@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import tantivy
 from tantivy import Occur, Query
 
+from fnd.analysis import fold, index_token
 from fnd.query_ast import (
     And,
     Boosted,
@@ -29,12 +30,14 @@ from fnd.query_ast import (
     Required,
     Term,
     Wildcard,
+    fuzzy_word,
+    is_phrase_pattern,
 )
 from fnd.query_errors import QuerySyntaxError
 from fnd.query_escape import literal, literal_phrase
 from fnd.query_fields import resolve
 from fnd.query_filters import compile_clause
-from fnd.schema import F_BODY
+from fnd.schema import F_BODY, F_WORDS
 
 if TYPE_CHECKING:
     from fnd.query import Searcher
@@ -87,7 +90,7 @@ class _Compiler:
         if isinstance(n, Fuzzy):
             return self._fuzzy(n)
         if isinstance(n, Regex):
-            return self._regex(n.pattern)
+            return self._ranked_pattern(fold(n.pattern), glob=False)
         if isinstance(n, Boosted):
             return Query.boost_query(self.compile(n.child), n.factor)
         if isinstance(n, And):
@@ -139,62 +142,89 @@ class _Compiler:
 
     def _phrase(self, n: Phrase) -> Query:
         words = n.text.split()
-        if any("*" in w or "?" in w for w in words):
-            # A wildcard inside the phrase: parse_query silently drops ``*`` and
-            # would match the bare (un-indexed) literal, so compile a positional
-            # regex phrase instead — wildcard words become a glob regex, plain
-            # words are stemmed to F_BODY token form (analyzer parity). Like the
-            # other wildcard/fuzzy leaves, this matches F_BODY only.
-            return self._wildcard_phrase(words, n.slop)
+        if any(is_phrase_pattern(w) for w in words):
+            # parse_query drops ``*`` and ``~``, so this is a positional regex phrase on F_BODY.
+            return self._pattern_phrase(words, n.slop)
         return _parse_query(self._s._index, literal_phrase(n.text, slop=n.slop), **self._pk)
 
-    def _wildcard_phrase(self, words: list[str], slop: int) -> Query:
-        from fnd.matching import glob_to_regex
-        from fnd.query_resolvers import fuzzy_stem
-
+    def _pattern_phrase(self, words: list[str], slop: int) -> Query:
+        if len(words) == 1:
+            fuzzy = fuzzy_word(words[0])
+            return self._fuzzy(fuzzy) if fuzzy else self._wildcard(Wildcard(words[0], None))
         patterns: list[str] = []
         for w in words:
-            if "*" in w or "?" in w:
-                patterns.append(glob_to_regex(w))
+            if is_phrase_pattern(w):
+                member = self._phrase_member(fold(w))
+                if member is None:
+                    return Query.empty_query()
+                patterns.append(member)
             else:
-                # Match the en_stem analyzer: it splits on every non-alphanumeric
+                # Match the index analyser: it splits on every non-alphanumeric
                 # char (hyphen, underscore, …) and stems each token, so a
                 # punctuated word like ``cross-entropy`` occupies one phrase
                 # position per sub-token. ``[\W_]`` splits on punctuation AND
                 # underscore while keeping Unicode letters/digits intact.
-                patterns.extend(re.escape(fuzzy_stem(sw)) for sw in re.split(r"[\W_]+", w) if sw)
+                patterns.extend(re.escape(index_token(sw)) for sw in re.split(r"[\W_]+", w) if sw)
         if not patterns:
             return Query.empty_query()
         if len(patterns) == 1:  # tantivy panics on a one-term regex phrase
-            return self._regex(patterns[0])
+            return self._regex(patterns[0], F_BODY)
         try:
             return Query.regex_phrase_query(self._schema, F_BODY, [*patterns], slop=slop)
         except ValueError:
             return Query.empty_query()  # malformed glob contributes nothing
 
+    def _phrase_member(self, glob: str) -> str | None:
+        """A phrase's pattern word as a regex over F_BODY stems, or None when it
+        matches no word (see :func:`fnd.query_resolvers.phrase_member_stems`)."""
+        from fnd.matching import glob_to_regex
+        from fnd.query_resolvers import phrase_member_stems
+
+        stems = phrase_member_stems(self._s, glob)
+        if stems is None:
+            return glob_to_regex(glob)
+        if not stems:
+            return None
+        return "(?:" + "|".join(re.escape(st) for st in sorted(stems)) + ")"
+
     def _wildcard(self, n: Wildcard) -> Query:
         from fnd.query_resolvers import prefix_variants, term_or_query
 
         if n.prefix is not None:  # ``crypto*`` → fast prefix scan
-            q = term_or_query(self._schema, prefix_variants(self._s, n.prefix))
+            q = term_or_query(self._schema, prefix_variants(self._s, fold(n.prefix)), F_WORDS)
             return q if q is not None else Query.empty_query()
         from fnd.matching import glob_to_regex  # infix/leading glob → regex
 
-        return self._regex(glob_to_regex(n.token))
+        return self._ranked_pattern(glob_to_regex(fold(n.token)), glob=True)
 
     def _fuzzy(self, n: Fuzzy) -> Query:
         from fnd.matching import auto_fuzzy_distance
-        from fnd.query_resolvers import fuzzy_stem, fuzzy_variants, term_or_query
+        from fnd.query_resolvers import fuzzy_variants, term_or_query
 
-        stem = fuzzy_stem(n.term)
+        stem = index_token(n.term)
         dist = n.distance if n.distance is not None else auto_fuzzy_distance(stem)
-        q = term_or_query(self._schema, fuzzy_variants(self._s, stem, dist))
+        q = term_or_query(self._schema, fuzzy_variants(self._s, stem, dist, front=True))
         return q if q is not None else Query.empty_query()
 
-    def _regex(self, pattern: str) -> Query:
-        # F_BODY tokens are lowercased (en_stem), and the pattern is kept verbatim
-        # (no destructive lowercasing), so match case-insensitively via ``(?i)``.
+    def _ranked_pattern(self, pattern: str, *, glob: bool) -> Query:
+        """Every match of ``pattern``, ranked by the terms it matched: a regex
+        query alone scores each hit 1.0, leaving index order."""
+        from fnd.query_resolvers import PATTERN_TERMS, blended_term_query, pattern_variants
+
+        matched = self._regex(pattern)
+        variants = pattern_variants(self._s, pattern, glob=glob) or {}
+        docs = self._s._searcher.num_docs
+        ranked = blended_term_query(self._schema, list(variants)[:PATTERN_TERMS], variants, docs)
+        if ranked is None:
+            return matched
+        return Query.boolean_query(
+            [(Occur.Must, Query.const_score_query(matched, 0.0)), (Occur.Should, ranked)]
+        )
+
+    def _regex(self, pattern: str, field: str = F_WORDS) -> Query:
+        # Index tokens are lowercased and folded (fnd.analysis); the pattern is kept
+        # verbatim, so match case-insensitively via ``(?i)``.
         try:
-            return Query.regex_query(self._schema, F_BODY, f"(?i){pattern}")
+            return Query.regex_query(self._schema, field, f"(?i){pattern}")
         except ValueError:
             return Query.empty_query()  # malformed regex/glob contributes nothing

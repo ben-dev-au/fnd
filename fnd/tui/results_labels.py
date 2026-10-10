@@ -427,12 +427,11 @@ def _format_file_label(
         shape_cells = 1 + cell_len(mark.shape) if mark and mark.shape else 0
         name = _elide_middle_keep_suffix(name, max(1, name_budget - cell_len(marker) - shape_cells))
     label = _build_label(f"{marker}{name}", g.top_score, max_score)
-    if mark is None:
-        return label
-    style = mark_style(mark.colour)
-    suffix = Path(name).suffix
-    if suffix:
-        label.stylize(style, len(label) - len(suffix))
-    if mark.shape:
-        label.append(f" {mark.shape}", style=style)
+    if mark is not None:
+        style = mark_style(mark.colour)
+        suffix = Path(name).suffix
+        if suffix:
+            label.stylize(style, len(label) - len(suffix))
+        if mark.shape:
+            label.append(f" {mark.shape}", style=style)
     return label

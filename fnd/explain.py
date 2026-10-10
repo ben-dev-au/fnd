@@ -10,6 +10,10 @@ ran — no extra computation, just retention of internal state.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fnd.matching import MatchSpec
 
 
 @dataclass(slots=True, frozen=True)
@@ -29,6 +33,8 @@ class StrongSignalTrace:
     threshold_gap: float
     fired: bool
     disabled_by_intent: bool
+    # A query word was respelt, so the probe scored the query without it.
+    disabled_by_respelling: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -43,6 +49,8 @@ class SubQueryTrace:
     bm25_second: float
     rrf_k: int
     degraded: bool = False  # sub-query rejected by Tantivy → forced to empty
+    exhausted: bool = True  # every match was read, so no chunk sits beyond the pool
+    all_files: bool = True  # every matching file has a hit in the pool
 
 
 @dataclass(slots=True, frozen=True)
@@ -53,10 +61,10 @@ class HitContribution:
     chunk_seq: int
     bm25_per_source: dict[str, float]  # raw BM25 keyed by source name
     rank_per_source: dict[str, int]  # 1-indexed rank in each sub-query; 0 = absent
-    rrf_per_source: dict[str, float]  # weight / (k + rank) + position bonus
+    rrf_per_source: dict[str, float]  # weight / (k + rank), equal scores sharing a rank
     fused_total: float  # sum of rrf_per_source
     primary_source: str
-    final_score: float  # the BM25 score restored to Hit.score
+    final_score: float  # Hit.score: the best BM25, for display
 
 
 @dataclass(slots=True, frozen=True)
@@ -65,9 +73,9 @@ class FusionTrace:
     subqueries: list[SubQueryTrace]
     contributions: list[HitContribution]  # ordered as fusion returned them
     rrf_k: int
-    pos_bonus_rank_1: float
-    pos_bonus_rank_2_3: float
     default_weights: dict[str, float] = field(default_factory=dict)
+    # Unindexed query words and the respellings the typo pass searched instead.
+    corrections: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -78,6 +86,8 @@ class CascadePassTrace:
     hit_count: int  # hits this pass returned
     new_count: int  # hits added after dedup against earlier passes
     bm25_top: float
+    exhausted: bool = True  # every match was read, so no chunk sits beyond the pool
+    all_files: bool = True  # every matching file has a hit in the pool
 
 
 @dataclass(slots=True, frozen=True)
@@ -109,6 +119,39 @@ class SearchTrace:
     # cap and the relative score threshold.
     files_truncated: bool = False
     sections_truncated: bool = False
+    # The stems each phrase or proximity wildcard searched (MatchSpec.phrase_globs).
+    phrase_globs: tuple[tuple[str, frozenset[str] | None], ...] = ()
+    # Rare query words some file holds, and the commoner respellings that filled
+    # the free result slots below every exact match.
+    widened: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    @property
+    def corrections(self) -> dict[str, tuple[str, ...]]:
+        """Query words no document holds, and the respellings searched instead."""
+        return self.fusion.corrections if self.fusion else {}
+
+    @property
+    def respellings(self) -> dict[str, tuple[str, ...]]:
+        """Every respelling searched: for unindexed words and for rare ones."""
+        return {**self.corrections, **self.widened}
+
+    @property
+    def fuzzy_matched(self) -> bool:
+        """Whether the results shown came from the cascade's fuzzy pass."""
+        return self.regime.startswith("cascade") and "+fuzzy" in self.regime
+
+    def paint_spec(self, painting: MatchSpec, strict: MatchSpec) -> MatchSpec:
+        """What to highlight once this search has run: near-misses only where the
+        search matched by fuzzy, and the respellings it searched."""
+        return self.resolve(painting if self.fuzzy_matched else strict)
+
+    def resolve(self, spec: MatchSpec) -> MatchSpec:
+        """``spec`` plus what this search resolved: respellings and phrase wildcards."""
+        return (
+            spec.with_corrections(self.corrections)
+            .with_corrections(self.widened, typed_written=True)
+            .with_phrase_globs(dict(self.phrase_globs))
+        )
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -121,6 +164,7 @@ class SearchTrace:
             "elapsed_ms": self.elapsed_ms,
             "files_truncated": self.files_truncated,
             "sections_truncated": self.sections_truncated,
+            "widened": {k: list(v) for k, v in self.widened.items()},
         }
 
 
@@ -133,6 +177,7 @@ def _strong_signal_to_json(t: StrongSignalTrace) -> dict[str, object]:
         "threshold_gap": t.threshold_gap,
         "fired": t.fired,
         "disabled_by_intent": t.disabled_by_intent,
+        "disabled_by_respelling": t.disabled_by_respelling,
     }
 
 
@@ -140,7 +185,7 @@ def _fusion_to_json(t: FusionTrace) -> dict[str, object]:
     return {
         "query": t.query,
         "rrf_k": t.rrf_k,
-        "pos_bonuses": {"rank_1": t.pos_bonus_rank_1, "rank_2_3": t.pos_bonus_rank_2_3},
+        "corrections": {k: list(v) for k, v in t.corrections.items()},
         "default_weights": t.default_weights,
         "subqueries": [
             {
@@ -152,6 +197,8 @@ def _fusion_to_json(t: FusionTrace) -> dict[str, object]:
                 "bm25_second": round(s.bm25_second, 4),
                 "rrf_k": s.rrf_k,
                 "degraded": s.degraded,
+                "exhausted": s.exhausted,
+                "all_files": s.all_files,
             }
             for s in t.subqueries
         ],
@@ -184,6 +231,8 @@ def _cascade_to_json(t: CascadeTrace) -> dict[str, object]:
                 "hit_count": p.hit_count,
                 "new_count": p.new_count,
                 "bm25_top": round(p.bm25_top, 4),
+                "exhausted": p.exhausted,
+                "all_files": p.all_files,
             }
             for p in t.passes
         ],

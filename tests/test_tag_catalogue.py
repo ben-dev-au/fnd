@@ -6,13 +6,14 @@ from pathlib import Path
 
 import tantivy
 
+from fnd.analysis import register
 from fnd.schema import F_TAGS_FM, F_TAGS_OS, build_schema
 from fnd.tag_catalogue import TagCount, tag_catalogue
 
 
 def _index(tmp_path: Path, rows: list[tuple[str, str, list[str], list[str], int]]) -> tantivy.Index:
     """rows: (parent_id, collection, fm_tags, os_tags, n_chunks)."""
-    index = tantivy.Index(build_schema(), path=str(tmp_path))
+    index = register(tantivy.Index(build_schema(), path=str(tmp_path)))
     w = index.writer(15_000_000)
     for pid, coll, fm, os_, n in rows:
         for seq in range(n):

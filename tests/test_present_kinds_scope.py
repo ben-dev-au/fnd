@@ -8,6 +8,7 @@ import tempfile
 
 import tantivy
 
+from fnd.analysis import register
 from fnd.kind_catalogue import present_kinds
 from fnd.schema import (
     F_COLLECTION,
@@ -22,7 +23,7 @@ from fnd.schema import (
 
 def _index(docs: list[tuple[str, str, str]]) -> tantivy.Index:
     """docs = (collection, source_path, kind)."""
-    idx = tantivy.Index(build_schema(), path=tempfile.mkdtemp(prefix="fnd-pk-"))
+    idx = register(tantivy.Index(build_schema(), path=tempfile.mkdtemp(prefix="fnd-pk-")))
     w = idx.writer()
     for i, (col, src, kind) in enumerate(docs):
         d = tantivy.Document()

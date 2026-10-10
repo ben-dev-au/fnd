@@ -194,6 +194,18 @@ def _is_guessable(key: str) -> bool:
     return key.strip().lower() in _GUESSABLE
 
 
+def as_typed_key() -> str:
+    """The search-as-typed key the footer can promise. Shift+Esc arrives only
+    under the Kitty keyboard protocol (Kitty, Ghostty), which tmux drops."""
+    import os
+
+    term = os.environ.get("TERM", "")
+    kitty = term in {"xterm-kitty", "xterm-ghostty"} or os.environ.get("TERM_PROGRAM") == "ghostty"
+    if not kitty or os.environ.get("TMUX"):
+        return "^T"
+    return "⇧Esc" if os_labels.is_macos() else "Shift+Esc"
+
+
 class _HintBar:
     """The hint bar, refitted to the width it is painted at.
 
@@ -1089,9 +1101,10 @@ class FNDApp(PlainToastApp):
         pass_index = 0
         try:
             node = self.query_one("#results_pane", Tree).cursor_node
-            data = node.data if node is not None else None
-            if isinstance(data, dict) and data.get("kind") == "section":
-                pass_index = int(data["hit"].pass_index)
+            # A collapsed file row previews its first hit, so that hit's pass judges it.
+            target = ResultsView.target_for_node(node) if node is not None else None
+            if target is not None:
+                pass_index = int(target[1].pass_index)
         except Exception:
             pass_index = 0
         return evidence_spec_for_pass(
@@ -1254,6 +1267,11 @@ class FNDApp(PlainToastApp):
             and nav.current_chunk_has_stops()
         ):
             contextual = (("n/b", "Matches"), *contextual)
+
+        search = getattr(self, "_search", None)
+        respell = search.respell_hint if search is not None else None
+        if respell is not None and overlay_hint is None and not self._reading_mode:
+            contextual = ((as_typed_key(), respell), *contextual)
 
         # Every anchor reaches a focused text box as a character, so naming
         # them while the query bar (the app's opening focus) has focus
@@ -2170,6 +2188,9 @@ class FNDApp(PlainToastApp):
     def action_toggle_fuzzy(self) -> None:
         self._search.toggle_fuzzy()
 
+    def action_search_as_typed(self) -> None:
+        self._search.search_as_typed()
+
     def action_nav_next_match(self) -> None:
         # Reading View is pure scroll-nav — no result-driven match jumps there.
         if self._reading_mode:
@@ -2276,6 +2297,10 @@ class FNDApp(PlainToastApp):
     def _reflow_on_node_expanded(self, ev: Tree.NodeExpanded[Any]) -> None:
         if ev.node.tree.id in self._SIDEBAR_TREE_IDS:
             self._reflow_sidebar()
+
+    @on(Tree.NodeExpanded, "#results_pane")
+    def _materialise_expanded_file(self, ev: Tree.NodeExpanded[Any]) -> None:
+        self._results.on_file_expanded(ev.node)
 
     @on(Tree.NodeCollapsed)
     def _reflow_on_node_collapsed(self, ev: Tree.NodeCollapsed[Any]) -> None:
