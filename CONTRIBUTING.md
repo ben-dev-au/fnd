@@ -37,6 +37,11 @@ piling on. Smaller targeted runs are never gated, and CI is exempt, having one
 job per VM and nothing to contend with. `FND_TEST_WORKERS` forces the worker
 count and `FND_TEST_NO_LOCK` skips the gate.
 
+`make batch-close` (format, lint, pyright, the whole suite, the harness)
+records each tree it passes, unless a file changed during the run or the
+harness was absent. A push of a commit with that exact tree skips the pre-push
+checks; any edit after the gate makes a new tree, which is checked as usual.
+
 CI runs the suite on `macos-14`, `ubuntu-latest` and `windows-latest`, plus
 ruff-format and pyright (strict). A green matrix means the code runs on all
 three, not that anyone has checked the behaviour outside macOS.
