@@ -151,7 +151,7 @@ class TestBoundedScan:
         assert got.tags.get("frontmatter", {}).get("alpha") == 1
 
     def test_it_records_frontmatter_keys(self, tmp_path: Path) -> None:
-        (tmp_path / "a.md").write_text("---\nCourse: DPwC\n---\n", encoding="utf-8")
+        (tmp_path / "a.md").write_text("---\nCourse: DevOps\n---\n", encoding="utf-8")
         assert "Course" in sample_source(tmp_path).frontmatter_keys
 
     def test_the_file_budget_truncates_rather_than_running_on(self, tmp_path: Path) -> None:

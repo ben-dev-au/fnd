@@ -218,7 +218,7 @@ async def test_legacy_scope_only_collections_renders_as_full(
 @pytest.fixture
 def shared_source_config(fixtures_dir: Path) -> Config:
     """Two collections that both include the same source path (the
-    CPL/SFO Obsidian-vault shape): one private source each, plus a
+    COMP/SEC Obsidian-vault shape): one private source each, plus a
     shared one whose resolved id is identical in both."""
     return Config(
         collections={
@@ -246,9 +246,9 @@ async def test_collection_off_keeps_shared_source_of_active_sibling(
     saved_empty_scope: Path,
 ) -> None:
     """Toggling a collection OFF must not deactivate a source it shares
-    with a collection that is still fully on. Regression: turning CPL
-    off stripped the shared Obsidian vault from SFO's scope while SFO
-    kept its ● marker, so SFO searches silently lost every md file.
+    with a collection that is still fully on. Regression: turning COMP
+    off stripped the shared Obsidian vault from SEC's scope while SEC
+    kept its ● marker, so SEC searches silently lost every md file.
 
     Both collections FULL scope via the collection filter, so survival
     is observable as BBB staying ● (FULL) after AAA toggles off — its

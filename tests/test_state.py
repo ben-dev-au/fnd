@@ -17,7 +17,7 @@ def test_load_missing_file_returns_empty(tmp_path: Path) -> None:
 def test_save_then_load_round_trips(tmp_path: Path) -> None:
     p = tmp_path / "scope.toml"
     original = UiState(
-        collections=["DPC", "papers"],
+        collections=["ALGO", "papers"],
         sources=["/Users/me/Notes", "/Users/me/Papers"],
         collapsed_panels=["filters"],
     )
@@ -33,7 +33,7 @@ def test_save_then_load_round_trips_filters(tmp_path: Path) -> None:
     """
     p = tmp_path / "scope.toml"
     original = UiState(
-        collections=["DPC"],
+        collections=["ALGO"],
         filter_kinds=["pdf", "md"],
         filter_date="week",
     )
@@ -46,11 +46,11 @@ def test_load_partial_filters_table(tmp_path: Path) -> None:
     feature shouldn't break anyone whose state predates it."""
     p = tmp_path / "scope.toml"
     p.write_text(
-        "[scope]\ncollections = ['DPC']\nsources = []\n",
+        "[scope]\ncollections = ['ALGO']\nsources = []\n",
         encoding="utf-8",
     )
     s = load(p)
-    assert s.collections == ["DPC"]
+    assert s.collections == ["ALGO"]
     assert s.filter_kinds == []
     assert s.filter_date == "any"
 

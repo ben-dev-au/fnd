@@ -234,16 +234,16 @@ class TestStructuredDimensions:
 class TestFrontmatterScope:
     def test_legacy_filter_still_only_touches_notes(self, tmp_path: Path) -> None:
         """Non-note kinds must pass a frontmatter predicate untouched."""
-        _write(tmp_path, "match.md", "---\nCourse: DPwC\n---\n")
+        _write(tmp_path, "match.md", "---\nCourse: DevOps\n---\n")
         _write(tmp_path, "other.md", "---\nCourse: Other\n---\n")
         _write(tmp_path, "paper.pdf", "%PDF-1.4\n")
-        names = _names(tmp_path, frontmatter_filter="Course == 'DPwC'")
+        names = _names(tmp_path, frontmatter_filter="Course == 'DevOps'")
         assert names == {"match.md", "paper.pdf"}
 
     def test_filters_frontmatter_field_behaves_the_same(self, tmp_path: Path) -> None:
-        _write(tmp_path, "match.md", "---\nCourse: DPwC\n---\n")
+        _write(tmp_path, "match.md", "---\nCourse: DevOps\n---\n")
         _write(tmp_path, "paper.pdf", "%PDF-1.4\n")
-        spec = DefaultFilters(frontmatter="Course == 'DPwC'")
+        spec = DefaultFilters(frontmatter="Course == 'DevOps'")
         assert _names(tmp_path, defaults=spec) == {"match.md", "paper.pdf"}
 
 

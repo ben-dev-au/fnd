@@ -62,8 +62,8 @@ def _iso_to_ts(iso: str) -> int:
 
 
 def _expand_collection_shorthand(q: str) -> str:
-    """Translate ``c:papers``, ``c:papers,notes``, ``c:"Soft Eng"``,
-    and mixed ``c:papers,"Soft Eng",notes`` into Tantivy form.
+    """Translate ``c:papers``, ``c:papers,notes``, ``c:"Compiler Theory"``,
+    and mixed ``c:papers,"Compiler Theory",notes`` into Tantivy form.
 
     Names may be bare (alnum + ``_`` + ``-``) or quoted with ``"`` /
     ``'`` to carry spaces and other punctuation. Multi-name lists are

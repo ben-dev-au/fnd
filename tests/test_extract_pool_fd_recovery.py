@@ -9,7 +9,7 @@ that lingered until GC. After hundreds of PDFs the FD set passed to
 ``_posixsubprocess.fork_exec`` exceeded a threshold and the next
 worker spawn was rejected — leaving every subsequent PDF in the
 indexing run failing with ExtractError("ValueError: bad value(s) in
-fds_to_keep"). In the wine-chain bug this produced the exact symptom
+fds_to_keep"). In the chained-extraction bug this produced the exact symptom
 "chain completes, 29 misses, 0 docs landed".
 
 This test does enough rapid submissions to exhaust the prior design's

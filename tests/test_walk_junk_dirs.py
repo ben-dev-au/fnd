@@ -1,4 +1,4 @@
-"""Walk-time junk-directory prune (fix for the SSD-collection freeze).
+"""Walk-time junk-directory prune (fix for the DB-collection freeze).
 
 The walk skips ``node_modules`` / ``__pycache__`` / ``.venv`` / etc. at
 descent so a coursework folder that happens to contain cloned dev repos

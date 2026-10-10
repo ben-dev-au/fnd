@@ -245,14 +245,14 @@ async def test_scan_phase_blocks_are_counted_not_dropped(
     corpus = tmp_path / "vault"
     corpus.mkdir()
     for name in ("a.md", "b.md"):
-        (corpus / name).write_text("---\nCourse: '[[CPL]]'\n---\n\nbody\n", encoding="utf-8")
+        (corpus / name).write_text("---\nCourse: '[[COMP]]'\n---\n\nbody\n", encoding="utf-8")
 
     monkeypatch.setattr("fnd.index_runner.is_placeholder", lambda _p: True)
     skip = asyncio.Event()
     skip.set()
 
     source = SourceConfig(
-        path=corpus, includes=["**/*.md"], frontmatter_filter="Course == '[[CPL]]'"
+        path=corpus, includes=["**/*.md"], frontmatter_filter="Course == '[[COMP]]'"
     )
     errors: list[str] = []
     done = None

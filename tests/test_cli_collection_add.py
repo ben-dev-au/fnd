@@ -57,7 +57,7 @@ def test_collection_add_with_filter_and_globs(
             "--exclude",
             "**/.trash/**",
             "--filter",
-            "Course == 'DPwC'",
+            "Course == 'DevOps'",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -66,7 +66,7 @@ def test_collection_add_with_filter_and_globs(
     assert s.excludes == ["**/.trash/**"]
     # Asserted where the rule takes effect, not where it is stored: a new
     # write uses `filters.frontmatter`, the deprecated key still loads.
-    assert s.effective_filters.frontmatter == "Course == 'DPwC'"
+    assert s.effective_filters.frontmatter == "Course == 'DevOps'"
 
 
 def test_collection_add_invalid_filter_refuses(

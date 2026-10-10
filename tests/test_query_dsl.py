@@ -29,18 +29,18 @@ def test_c_shorthand_inside_compound() -> None:
 
 
 def test_c_shorthand_double_quoted_name_with_spaces() -> None:
-    out = query_dsl.preprocess('c:"Soft Eng Textbooks" tdd')
-    assert out == 'collection:"Soft Eng Textbooks" tdd'
+    out = query_dsl.preprocess('c:"Compiler Theory Books" tdd')
+    assert out == 'collection:"Compiler Theory Books" tdd'
 
 
 def test_c_shorthand_single_quoted_name_with_spaces() -> None:
-    out = query_dsl.preprocess("c:'Soft Eng Textbooks' tdd")
-    assert out == 'collection:"Soft Eng Textbooks" tdd'
+    out = query_dsl.preprocess("c:'Compiler Theory Books' tdd")
+    assert out == 'collection:"Compiler Theory Books" tdd'
 
 
 def test_c_shorthand_mixed_quoted_and_bare_list() -> None:
-    out = query_dsl.preprocess('c:papers,"Soft Eng",notes tdd')
-    assert out == '(collection:"papers" OR collection:"Soft Eng" OR collection:"notes") tdd'
+    out = query_dsl.preprocess('c:papers,"Compiler Theory",notes tdd')
+    assert out == '(collection:"papers" OR collection:"Compiler Theory" OR collection:"notes") tdd'
 
 
 def test_c_shorthand_quoted_list_only() -> None:

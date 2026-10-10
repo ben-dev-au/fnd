@@ -23,7 +23,7 @@ class _Harness(App[None]):
 async def _answer(pilot: Pilot[None], app: _Harness, key: str) -> list[bool | None]:
     got: list[bool | None] = []
     app.push_screen(
-        FullWarmConfirmScreen(name="Design Patterns.pdf", chunks=719, chars=1_195_575),
+        FullWarmConfirmScreen(name="Data Structures.pdf", chunks=719, chars=1_195_575),
         callback=got.append,
     )
     await pilot.pause()

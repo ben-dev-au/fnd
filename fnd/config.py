@@ -336,7 +336,7 @@ class DefaultFilters(_ConfigModel):
 
     frontmatter: str | None = None
     """Filter expression over a note's YAML frontmatter, e.g.
-    `Course == 'Design Patterns'`. A note with no frontmatter block matches no
+    `Course == 'Data Structures'`. A note with no frontmatter block matches no
     field test."""
 
     expression: str | None = None
@@ -1015,7 +1015,7 @@ _COLLECTION_NAME_MAX = 64
 # the ``c:<a>,<b>`` DSL list separator (a name containing ``,`` would be
 # ambiguous in the bare form); control characters and DEL are never
 # useful. Spaces are deliberately allowed; users want collection names
-# like "Soft Eng Textbooks", and the DSL parser supports the quoted form
+# like "Compiler Theory Books", and the DSL parser supports the quoted form
 # ``c:"name with spaces"`` to reference them.
 _COLLECTION_NAME_FORBIDDEN: frozenset[str] = (
     frozenset({"/", "\\", '"', "'", "`", ","})

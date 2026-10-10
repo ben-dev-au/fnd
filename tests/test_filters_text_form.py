@@ -80,17 +80,17 @@ class TestRoundTripBehaviour:
         """The rule is skipped for a file with no frontmatter block, so the
         scope needs no spelling out. Writing it in produced a clause reading
         as "exclude Markdown" with no counterpart in any other tool."""
-        spec = FilterSpec(frontmatter="Course == 'DPwC'")
-        assert render(spec) == "Course == 'DPwC'"
-        assert parse(render(spec)).frontmatter == "Course == 'DPwC'"
+        spec = FilterSpec(frontmatter="Course == 'DevOps'")
+        assert render(spec) == "Course == 'DevOps'"
+        assert parse(render(spec)).frontmatter == "Course == 'DevOps'"
 
     def test_the_earlier_spelling_of_the_scope_still_parses(self) -> None:
         """A config holding either older form must keep working."""
         for old in (
-            "NOT (file.kind in ['md']) OR (Course == 'DPwC')",
-            "(Course == 'DPwC') OR file.kind not in ['md']",
+            "NOT (file.kind in ['md']) OR (Course == 'DevOps')",
+            "(Course == 'DevOps') OR file.kind not in ['md']",
         ):
-            assert parse(old).frontmatter == "Course == 'DPwC'", old
+            assert parse(old).frontmatter == "Course == 'DevOps'", old
 
     def test_an_unrecognised_clause_is_kept(self) -> None:
         spec = parse("file.name ~~ 'draft-*'")

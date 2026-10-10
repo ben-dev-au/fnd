@@ -2,7 +2,7 @@
 
 After the relaxation in fix/indexer-freeze-and-ctrl-c the rule allows
 internal spaces and most printable characters so users can name a
-collection "Soft Eng Textbooks". The forbidden set is narrowed to
+collection "Compiler Theory Books". The forbidden set is narrowed to
 characters that would actually break a downstream consumer:
 
 - ``/`` and ``\\`` — collide with the per-collection state file path
@@ -62,7 +62,7 @@ def test_reserved_names_allowed_off_windows(name: str, monkeypatch: pytest.Monke
         "Z9",
         "ABC123",
         # Newly permitted under the relaxed contract
-        "Soft Eng Textbooks",  # internal spaces
+        "Compiler Theory Books",  # internal spaces
         "papers (2024)",  # parentheses
         "team.notes",  # interior dot
         "papers_α",  # non-ASCII allowed after the first char

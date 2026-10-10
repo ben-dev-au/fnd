@@ -371,7 +371,7 @@ class SearchController:
         # query layer — never a ``c:`` prefix string. The prefix path rides
         # the soft query parser (ranks instead of restricting) and splits
         # collection names on spaces, so a multi-collection scope leaked
-        # other collections and dropped spaced names like ``SSD Exam``.
+        # other collections and dropped spaced names like ``DB Archive``.
         cols = self._app._scope.collections
         # A fresh dict of fresh lists, so the worker cannot read a scope the
         # panel is mutating on the event loop.

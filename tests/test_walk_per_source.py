@@ -37,14 +37,14 @@ def test_frontmatter_filter_excludes_non_matching_md(tmp_path: Path) -> None:
     different case, and the test below keeps it out of this one.
     """
     root = tmp_path / "notes"
-    _touch(root / "in.md", "---\nCourse: DPwC\n---\nbody\n")
+    _touch(root / "in.md", "---\nCourse: DevOps\n---\nbody\n")
     _touch(root / "out.md", "---\nCourse: Algorithms\n---\nbody\n")
     _touch(root / "no_fm.md", "no frontmatter here\n")
     sources = [
         SourceConfig(
             path=root,
             includes=["**/*.md"],
-            frontmatter_filter="Course == 'DPwC'",
+            frontmatter_filter="Course == 'DevOps'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))
@@ -61,7 +61,7 @@ def test_frontmatter_filter_only_applies_to_md(tmp_path: Path) -> None:
         SourceConfig(
             path=root,
             includes=["**/*.md", "**/*.pdf"],
-            frontmatter_filter="Course == 'DPwC'",
+            frontmatter_filter="Course == 'DevOps'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))
@@ -71,14 +71,14 @@ def test_frontmatter_filter_only_applies_to_md(tmp_path: Path) -> None:
 
 def test_excludes_still_apply_under_filter(tmp_path: Path) -> None:
     root = tmp_path / "notes"
-    _touch(root / ".trash" / "trashed.md", "---\nCourse: DPwC\n---\nbody\n")
-    _touch(root / "kept.md", "---\nCourse: DPwC\n---\nbody\n")
+    _touch(root / ".trash" / "trashed.md", "---\nCourse: DevOps\n---\nbody\n")
+    _touch(root / "kept.md", "---\nCourse: DevOps\n---\nbody\n")
     sources = [
         SourceConfig(
             path=root,
             includes=["**/*.md"],
             filters=SourceFilters(excludes=["**/.trash/**"]),
-            frontmatter_filter="Course == 'DPwC'",
+            frontmatter_filter="Course == 'DevOps'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))
@@ -91,12 +91,12 @@ def test_invalid_frontmatter_excludes_file(tmp_path: Path) -> None:
     silently included."""
     root = tmp_path / "notes"
     _touch(root / "bad.md", "---\nfoo:\n  nested: not allowed\n---\nbody\n")
-    _touch(root / "good.md", "---\nCourse: DPwC\n---\nbody\n")
+    _touch(root / "good.md", "---\nCourse: DevOps\n---\nbody\n")
     sources = [
         SourceConfig(
             path=root,
             includes=["**/*.md"],
-            frontmatter_filter="Course == 'DPwC'",
+            frontmatter_filter="Course == 'DevOps'",
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))

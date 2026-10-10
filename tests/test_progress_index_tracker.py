@@ -107,7 +107,7 @@ def test_files_report_a_real_fraction(app: StubApp, tracker: IndexProgressTracke
     assert session.fraction == pytest.approx(scan_weight + files_weight * 0.25, abs=1e-6)
 
 
-def _running(app: StubApp, *, collection: str = "CPL") -> None:
+def _running(app: StubApp, *, collection: str = "COMP") -> None:
     app._indexer.task = StubTask()
     app._indexer.collection = collection
     app._indexer.state = StubState(total_files=43, files_completed=13)
@@ -119,7 +119,7 @@ def test_the_label_names_the_collection_and_the_count(
     _running(app)
     session = tracker.begin()
     tracker.sample(session)
-    assert session.label == "CPL · 13 of 43 files"
+    assert session.label == "COMP · 13 of 43 files"
 
 
 def test_a_chain_says_which_collection_it_is_on(
@@ -130,7 +130,7 @@ def test_a_chain_says_which_collection_it_is_on(
     app._indexer.chain_remaining = ["A", "B"]
     session = tracker.begin()
     tracker.sample(session)
-    assert session.label == "CPL (2 of 4) · 13 of 43 files"
+    assert session.label == "COMP (2 of 4) · 13 of 43 files"
 
 
 def test_a_slow_pdf_adds_the_page_counter(app: StubApp, tracker: IndexProgressTracker) -> None:
@@ -142,7 +142,7 @@ def test_a_slow_pdf_adds_the_page_counter(app: StubApp, tracker: IndexProgressTr
     live_progress.report_heartbeat(("page", 39))
     session = tracker.begin()
     tracker.sample(session)
-    assert session.label == "CPL · 13 of 43 files · Module_06.pdf · page 40 of 118"
+    assert session.label == "COMP · 13 of 43 files · Module_06.pdf · page 40 of 118"
 
 
 def test_no_page_detail_when_nothing_is_being_texturised(

@@ -17,7 +17,7 @@ def _hit(snippet: str, *, page: int = 57) -> Hit:
     return Hit(
         score=21.52,
         parent_id="p",
-        path="/uda/Workshop4.pdf",
+        path="/hci/Workshop4.pdf",
         kind="pdf",
         page=page,
         slide=0,
@@ -64,7 +64,7 @@ def test_a_locator_too_wide_for_the_budget_still_elides_to_the_locator() -> None
     hit = Hit(
         score=21.52,
         parent_id="p",
-        path="/uda/notes.md",
+        path="/hci/notes.md",
         kind="md",
         page=0,
         slide=0,

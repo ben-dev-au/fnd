@@ -293,7 +293,7 @@ class ScopeController:
         if collection or launch_filters:
             # ``--collection`` is one Option string; accept a comma-separated
             # list and keep only names that exist in the config. Without this
-            # a value like ``-c "SSD,SSD Exam"`` becomes a single phantom key
+            # a value like ``-c "DB,DB Archive"`` becomes a single phantom key
             # that no panel row can toggle yet still pins every search.
             # An empty map is about to mean "the user unticked everything", so
             # a launch carrying only ``--filter`` must seed the same scope an
@@ -350,7 +350,7 @@ class ScopeController:
 
         ``all`` (any case) is the pseudo-name for every configured
         collection. Otherwise the shared vocabulary canonicalises the value
-        (so ``dpc2`` reaches the index as ``DPC2``) and unknown names are
+        (so ``algo2`` reaches the index as ``ALGO2``) and unknown names are
         dropped — the CLI has already offered the user a correction by the
         time a value gets here. With no config loaded, the raw value is
         trusted.

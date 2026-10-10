@@ -49,7 +49,7 @@ from fnd.synonyms import SynonymTable, compound_table, expand
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
 
-# A field qualifier (``kind:pdf``, ``c:wine``) anywhere in the query — phrase
+# A field qualifier (``kind:pdf``, ``c:papers``) anywhere in the query — phrase
 # wrapping such a query would quote the qualifier and produce a junk phrase.
 _FIELD_SYNTAX_RE: Final = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*:")
 # Explicit operator syntax — boolean keywords, ``+``/``-`` required/prohibited
@@ -238,7 +238,7 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # PhraseQuery directly) or proximity (``{N} …`` / ``a NEAR/N b`` expand to
     # ``"a b"~N`` downstream). Re-wrapping either would double-quote — ``""a b""``
     # or ``""a b"~N`` — and crash the parser. Also skip when the query carries a
-    # field qualifier (``kind:pdf``, ``c:wine``): a phrase over the raw qualifier
+    # field qualifier (``kind:pdf``, ``c:papers``): a phrase over the raw qualifier
     # text is meaningless and quoting it mangles the qualifier.
     carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q or has_phrase(q)
     carries_field_syntax = bool(_FIELD_SYNTAX_RE.search(q))

@@ -118,7 +118,7 @@ def test_rebuild_flag_reaches_every_target(
 
 
 def test_a_bare_name_still_works(cli: tuple[CliRunner, list[str]]) -> None:
-    """`fnd collection reindex WBT` predates -c; keep it working rather than
+    """`fnd collection reindex WEB` predates -c; keep it working rather than
     breaking a form already in use."""
     runner, touched = cli
     result = runner.invoke(app, ["collection", "reindex", "notes"])

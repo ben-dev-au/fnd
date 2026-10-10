@@ -199,7 +199,7 @@ def _quoted(text: str) -> str:
 
 def key(name: str) -> str:
     """A table or key name as TOML: bare where it can be, quoted otherwise;
-    a collection may be called "Soft Eng Textbooks"."""
+    a collection may be called "Compiler Theory Books"."""
     if name and all(c.isascii() and (c.isalnum() or c in "-_") for c in name):
         return name
     return toml_value(name)

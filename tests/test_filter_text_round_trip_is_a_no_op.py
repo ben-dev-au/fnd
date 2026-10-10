@@ -15,11 +15,11 @@ from fnd.filters import FilterSpec
 from fnd.filters.text_form import parse, render
 
 _SPECS = [
-    FilterSpec(frontmatter="Course == 'DPwC'"),
+    FilterSpec(frontmatter="Course == 'DevOps'"),
     FilterSpec(frontmatter="status == 'done' AND draft == false"),
-    FilterSpec(frontmatter="Course == 'DPwC'", kinds=("md", "pdf")),
+    FilterSpec(frontmatter="Course == 'DevOps'", kinds=("md", "pdf")),
     FilterSpec(frontmatter="file.name ~~ '*draft*'"),
-    FilterSpec(frontmatter="Course == 'DPwC' AND file.size > 100"),
+    FilterSpec(frontmatter="Course == 'DevOps' AND file.size > 100"),
     FilterSpec(expression="file.size > 100"),
     FilterSpec(frontmatter="Course == 'X'", expression="file.size > 100"),
     FilterSpec(frontmatter="Course == 'X'", exclude_tags={"frontmatter": ("no_index",)}),
@@ -40,7 +40,7 @@ def test_a_rule_naming_a_file_field_is_not_a_frontmatter_rule() -> None:
 
 
 def test_a_mixed_rule_keeps_both_halves() -> None:
-    spec = FilterSpec(frontmatter="Course == 'DPwC' AND file.size > 100")
+    spec = FilterSpec(frontmatter="Course == 'DevOps' AND file.size > 100")
     assert "Course" in spec.frontmatter
     assert "file.size" not in spec.frontmatter
     assert "file.size" in spec.expression
@@ -56,6 +56,6 @@ def test_a_real_frontmatter_rule_stays_where_it_is() -> None:
 def test_an_expression_of_only_frontmatter_fields_still_moves_the_other_way() -> None:
     """The rescue that already existed, kept: left in `expression` such a rule
     is evaluated against every file and drops every PDF."""
-    spec = FilterSpec(expression="Course == 'DPwC'")
-    assert spec.frontmatter == "Course == 'DPwC'"
+    spec = FilterSpec(expression="Course == 'DevOps'")
+    assert spec.frontmatter == "Course == 'DevOps'"
     assert spec.expression == ""

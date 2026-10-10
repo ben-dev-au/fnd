@@ -620,7 +620,7 @@ search to one or more:
 
 | You type                     | What it does                       |
 | ---------------------------- | ---------------------------------- |
-| `c:wine attack`              | Search the `wine` collection only. |
+| `c:security attack`              | Search the `security` collection only. |
 | `c:notes,papers transformer` | Search two collections.            |
 
 Without `c:` the active collection (settings menu) is used.
@@ -665,12 +665,12 @@ with spaces (`"Due Date"`):
 
 | You type                                                | What it does                                          |
 | ------------------------------------------------------- | ----------------------------------------------------- |
-| `mitm [Course == 'Security Foundations']`               | Notes where the `Course` field equals that value.     |
+| `mitm [Course == 'Distributed Systems']`               | Notes where the `Course` field equals that value.     |
 | `[Notes_Type == 'Lecture' OR Notes_Type == 'Tutorial']` | Either value (there are no list literals, use `OR`). |
 | `entropy [Course == 'ML' AND Year >= 2024]`             | Compound predicate.                                   |
 | `['urgent' in tags]`                                    | `urgent` is an element of the `tags` list.            |
 | `[NOT ('private' in tags)]`                             | Exclude a tag, **keeping notes that have no `tags:`**. |
-| `[Course ~~ 'Design *']`                                | Glob a string value (not the body-search `~N` fuzzy). |
+| `[Course ~~ 'Data *']`                                | Glob a string value (not the body-search `~N` fuzzy). |
 | `["Due Date" < 2026-01-01]`                             | A field name with a space, double-quoted.             |
 
 Operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields), `in` /
@@ -695,7 +695,7 @@ escaping. Only markdown is filtered; other kinds pass through.
 ```text
 "buffer overflow"                                  # exact phrase
 {10} buffer overflow exploit kind:pdf              # three terms within 10 tokens, PDFs only
-c:notes mitm [Course == 'Security Foundations']    # term + collection scope + frontmatter filter
+c:notes mitm [Course == 'Distributed Systems']    # term + collection scope + frontmatter filter
 title:"chapter 4" heading_path:proof               # constrain to one chapter's proofs
 kind:pptx slide:>10 attention                      # later-half slides mentioning attention
 mtime:month crypto*                                # recently-modified docs mentioning crypto-anything

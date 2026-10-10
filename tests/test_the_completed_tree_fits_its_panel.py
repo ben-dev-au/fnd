@@ -52,7 +52,9 @@ async def test_a_long_row_is_not_cut_mid_word(tmp_index_dir: Path) -> None:
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 34)) as pilot:
         await pilot.pause()
-        screen = await _open(app, pilot, ("notes", "papers", "research", "wine", "archive", "dpc"))
+        screen = await _open(
+            app, pilot, ("notes", "papers", "research", "cellar", "archive", "algo")
+        )
         rows = ["".join(s.text for s in strip) for strip in screen._compositor.render_strips()]
 
     # The tree row is compact: nested under the collection it names, it drops
@@ -75,7 +77,9 @@ async def test_it_does_not_paint_a_horizontal_scrollbar(width: int, tmp_index_di
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(width, 34)) as pilot:
         await pilot.pause()
-        screen = await _open(app, pilot, ("notes", "papers", "research", "wine", "archive", "dpc"))
+        screen = await _open(
+            app, pilot, ("notes", "papers", "research", "cellar", "archive", "algo")
+        )
         tree = screen.query_one("#indexer_history_tree", Tree)
         shown = tree.show_horizontal_scrollbar
 
@@ -88,7 +92,9 @@ async def test_the_vertical_scrollbar_stays(tmp_index_dir: Path) -> None:
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 34)) as pilot:
         await pilot.pause()
-        screen = await _open(app, pilot, ("notes", "papers", "research", "wine", "archive", "dpc"))
+        screen = await _open(
+            app, pilot, ("notes", "papers", "research", "cellar", "archive", "algo")
+        )
         tree = screen.query_one("#indexer_history_tree", Tree)
         shown = tree.show_vertical_scrollbar
 

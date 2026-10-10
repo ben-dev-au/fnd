@@ -238,8 +238,8 @@ def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
     prefixing every section row with the same words is just clutter.
 
     A leading ``Templates`` segment is dropped when ``Templates`` also
-    appears as a word in the file basename (``DPC Wk8 Notes - Templates,
-    Strategy Pattern & C++ Streams``) or in the title — covers both the
+    appears as a word in the file basename (``Week 8 Notes - Templates
+    and Streams``) or in the title — covers both the
     pure ``# Templates`` H1 case and the deep multi-word filename case.
     """
     if not heading_path:
