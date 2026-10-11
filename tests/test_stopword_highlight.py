@@ -1,4 +1,4 @@
-"""Stopwords add highlight noise with no value — don't bold them doc-wide.
+"""Stopwords add highlight noise with no value: don't bold them doc-wide.
 
 A query like ``segmentation and defence in depth`` should highlight the content
 words but not light up every ``and`` / ``in`` in the document. A *quoted* phrase
@@ -55,12 +55,12 @@ def _stopword_lit(text: str, spec: MatchSpec, word: str) -> bool:
 def test_incontext_stopword_lit_between_two_matches() -> None:
     spec = MatchSpec.from_query("defence in depth", auto_fuzzy=False)
     assert _stopword_lit("a layered defence in depth model", spec, "in")
-    # hyphenated form tokenizes to defence/in/depth — same contiguous run.
+    # hyphenated form tokenizes to defence/in/depth: same contiguous run.
     assert _stopword_lit("the defence-in-depth model", spec, "in")
 
 
 def test_incontext_stopword_lit_in_partial_fragment() -> None:
-    """'adjacent to any match' — a fragment with one content neighbour still
+    """'adjacent to any match': a fragment with one content neighbour still
     lights the connector (user's 'in depth' / 'defence in' cases)."""
     spec = MatchSpec.from_query("defence in depth", auto_fuzzy=False)
     assert _stopword_lit("research in depth here", spec, "in")  # in+depth

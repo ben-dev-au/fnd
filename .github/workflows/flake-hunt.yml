@@ -2,7 +2,7 @@ name: flake-hunt
 
 # Runs the suite N times per OS and reports which tests failed and how
 # often. A single CI run cannot tell a flake from a fix; this can.
-# Manual dispatch only — it costs N times a normal run.
+# Manual dispatch only: it costs N times a normal run.
 
 on:
   # `workflow_dispatch` only fires for workflows already on the default

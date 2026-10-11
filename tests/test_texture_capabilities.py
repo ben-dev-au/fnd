@@ -2,8 +2,8 @@
 
 Measured on this corpus: 18 PDFs hold an empty texture under the current
 signature, all written while pymupdf4llm resolved to 1.27.2.3, and every one of
-them texturises under 1.28.2. ``texture_signature`` is coarse on purpose — it
-does not move with the engine — so without this the emptiness is served forever.
+them texturises under 1.28.2. ``texture_signature`` is coarse on purpose (it
+does not move with the engine) so without this the emptiness is served forever.
 """
 
 from __future__ import annotations
@@ -181,7 +181,7 @@ def test_extract_keeps_an_empty_entry_from_the_same_engine(
 def test_a_written_entry_records_what_produced_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The stamp has to be WRITTEN, not just read — asserted on the entry as it
+    """The stamp has to be WRITTEN, not just read: asserted on the entry as it
     lands, since the extraction runs in a subprocess."""
     import json
 
@@ -205,7 +205,7 @@ def test_a_written_entry_records_what_produced_it(
 
 def test_a_refused_entry_is_not_read_twice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Durable reuse globs every signature, including the entry ``get`` just
-    refused — a second decode of the same blob for no gain."""
+    refused: a second decode of the same blob for no gain."""
     from fnd.extract import pdf
 
     pdf_path = tmp_path / "doc.pdf"

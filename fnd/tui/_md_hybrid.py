@@ -1,4 +1,4 @@
-"""W-Hybrid prototype — per-chunk hybrid widget.
+"""W-Hybrid prototype, per-chunk hybrid widget.
 
 Replaces the per-block widget tree (`FNDMarkdown` -> 50+ widgets)
 with a small ordered list of widgets per chunk:
@@ -112,7 +112,7 @@ def _bake_match_spans_into_text(text: Text, spec: MatchSpec) -> bool:
         text.stylize(str(style), a, b)
         covered.update(range(a, b))
         hit = True
-    # Phrases fill only the GAPS between word spans — an overlapping span of a
+    # Phrases fill only the GAPS between word spans: an overlapping span of a
     # different style makes Textual's Content drop both, blanking the word.
     for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
         text.stylize(HIGHLIGHT_STYLE, start, end)
@@ -215,7 +215,7 @@ def _build_table_widget(md_text: str, spec: MatchSpec) -> tuple[DataTable[Text],
 
 def _build_fence_widget(md_text: str, spec: MatchSpec) -> tuple[Static, bool]:
     """Render a fence as syntax-highlighted ``Text`` with match spans
-    overlaid on top. One Static widget per fence — fits in the parent
+    overlaid on top. One Static widget per fence: fits in the parent
     ScrollView, but no horizontal scroll / focus (those are
     MarkdownFence's value-add and would require the upstream widget,
     which needs a Markdown parent).

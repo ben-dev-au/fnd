@@ -18,7 +18,7 @@ def wide_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
     Both properties are load-bearing. Above ``FULLMOUNT_CHUNK_BUDGET`` (250)
     chunks the file is never full-mounted, so an out-of-window jump takes the
-    fresh-container rebuild path — the one that leaked. A smaller file is
+    fresh-container rebuild path: the one that leaked. A smaller file is
     full-mounted and every jump scrolls in place, which is why the first version
     of the reclaim test passed with the fix reverted.
     """

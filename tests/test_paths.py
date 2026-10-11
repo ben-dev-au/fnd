@@ -17,7 +17,7 @@ from fnd import paths
 
 
 def test_app_dirs_pass_appauthor_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Both roots must call platformdirs with ``appauthor=False`` — the
+    """Both roots must call platformdirs with ``appauthor=False``: the
     single fact that keeps Windows app data from splitting."""
     calls: dict[str, tuple[str, object]] = {}
 
@@ -86,7 +86,7 @@ def test_config_reexports_the_same_data_root() -> None:
 
 
 def test_uv_tool_root_falls_back_when_uv_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When ``uv tool dir`` can't run, fall back to the platform default —
+    """When ``uv tool dir`` can't run, fall back to the platform default,
     which ends in ``uv/tools`` on every OS (POSIX XDG / Windows APPDATA)."""
 
     def boom(*_a: object, **_k: object) -> object:
@@ -118,7 +118,7 @@ def test_uv_tool_root_honours_xdg_data_home(
 
 
 def test_helpers_create_nothing() -> None:
-    """Pure path computation — no directory is created as a side effect."""
+    """Pure path computation: no directory is created as a side effect."""
     assert not paths.reindex_state_dir().exists() or paths.reindex_state_dir().is_dir()
     # Calling a helper must not create its parent.
     p = paths.dismissed_dir()

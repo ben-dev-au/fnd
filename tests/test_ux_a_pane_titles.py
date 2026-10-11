@@ -36,7 +36,7 @@ async def test_results_pane_title_shows_counts_after_search(built_index: Path) -
 @pytest.mark.asyncio
 async def test_results_pane_title_empty_state(built_index: Path) -> None:
     """Before any query, the title should still render (something like
-    ``Results``) — not be empty or crash."""
+    ``Results``), not be empty or crash."""
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -62,13 +62,13 @@ async def test_preview_pane_title_shows_file_name_when_focused(built_index: Path
 
         preview = app.query_one("#preview_pane", VerticalScroll)
         title = str(preview.border_title or "")
-        # The fixture file is "test.pdf" — the basename should appear.
+        # The fixture file is "test.pdf": the basename should appear.
         assert ".pdf" in title.lower() or ".md" in title.lower(), title
 
 
 @pytest.mark.asyncio
 async def test_status_bar_widget_is_removed(built_index: Path) -> None:
-    """The top status bar is gone — its only content (active scope) is
+    """The top status bar is gone: its only content (active scope) is
     shown in the Collections panel border title instead."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:

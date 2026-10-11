@@ -21,12 +21,12 @@ def test_meta_blob_field_constant_exists() -> None:
 
 
 def test_schema_accepts_meta_blob_bytes() -> None:
-    """The schema must accept ``meta_blob`` as a stored bytes field — the
+    """The schema must accept ``meta_blob`` as a stored bytes field: the
     indexer writes JSON-encoded frontmatter there, retrieved at query time
     by the post-filter."""
     build_schema()
     doc = Document()
-    # Should not raise — the field is declared and accepts bytes.
+    # Should not raise: the field is declared and accepts bytes.
     doc.add_bytes(F_META_BLOB, b'{"Project": "Website"}')
 
 
@@ -43,14 +43,14 @@ def test_old_index_sidecar_refuses_load(tmp_path: Path) -> None:
 def test_force_rebuild_wipes_stale_index_dir(tmp_path: Path) -> None:
     """``force=True`` is the rebuild path: it must clear leftover Tantivy
     files so a new index can be opened under the current schema. A stale
-    sidecar alone isn't enough — Tantivy stores the schema in
+    sidecar alone isn't enough: Tantivy stores the schema in
     ``meta.json`` too, and the constructor refuses to open a mismatched
     dir.
 
     Verifies that a stale dir with a non-matching ``meta.json`` doesn't
     cause Tantivy to raise; the rebuild path clears the dir then opens
     a fresh index. (Tantivy regenerates its own ``meta.json`` after the
-    wipe — that's expected.)
+    wipe: that's expected.)
     """
     from fnd.index import _ensure_index
 
@@ -67,7 +67,7 @@ def test_force_rebuild_wipes_stale_index_dir(tmp_path: Path) -> None:
     nested.mkdir()
     (nested / "x").write_text("y")
 
-    # Should not raise — the rebuild path wipes and reinitialises.
+    # Should not raise: the rebuild path wipes and reinitialises.
     _ensure_index(tmp_path, force=True)
 
     # Sidecar now matches current version.
@@ -92,7 +92,7 @@ def _build_legacy_v1_index(index_dir: Path) -> None:
     schema = sb.build()
     register(Index(schema, path=str(index_dir)))
     # Pretend a prior force-rebuild bumped the sidecar but crashed before
-    # Tantivy got new segments — the exact stuck state in the field.
+    # Tantivy got new segments: the exact stuck state in the field.
     (index_dir / ".fnd-schema-version").write_text(str(SCHEMA_VERSION))
 
 
@@ -121,7 +121,7 @@ def test_open_without_force_on_inconsistent_dir_gives_clear_error(
     tmp_path: Path,
 ) -> None:
     """Without ``force=True``, the same inconsistent state surfaces as a
-    RuntimeError pointing the user at the rebuild command — not Tantivy's
+    RuntimeError pointing the user at the rebuild command, not Tantivy's
     cryptic ``Schema error``."""
     from fnd.index import _ensure_index
 

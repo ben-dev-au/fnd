@@ -33,7 +33,7 @@ updates:
         update-types: ["minor", "patch"]
     ignore:
       # 1.1.0 pins `syrupy==4.8.0`, which caps `pytest<9` and drags pytest
-      # back to 8.4.2 — PYSEC-2026-1845. Drop this once it allows syrupy 5.
+      # back to 8.4.2: PYSEC-2026-1845. Drop this once it allows syrupy 5.
       - dependency-name: "pytest-textual-snapshot"
         versions: ["1.1.0"]
     open-pull-requests-limit: 5

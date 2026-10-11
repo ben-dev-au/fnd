@@ -1,7 +1,7 @@
 """How ready a file is, and what the arrow says about it.
 
-Navigation cost is bimodal — a jump whose hits are captured is a blit, one
-that has to build can be seconds — so the arrow is the only thing on screen
+Navigation cost is bimodal: a jump whose hits are captured is a blit, one
+that has to build can be seconds, so the arrow is the only thing on screen
 that says which is coming. These tests pin the classification and the
 glyph/colour it maps to.
 """
@@ -38,7 +38,7 @@ def test_a_file_being_captured_reads_as_warming() -> None:
 
 
 def test_warming_only_applies_while_something_is_missing() -> None:
-    """Once every hit is held the file is READY even mid-pass — coverage may
+    """Once every hit is held the file is READY even mid-pass: coverage may
     still be filling the gaps between matches, and that changes nothing the
     user can feel."""
     assert state([3, 9], {3, 9}, warming=True) is WarmState.READY
@@ -53,7 +53,7 @@ def test_a_file_with_no_listed_hits_is_ready() -> None:
 
 def test_whole_file_coverage_is_not_required() -> None:
     """The margin around a hit is captured too, but a jump lands on the hit
-    and lazy mount fills the rest — counting whole-file coverage here would
+    and lazy mount fills the rest: counting whole-file coverage here would
     leave a file reading cold through work the user cannot see."""
     assert state([5], {5}) is WarmState.READY
 
@@ -83,7 +83,7 @@ def icon_of(tree: ResultsTree, node: Any) -> str:
 
 
 def test_a_ready_file_looks_exactly_like_an_ordinary_row(tree: ResultsTree) -> None:
-    """Ready is the unremarkable state — it deliberately renders the stock
+    """Ready is the unremarkable state: it deliberately renders the stock
     arrow, so the indicator only ever draws the eye when a jump is going to
     cost something. Asserting the glyph alone would pass with the feature
     removed, so the contrast against an unready row is the real check.
@@ -98,7 +98,7 @@ def test_a_ready_file_looks_exactly_like_an_ordinary_row(tree: ResultsTree) -> N
 
 
 def test_an_unready_file_gets_the_hollow_arrow(tree: ResultsTree) -> None:
-    """Shape, not just colour, carries the fact that changes a decision — at
+    """Shape, not just colour, carries the fact that changes a decision: at
     one cell a hue change alone is hard to read, and it has to survive a
     colourblind user or a low-contrast theme."""
     node = file_node(tree, "a")
@@ -175,8 +175,8 @@ def test_an_unchanged_map_does_no_work_at_all(tree: ResultsTree) -> None:
 
 def test_a_styled_label_does_not_displace_the_icon_span(tree: ResultsTree) -> None:
     """The icon's style is inherited from the stock render, read off the first
-    span. Real file labels are styled Text — the score column is coloured and
-    the whole row is dimmed — so if a label's own spans could land first, the
+    span. Real file labels are styled Text (the score column is coloured and
+    the whole row is dimmed) so if a label's own spans could land first, the
     icon would inherit the wrong style and lose its toggle meta with it.
     """
     from rich.text import Text
@@ -210,7 +210,7 @@ def test_a_file_coverage_cannot_capture_is_not_left_cold_forever() -> None:
     """A hit with no off-screen builder can never satisfy "all hits captured".
 
     Plain kinds take the flat path, and so does a markdown chunk over
-    ``MARKDOWN_MAX_CHARS`` — measured live, a 48,414-character seminar
+    ``MARKDOWN_MAX_CHARS``: measured live, a 48,414-character seminar
     transcript against the 40,000 cap. Coverage skips those chunks, so the
     file's row sat cold for the whole session while the user waited for warming
     that could not happen, and every pass re-planned it.
@@ -236,7 +236,7 @@ def test_one_unservable_hit_does_not_condemn_an_otherwise_warm_file() -> None:
     Measured live: a 37-hit PDF sat cold indefinitely with THIRTY-SIX of its
     hits captured, because chunk 687 was 46,266 characters against the 40,000
     renderer cap. Every jump but one was already instant. A per-file flag would
-    not rescue this — the file is mostly capturable, so it would never be
+    not rescue this: the file is mostly capturable, so it would never be
     flagged, and the readiness test would keep waiting on the one chunk that
     can never come.
     """
@@ -289,7 +289,7 @@ def test_a_file_with_every_chunk_captured_reads_as_full() -> None:
 
 def test_full_outranks_ready() -> None:
     """Every hit is covered by every chunk being covered, so the stronger
-    claim wins — otherwise the arrow would never leave the hits-only colour."""
+    claim wins, otherwise the arrow would never leave the hits-only colour."""
     assert (
         warm_state(
             hit_seqs=[3],

@@ -3,7 +3,7 @@
 The calibrator is what stops the timed phases being a guess: the seeds
 ship with the code, but after a few runs the bar is paced by what this
 machine actually did. These tests pin the summarising rules and the
-failure behaviour — telemetry must never break a caller.
+failure behaviour: telemetry must never break a caller.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def test_a_recorded_run_becomes_the_expectation() -> None:
 
 def test_the_median_rides_out_an_outlier() -> None:
     """A single cold-cache monster must not leave the bar crawling for
-    every normal navigation afterwards — which a mean would do."""
+    every normal navigation afterwards, which a mean would do."""
     for ms in (100.0, 110.0, 90.0, 105.0, 8000.0):
         calibration.record("op", {"a": ms})
     assert calibration.expected_ms("op")["a"] == pytest.approx(105.0)
@@ -116,7 +116,7 @@ def test_history_is_bounded(isolated_progress_calibration: Path) -> None:
 def test_a_non_finite_duration_is_ignored(isolated_progress_calibration: Path) -> None:
     """``json.loads`` accepts ``Infinity`` and ``NaN``, and an infinite value
     sails past a bare ``>=`` filter. It then reaches ``OperationPlan.weights``,
-    where ``inf / inf`` is ``nan`` and the bar stops advancing entirely — a
+    where ``inf / inf`` is ``nan`` and the bar stops advancing entirely: a
     corrupt line would freeze the line rather than be skipped.
 
     Written after the guard was added to ``record`` but silently not to the
@@ -151,7 +151,7 @@ def test_a_record_missing_a_field_is_skipped_not_raised(
     isolated_progress_calibration: Path,
 ) -> None:
     """A line can be valid JSON and still lack a key, and KeyError is a
-    subclass of none of the other suppressed types — so it escaped ``_load``.
+    subclass of none of the other suppressed types, so it escaped ``_load``.
 
     That path runs from ``ProgressFacility.begin``, and ``SearchController.run``
     does not guard that call: one corrupt history line broke the next search.

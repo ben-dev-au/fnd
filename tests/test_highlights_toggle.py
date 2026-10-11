@@ -70,7 +70,7 @@ def _has_highlight_span(pane: VerticalScroll) -> bool:
 @pytest.mark.asyncio
 async def test_highlights_default_on(cfg: Config, md_index: Path) -> None:
     """Spawning the app with a query yields highlighted spans without
-    any user interaction — the default state is "highlights on"."""
+    any user interaction: the default state is "highlights on"."""
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
@@ -89,7 +89,7 @@ async def test_highlights_default_on(cfg: Config, md_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_h_key_toggles_highlights_off_then_on(cfg: Config, md_index: Path) -> None:
     """Pressing ``h`` once removes every highlight span; pressing it
-    again restores them — same query, no re-search."""
+    again restores them: same query, no re-search."""
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
@@ -112,7 +112,7 @@ async def test_h_key_toggles_highlights_off_then_on(cfg: Config, md_index: Path)
             message="highlights didn't clear after first toggle",
         )
 
-        # Toggle back on — same query, highlights restored.
+        # Toggle back on: same query, highlights restored.
         await safe_press(pilot, "h")
         await wait_until(
             pilot,

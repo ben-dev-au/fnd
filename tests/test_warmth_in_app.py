@@ -1,7 +1,7 @@
 """Warmth end to end: coverage's store, the poll, and the arrows.
 
 The unit tests pin the classification and the glyph. What they cannot see
-is the wiring — that the presenter can resolve a width and a query
+is the wiring: that the presenter can resolve a width and a query
 signature to ask the store anything at all, that the poll reaches the
 tree, and that the progress line picks its plan from the same fact the
 arrow paints. All of that only exists in a running app.
@@ -48,7 +48,7 @@ def warm_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 def hold_everything(app: FNDApp) -> None:
     """Report every chunk as held, without building real captures.
 
-    Patches ``has``, which is what warmth probes with — ``get`` promotes on
+    Patches ``has``, which is what warmth probes with: ``get`` promotes on
     read and warmth must never do that. ``count`` too, or the double
     contradicts itself: whole-file readiness is counted rather than probed, so
     a file could read fully warmed while this claims to hold nothing.
@@ -65,7 +65,7 @@ def hold_nothing(app: FNDApp) -> None:
 @pytest.mark.asyncio
 async def test_readiness_is_answerable_in_a_live_app(warm_index: Path) -> None:
     """Needs a laid-out pane (for the capture width) and a committed query
-    (for the signature). Before either, the map is empty rather than wrong —
+    (for the signature). Before either, the map is empty rather than wrong:
     reporting the whole list cold would be a lie, not a default."""
     app = FNDApp(index_dir=warm_index)
     async with app.run_test() as pilot:
@@ -89,7 +89,7 @@ async def test_readiness_is_answerable_in_a_live_app(warm_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_the_file_being_captured_reads_as_warming(warm_index: Path) -> None:
     """Captures run serially on one off-screen host, so exactly one file is
-    ever in this state — which is what makes it a single marker walking
+    ever in this state, which is what makes it a single marker walking
     outward from the cursor rather than noise across the list."""
     app = FNDApp(index_dir=warm_index)
     async with app.run_test() as pilot:
@@ -119,7 +119,7 @@ async def test_the_poll_repaints_the_arrows(warm_index: Path) -> None:
         app._results.refresh_warmth()
         # Not "everything is COLD": coverage is running underneath, so the file
         # it is capturing right now legitimately reads WARMING. Pinning that is
-        # a timing-dependent test — it passed on macOS and Linux and failed on
+        # a timing-dependent test: it passed on macOS and Linux and failed on
         # Windows. What this step means is that nothing is READY yet.
         assert not any(st.is_served for st in tree.warm_states.values())
 
@@ -130,8 +130,8 @@ async def test_the_poll_repaints_the_arrows(warm_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_the_timer_drives_the_poll_without_being_asked(warm_index: Path) -> None:
-    """The wiring test. Warmth changes with no user input at all — a capture
-    landing, or coverage stepping to the next file — so nothing in the app's
+    """The wiring test. Warmth changes with no user input at all (a capture
+    landing, or coverage stepping to the next file) so nothing in the app's
     normal event flow would repaint it."""
     app = FNDApp(index_dir=warm_index)
     async with app.run_test() as pilot:
@@ -154,7 +154,7 @@ async def test_the_timer_drives_the_poll_without_being_asked(warm_index: Path) -
 async def test_a_ready_file_is_priced_as_a_warm_navigation(warm_index: Path) -> None:
     """The progress line and the arrow must read the same fact. A file whose
     hits are all captured mounts by blitting them, so pricing it with a cold
-    plan would overstate every jump into it — and the chunk cache, which the
+    plan would overstate every jump into it, and the chunk cache, which the
     classification used to ask, cannot see captures at all."""
     app = FNDApp(index_dir=warm_index)
     async with app.run_test() as pilot:
@@ -181,7 +181,7 @@ async def test_a_ready_file_is_priced_as_a_warm_navigation(warm_index: Path) -> 
 async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> None:
     """A new query clears the capture store. Warmth is keyed by parent_id, so
     a file listed by both searches would otherwise keep its READY arrow until
-    the next poll — promising an instant jump whose captures had just been
+    the next poll: promising an instant jump whose captures had just been
     thrown away."""
     app = FNDApp(index_dir=warm_index)
     async with app.run_test() as pilot:
@@ -203,11 +203,11 @@ async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> 
 
         # On the GLYPH, not just the map. Clearing the map instead of seeding
         # it COLD leaves every row unknown, and an unknown row falls through to
-        # Textual's stock arrow — byte-identical to the ready one. The map
+        # Textual's stock arrow: byte-identical to the ready one. The map
         # assertion above passes for that case, so it cannot catch a row that
         # fails towards READY, which is the defect the seeding exists to stop.
         rows = [n for n in tree.root.children if isinstance(n.data, dict)]
-        assert rows, "setup — the new query produced no rows"
+        assert rows, "setup: the new query produced no rows"
         hollow = {ResultsTree.ICON_BUILDING, ResultsTree.ICON_BUILDING_EXPANDED}
         icons = {tree.render_label(n, Style(), Style()).plain[:2] for n in rows}
         assert icons <= hollow, (
@@ -217,12 +217,12 @@ async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> 
 
 def test_probing_warmth_does_not_reorder_the_capture_store() -> None:
     """The store promotes on READ so the file being read is never the oldest
-    entry — a cache that drops what you are looking at is worse than no cache.
+    entry: a cache that drops what you are looking at is worse than no cache.
 
     Warmth probes every listed file twice a second. Asking through ``get``
     re-promoted all of them in results-list order on every tick, which
-    neutralised that protection and left the top result — usually the file on
-    screen — as the first eviction victim. Probing is not use.
+    neutralised that protection and left the top result, usually the file on
+    screen, as the first eviction victim. Probing is not use.
     """
     from fnd.tui.preview.frozen_store import ChunkCaptureStore
 
@@ -284,14 +284,14 @@ async def test_every_state_is_actually_coloured(warm_index: Path) -> None:
 
         assert seen[WarmState.COLD] != seen[WarmState.READY], "cold and ready look the same"
         assert seen[WarmState.WARMING] == seen[WarmState.READY], (
-            "warming and ready are both warm — they differ by glyph, not hue"
+            "warming and ready are both warm: they differ by glyph, not hue"
         )
 
 
 @pytest.mark.asyncio
 async def test_the_arrow_colours_follow_the_theme(warm_index: Path) -> None:
     """Read from component classes rather than baked-in hex, so a theme change
-    moves them. Cold is the score column's blue; warm is the theme accent —
+    moves them. Cold is the score column's blue; warm is the theme accent:
     the same variable the progress line's fill uses."""
     app = FNDApp(index_dir=warm_index)
     async with app.run_test() as pilot:
@@ -321,7 +321,7 @@ async def test_warming_survives_the_gap_between_captures(warm_index: Path) -> No
     Sampled CONCURRENTLY, because the gap is what matters and it is invisible
     from inside a capture: under the old code the flag was set on entry to
     every capture and cleared the moment each one returned. Only an observer
-    running between them — which is exactly what the 2 Hz poll is — can tell
+    running between them, which is exactly what the 2 Hz poll is, can tell
     the two arrangements apart.
     """
     app = FNDApp(index_dir=warm_index)
@@ -331,7 +331,7 @@ async def test_warming_survives_the_gap_between_captures(warm_index: Path) -> No
         preview = app._preview
         parent_id = app._search.groups[0].parent_id
         chunks = await preview._coverage_chunks(parent_id)
-        assert len(chunks) >= 2, "setup — need at least two chunks to capture"
+        assert len(chunks) >= 2, "setup: need at least two chunks to capture"
 
         async def slow_capture(*_a: object, **_k: object) -> None:
             # Long enough that the inter-capture backoff yields a real window.
@@ -363,9 +363,9 @@ async def test_warming_survives_the_gap_between_captures(warm_index: Path) -> No
             stop.set()
             await watcher
 
-        assert observed, "setup — the sampler never ran"
+        assert observed, "setup: the sampler never ran"
         assert None not in observed, (
-            "the warming marker was dropped between captures — the arrows would "
+            "the warming marker was dropped between captures: the arrows would "
             f"flicker back to cold mid-file: {observed}"
         )
         assert preview.coverage_parent is None, "the marker outlived the file"
@@ -374,7 +374,7 @@ async def test_warming_survives_the_gap_between_captures(warm_index: Path) -> No
 @pytest.mark.asyncio
 async def test_the_warm_host_captures_one_at_a_time(warm_index: Path) -> None:
     """The off-screen screen and its container are shared, and the width is set
-    on the SCREEN — so two callers interleaving at any of capture()'s awaits
+    on the SCREEN, so two callers interleaving at any of capture()'s awaits
     would lay each other's widget out at the wrong width.
 
     Coverage and the stale-strip repair are independent asyncio tasks and
@@ -413,7 +413,7 @@ async def test_a_fully_warmed_file_is_priced_as_a_warm_navigation(warm_index: Pa
     """FULL is strictly warmer than READY, and the two readers must not drift.
 
     Selecting the warm plan by comparing against READY alone prices the most
-    warmed file in the app as a cold navigation — every phase of the jump
+    warmed file in the app as a cold navigation: every phase of the jump
     overstated for the one file that has nothing left to build.
     """
     app = FNDApp(index_dir=warm_index)

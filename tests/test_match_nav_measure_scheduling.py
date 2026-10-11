@@ -137,7 +137,7 @@ def test_a_rebuild_clears_a_swallowed_request_too() -> None:
 
 @pytest.mark.parametrize("rounds", [1, 3, 7])
 def test_the_scheduler_always_settles(rounds: int) -> None:
-    """Landing every poll must terminate — a follow-up that re-armed itself
+    """Landing every poll must terminate: a follow-up that re-armed itself
     would spin the event loop for as long as the preview is open."""
     nav = _Nav()
     for _ in range(rounds):
@@ -153,7 +153,7 @@ def test_the_scheduler_always_settles(rounds: int) -> None:
 def test_a_late_reflow_is_caught_by_a_confirmation_pass() -> None:
     """The counts come from LAYOUT, but every trigger is a scroll or a mount, so
     a reflow that lands after the last scroll would otherwise leave the border
-    describing a layout that is gone — with nothing pending to notice."""
+    describing a layout that is gone, with nothing pending to notice."""
     nav = _Nav()
     nav._open_confirmation_window()
     nav.readings = [(0, 0), (0, 1)]
@@ -166,7 +166,7 @@ def test_a_late_reflow_is_caught_by_a_confirmation_pass() -> None:
 
 
 def test_a_confirmation_skips_a_settling_navigation() -> None:
-    """A confirmation must never read regions while a navigation is landing —
+    """A confirmation must never read regions while a navigation is landing:
     that is the one path the surrounding code requires be left clear."""
     nav = _Nav()
     nav._open_confirmation_window()
@@ -205,7 +205,7 @@ def test_a_rebuild_cancels_pending_confirmations() -> None:
 
 
 def test_the_window_keeps_re_measuring_until_it_closes() -> None:
-    """Agreement between two samples is not evidence the layout has stopped —
+    """Agreement between two samples is not evidence the layout has stopped:
     it has been wrong that way twice. The window is what stops the loop."""
     nav = _Nav()
     nav._open_confirmation_window()
@@ -233,7 +233,7 @@ def test_the_window_closes() -> None:
 
 def test_a_rebuild_leaves_the_new_navigation_with_a_chain() -> None:
     """A chain armed under the previous generation is dead on arrival, and a
-    bare "a chain exists" guard cannot say so — it just declines to arm the one
+    bare "a chain exists" guard cannot say so: it just declines to arm the one
     the new navigation needs, leaving an open window with nothing running."""
     nav = _Nav()
     nav._open_confirmation_window()  # generation 0 arms a chain
@@ -276,7 +276,7 @@ def test_a_raising_read_does_not_escape_the_timer() -> None:
 def test_a_chunk_that_composes_late_still_gets_a_count() -> None:
     """``_count_tick``'s ladder is three refreshes and then stops if the count
     is still 0. A chunk that composes after that left the count stuck at 0 with
-    nothing pending — a real Windows failure, 30s of polling against
+    nothing pending: a real Windows failure, 30s of polling against
     `chunk_stops=[3, 5, 7]` that the navigator never counted."""
     nav = _Nav()
     nav._open_confirmation_window()
@@ -291,7 +291,7 @@ def test_a_chunk_that_composes_late_still_gets_a_count() -> None:
 
 
 def test_the_recount_stops_once_the_count_is_real() -> None:
-    """The walk is only paid while the count reads zero — a window ticking 40
+    """The walk is only paid while the count reads zero: a window ticking 40
     times must not re-walk the subtree once it has an answer."""
     nav = _Nav()
     nav.stops = 2

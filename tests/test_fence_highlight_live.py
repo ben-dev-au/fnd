@@ -5,7 +5,7 @@ renderer). Stock ``MarkdownFence`` renders syntax colours only, so query
 terms inside a ``` fence ``` went unhighlighted. ``FNDMarkdownFence``
 overlays the match spans on top of the lexer colours.
 
-One document with two fences sharing the document's single match spec —
+One document with two fences sharing the document's single match spec:
 the same shape as the real app, where every chunk of a result gets the
 one ``_current_match_spec``. The matching fence is highlighted; the
 non-matching fence is left clean (no over-highlight bleed).
@@ -73,7 +73,7 @@ async def test_fence_highlights_subword_of_underscore_identifier() -> None:
     token of ``recursive_directory_iterator`` and a search for it finds the
     chunk. The highlighter previously tokenised doc text with ``\\w+`` (keeps
     underscore), saw one token that failed to stem-match, and left that one
-    occurrence unhighlighted while sibling plain matches lit up — the exact
+    occurrence unhighlighted while sibling plain matches lit up: the exact
     "one code-block match isn't highlighted" field report. Both occurrences must
     now highlight identically."""
     source = (

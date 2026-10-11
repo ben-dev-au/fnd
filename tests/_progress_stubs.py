@@ -3,7 +3,7 @@
 One copy, because these encode a contract with ``ProgressFacility``: what it
 reads off the widget and what it asks of the app. Four test modules had grown
 their own near-identical versions, and the first time the facility started
-reading ``content_size`` three of them broke at once — the duplication was
+reading ``content_size`` three of them broke at once: the duplication was
 doing no work except deferring that breakage.
 """
 
@@ -54,7 +54,7 @@ class StubTimer:
     """Models Textual's ``Timer`` where it matters: ``stop()`` cancels the task
     and drops the reference, and ``_task`` is therefore the liveness signal.
 
-    ``_active`` is deliberately not modelled — it is the PAUSE flag, and
+    ``_active`` is deliberately not modelled: it is the PAUSE flag, and
     ``stop()`` actually *sets* it, so reading it as liveness yields a check
     that is always True. That mistake cost a debugging round; encoding the
     real shape here keeps it from being repeated.
@@ -77,7 +77,7 @@ class StubSearch:
     """The slice of SearchController the progress trackers read.
 
     Empty groups mean "unknown file", which PreviewProgressTracker treats as
-    structural — the superset plan, so a wrong guess costs pacing rather than
+    structural: the superset plan, so a wrong guess costs pacing rather than
     making a phase unreachable.
     """
 
@@ -94,7 +94,7 @@ class StubProgressApp:
         self.timers: list[StubTimer] = []
         self.watchdogs: list[tuple[StubTimer, Any]] = []
         # Kept alongside, because the watchdog's delay is no longer a
-        # constant — it tracks the stall cap of whichever class of work holds
+        # constant: it tracks the stall cap of whichever class of work holds
         # the line, and a watchdog under that cap makes the stall path dead.
         self.timer_delays: list[float] = []
 

@@ -144,11 +144,11 @@ def _expand_numeric_compare(q: str) -> str:
 # boolean operator nor a field qualifier (``word:``) and carries no paren or
 # brace. Excluding braces stops a following ``{N}`` from being swallowed as a
 # run word (``{0}{0}`` → ``"{0}"~0``), which left a brace inside quotes that the
-# next pass re-expanded — breaking idempotency.
+# next pass re-expanded: breaking idempotency.
 _RUN_TOKEN: Final = r'(?:"[^"]*"|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s(){}]+))'  # noqa: S105 (a regex, not a password)
 _BRACE_PROX: Final = re.compile(rf"\{{(\d+)\}}\s*((?:{_RUN_TOKEN})(?:\s+{_RUN_TOKEN})*)?")
 
-# A residual brace group that is a proximity attempt (no ``TO`` — that would be
+# A residual brace group that is a proximity attempt (no ``TO``: that would be
 # a Tantivy exclusive range, which we leave alone).
 _NEAR_WORD: Final = r"[\w*?]+(?:~\d*)?"
 
@@ -160,7 +160,7 @@ def _expand_proximity_aliases(q: str) -> str:
 
     ``{N}`` binds to the immediately-following run of plain words / quoted
     phrases and stops at the first boolean operator, field qualifier, or
-    parenthesis — the remainder is preserved verbatim. A ``{N}`` with no usable
+    parenthesis: the remainder is preserved verbatim. A ``{N}`` with no usable
     run is left in place for :func:`check_proximity` to flag.
     """
 
@@ -168,7 +168,7 @@ def _expand_proximity_aliases(q: str) -> str:
         slop = int(match.group(1))
         run = (match.group(2) or "").strip()
         if not run:
-            return match.group(0)  # nothing to bind to — leave for validation
+            return match.group(0)  # nothing to bind to: leave for validation
         inner = " ".join(run.replace('"', " ").split())
         return f'"{inner}"~{slop}'
 
@@ -187,8 +187,8 @@ def check_proximity(expanded: str) -> None:
     """Raise :class:`QuerySyntaxError` if a proximity brace survived expansion.
 
     Runs on the *expanded* query: a well-formed ``{N} a b`` is already
-    ``"a b"~N`` (no brace left), so anything matching here — ``{60}`` alone,
-    ``{abc}``, ``{}``, ``{-5}`` — is a malformed proximity the user can fix.
+    ``"a b"~N`` (no brace left), so anything matching here (``{60}`` alone,
+    ``{abc}``, ``{}``, ``{-5}``) is a malformed proximity the user can fix.
     Braces inside quotes (literal text) and ``{lo TO hi}`` ranges are ignored.
     """
     from fnd.query_errors import QuerySyntaxError
@@ -218,10 +218,10 @@ def split_metadata_filter(query: str) -> tuple[str, str | None]:
 
     Returns ``(lexical_query, metadata_filter_or_None)``. ``[…]`` blocks
     appearing inside a quoted phrase or a ``/regex/`` are left intact, and a ``field:[lo TO hi]``
-    range (the ``[`` follows a ``:``) is a numeric range — left in the lexical
+    range (the ``[`` follows a ``:``) is a numeric range, left in the lexical
     query, not treated as a filter. A filter may contain nested ``in [ … ]``
     lists. An empty ``[]`` is treated as no filter. Two or more top-level filter
-    blocks raise ``ValueError`` — compose alternatives with ``AND``/``OR``
+    blocks raise ``ValueError``: compose alternatives with ``AND``/``OR``
     inside the single block.
 
     Whitespace around the extracted clause is collapsed so the resulting
@@ -240,7 +240,7 @@ def split_metadata_filter(query: str) -> tuple[str, str | None]:
             continue
         if ch == "[":
             if bracket_start is None and i > 0 and query[i - 1] == ":":
-                # field:[lo TO hi] — a numeric range, not a metadata filter.
+                # field:[lo TO hi]; a numeric range, not a metadata filter.
                 i += 1
                 continue
             if bracket_start is None:

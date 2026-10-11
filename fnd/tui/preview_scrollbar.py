@@ -7,13 +7,13 @@ not as a sibling minimap.
 
 This module wires three thin subclasses:
 
-* :class:`MatchAwareScrollBarRender` — overrides Textual's renderer to
+* :class:`MatchAwareScrollBarRender`, overrides Textual's renderer to
   swap the blank track glyph for an accent ``▌`` block at every row that
   carries a match.
-* :class:`MatchAwareScrollBar` — passes per-instance match data into the
+* :class:`MatchAwareScrollBar`, passes per-instance match data into the
   custom renderer (Textual's default ``ScrollBar.render`` instantiates the
   renderer class without per-instance args).
-* :class:`MatchAwareScroll` — a ``VerticalScroll`` whose vertical scrollbar
+* :class:`MatchAwareScroll`; a ``VerticalScroll`` whose vertical scrollbar
   is a :class:`MatchAwareScrollBar`.
 
 Two marker-mapping modes coexist:
@@ -24,14 +24,14 @@ Two marker-mapping modes coexist:
   so a single big chunk and many tiny ones each get a marker at the right
   visual position. Used by the flat-buffer :class:`LineBufferPreview`
   pipeline.
-* **Chunk-uniform** (legacy) — driven by ``set_match_map(match_map)``
+* **Chunk-uniform** (legacy): driven by ``set_match_map(match_map)``
   where ``match_map[i]`` flags chunk ``i`` as match-bearing. Each cell on
   the track resolves back to a chunk index proportionally and paints if
   that chunk matches. Used by the structural Markdown / docx / pptx
   preview path.
 
-A container built behind ``-pre-reveal`` is in the layout — that is how the pane
-scrolls to its match before revealing it — so its rows reach the bar as well and
+A container built behind ``-pre-reveal`` is in the layout (that is how the pane
+scrolls to its match before revealing it) so its rows reach the bar as well and
 resized the thumb on every navigation, measured 5 cells to 3 and back.
 :attr:`MatchAwareScroll.staged_rows` reports them and
 :meth:`MatchAwareScrollBar._render_bar` subtracts them, but only while the
@@ -76,11 +76,11 @@ if TYPE_CHECKING:
 _MARKER_COLOR = "#ffd866"
 _MARKER_GLYPH = "▌"
 
-# The thumb is one box-drawing line per cell — the same weight as the pane's
+# The thumb is one box-drawing line per cell: the same weight as the pane's
 # ``round`` border, so the bar reads as part of the frame rather than a fat
 # block. Vertical bars use ``│``, horizontal bars the matching ``─``. Gappy on
 # Apple Terminal / SF Mono (font-determined, same class as the box-border
-# issue) — a documented "use a modern terminal" case.
+# issue): a documented "use a modern terminal" case.
 _THUMB_GLYPH = "│"
 _THUMB_GLYPH_HORIZONTAL = "─"
 
@@ -93,15 +93,15 @@ class ThinScrollBarRender(ScrollBarRender):
     code fences, settings lists) matches:
 
     * The thumb is a single box-drawing line (``│`` vertical, ``─`` horizontal)
-      per cell in the bar colour over a transparent track — the pane border's
+      per cell in the bar colour over a transparent track: the pane border's
       line weight, not a reverse-video full-cell block.
     * The thumb is a **constant** integer number of cells. The stock renderer
       packs sub-cell precision into partial-block end caps, so its cell count
       flickers ±1 as you scroll (the thumb visibly resizes). Here the count is
       derived once from the window/content ratio and only the position moves.
 
-    Covers both orientations so every Textual scrollbar — including the
-    horizontal bars on wide tables and unwrapped code fences — reads the same.
+    Covers both orientations so every Textual scrollbar, including the
+    horizontal bars on wide tables and unwrapped code fences: reads the same.
     """
 
     def _thin_segments(
@@ -113,7 +113,7 @@ class ThinScrollBarRender(ScrollBarRender):
         vertical: bool = True,
     ) -> list[Segment]:
         glyph = _THUMB_GLYPH if vertical else _THUMB_GLYPH_HORIZONTAL
-        # ``back_color`` may be None (transparent track) — don't fabricate a bg.
+        # ``back_color`` may be None (transparent track): don't fabricate a bg.
         track = RichStyle(bgcolor=back_color)
         if size <= 0:
             return []
@@ -123,7 +123,7 @@ class ThinScrollBarRender(ScrollBarRender):
             # Whole content visible (or degenerate): blank track, no thumb.
             return [Segment(" ", track) for _ in range(size)]
         # Constant thumb height from the window/content ratio (≥1 cell). Depends
-        # only on window/virtual/size — not position — so scrolling never resizes
+        # only on window/virtual/size, not position, so scrolling never resizes
         # it; only ``top`` moves.
         thumb = max(1, min(size, round(window * size / virtual)))
         max_top = size - thumb
@@ -224,7 +224,7 @@ class MatchAwareScrollBarRender(ThinScrollBarRender):
 
         marker_cells = self._marker_cells(size)
         if marker_cells:
-            # Thumb cells carry the ``@mouse.down: grab`` meta — leave those
+            # Thumb cells carry the ``@mouse.down: grab`` meta, leave those
             # untouched so the current scroll position still reads as a thumb.
             marker_color = RichColor.parse(_MARKER_COLOR)
             for i, seg in enumerate(segments):
@@ -333,7 +333,7 @@ class MatchAwareScrollBar(ScrollBar):
 
 
 def _is_displayed(widget: Widget) -> bool:
-    """Whether ``widget`` still occupies layout — an ancestor with
+    """Whether ``widget`` still occupies layout: an ancestor with
     ``display: none`` takes it out without detaching it."""
     from textual.widget import Widget as _Widget
 
@@ -367,7 +367,7 @@ class MatchAwareScroll(VerticalScroll):
     # scroll is essentially always 0 in practice). Overrides the parent
     # ``scroll_left`` binding so a single Left exits the pane instead of
     # paging horizontally into empty space.
-    BINDINGS = [  # noqa: RUF012 — Textual widget BINDINGS expects a class-level list
+    BINDINGS = [  # noqa: RUF012, Textual widget BINDINGS expects a class-level list
         Binding("left", "bridge_left", "Back to the sidebar", show=False),
         # The footer advertises `j/k Scroll` here and the rest of the app speaks
         # vi keys (the settings list binds `up,k` / `down,j`), but Textual's
@@ -378,7 +378,7 @@ class MatchAwareScroll(VerticalScroll):
 
     # Lines advanced per scroll-key press in Reading View. Reading View turns
     # off mouse reporting (so native select/copy/TTS work), which makes the
-    # terminal translate each wheel notch into a *stream* of arrow keys — one
+    # terminal translate each wheel notch into a *stream* of arrow keys: one
     # 1-line scroll + full repaint each. Advancing several lines per key lets a
     # wheel/momentum burst cover ground in far fewer repaints, so scrolling
     # feels responsive instead of crawling. Non-animated: during a burst,
@@ -472,12 +472,12 @@ class MatchAwareScroll(VerticalScroll):
         # Measured from the ANCHOR, not from the height change: only content
         # inserted above it moves it, so a background fill appending BELOW is
         # correctly ignored. And the stored position advances each time, so a
-        # prepend arriving in instalments — built chunks resolve their heights
-        # over successive layouts — is absorbed in full rather than once.
+        # prepend arriving in instalments, built chunks resolve their heights
+        # over successive layouts, is absorbed in full rather than once.
         widget, before_y = claim
         anchor = cast("Widget", widget)
         # A widget whose container has left the layout reports virtual_region
-        # ``Region()`` — y=0, no exception — so a stranded claim would read as a
+        # ``Region()`` (y=0, no exception) so a stranded claim would read as a
         # prepend of -before_y and really scroll the pane: measured 117-187 rows
         # backwards on a cross-file navigation. Liveness is the only thing that
         # tells that apart from a genuine y=0.
@@ -502,8 +502,8 @@ class MatchAwareScroll(VerticalScroll):
             # An in-flight animation is RETARGETED, not stopped: it holds
             # start and end values in pre-prepend coordinates and would
             # otherwise drive scroll_y back and undo the absorb, while
-            # force-stopping COMPLETES it — Textual sets the attribute to
-            # the end value — teleporting the reader to their destination.
+            # force-stopping COMPLETES it, Textual sets the attribute to
+            # the end value, teleporting the reader to their destination.
             with contextlib.suppress(Exception):
                 animator = self.app.animator
                 animation = animator._animations.get((id(self), "scroll_y"))
@@ -539,7 +539,7 @@ class MatchAwareScroll(VerticalScroll):
         Same coordinate as ``virtual_region.y``, which cannot be used here: it
         reports the map this pass is about to replace. Asking the parent costs
         one container arrange whenever Textual measured it at its own height
-        instead (its all-dynamic-height branch) — 0.26ms at 40 chunks.
+        instead (its all-dynamic-height branch): 0.26ms at 40 chunks.
         """
         from textual.widget import Widget as _Widget
 
@@ -560,7 +560,7 @@ class MatchAwareScroll(VerticalScroll):
 
         ``validate_scroll_y`` clamps against the ``virtual_size`` this
         arrangement is about to replace, so at the end of a document a plain
-        write drops the absorb entirely — measured 116 where 216 was wanted.
+        write drops the absorb entirely: measured 116 where 216 was wanted.
         """
         from textual.reactive import Reactive
         from textual.widget import Widget as _Widget
@@ -587,7 +587,7 @@ class MatchAwareScroll(VerticalScroll):
         # usable in isolation.
         super().watch_scroll_y(old_value, new_value)
         try:
-            # Call the LazyMounter directly — the app-level delegation shim
+            # Call the LazyMounter directly: the app-level delegation shim
             # (_schedule_preview_lazy_mount_check) was removed when the
             # delegation layer was dropped; this watcher kept calling the old
             # name and silently no-op'd, severing scroll-driven lazy mount.
@@ -612,7 +612,7 @@ class MatchAwareScroll(VerticalScroll):
 
         None of this pane's descendants have CSS rules that depend on
         the pane's ``:focus`` state, so we apply styles to just this
-        node — the focus-indicator border on the pane itself.
+        node; the focus-indicator border on the pane itself.
         """
         with contextlib.suppress(Exception):
             self.app.stylesheet.apply(self)

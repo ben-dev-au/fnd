@@ -1,7 +1,7 @@
 """A block's match row is counted in RENDERED rows, not source newlines.
 
 A wrapped block renders many rows from one source line, so a newline count
-reports 0 and the anchor lands on the block's top — measured on a real PDF
+reports 0 and the anchor lands on the block's top: measured on a real PDF
 contents page, a 63-row paragraph whose match paints on row 32.
 """
 
@@ -78,7 +78,7 @@ def test_padding_above_the_content_shifts_the_row() -> None:
 
 
 def test_highlight_spans_win_over_a_spec_scan() -> None:
-    """The spans are what the user can SEE, so they decide the row — the scan is
+    """The spans are what the user can SEE, so they decide the row: the scan is
     only the fallback for a block that carries none."""
     from textual.content import Span
 

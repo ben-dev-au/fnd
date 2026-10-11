@@ -45,7 +45,7 @@ def test_multiple_brackets_raises() -> None:
 
 
 def test_empty_brackets_returns_none() -> None:
-    """An empty [] is a no-op, not an empty filter — surface as None so
+    """An empty [] is a no-op, not an empty filter: surface as None so
     the search runs without metadata filtering."""
     q, m = split_metadata_filter("foo []")
     assert q == "foo"

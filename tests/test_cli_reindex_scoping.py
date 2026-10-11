@@ -3,7 +3,7 @@
 ``-c all`` means every collection here exactly as it does for a search, so one
 token says "everything" across the whole CLI. Naming nothing stays an error:
 re-indexing every collection is a minutes-long rebuild, so it is asked for
-rather than defaulted into — but the error proposes ``-c all`` through the same
+rather than defaulted into, but the error proposes ``-c all`` through the same
 report-and-offer path a typo goes through, instead of Typer's bare
 "Missing argument 'NAME'".
 """
@@ -30,7 +30,7 @@ CONFIG = """
 @pytest.fixture
 def cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[CliRunner, list[str]]:
     """A runner over a two-collection config, plus the list of collections each
-    reindex actually touched (the index build itself is stubbed — this is about
+    reindex actually touched (the index build itself is stubbed: this is about
     scope resolution, not indexing)."""
     for name in ("a", "b"):
         (tmp_path / name).mkdir()

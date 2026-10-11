@@ -32,7 +32,7 @@ def _capture_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 
 # The handlers stringify the path via str(req.path), which yields backslashes
-# on the Windows CI runner — assert against str(p), not a POSIX literal.
+# on the Windows CI runner: assert against str(p), not a POSIX literal.
 _PDF = Path("/d/a.pdf")
 
 

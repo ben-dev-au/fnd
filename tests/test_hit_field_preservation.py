@@ -1,7 +1,7 @@
 """Regression guard: every Hit-rebuild helper preserves every field.
 
 ``Hit.line`` was added but the cascade / fusion / rerank rebuild
-helpers were not audited — they kept the legacy field list, silently
+helpers were not audited: they kept the legacy field list, silently
 defaulting ``line`` to 0 every time they cloned a Hit. The TUI's
 search path always goes through cascade + rerank, so by the time a
 Hit reached the opener, ``line=0``, and the vscode/sublime handlers
@@ -32,7 +32,7 @@ def _populated_hit() -> Hit:
     Every field must be listed: the guard compares field-by-field, so any field
     left at its default compares equal to a dropped one and the guard passes
     while the field is being silently lost. That is exactly what happened to
-    ``body_text`` and ``body_md`` — see
+    ``body_text`` and ``body_md``: see
     :func:`test_every_hit_field_is_populated_by_the_fixture`, which now makes
     the omission impossible to repeat.
     """

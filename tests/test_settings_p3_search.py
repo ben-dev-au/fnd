@@ -30,7 +30,7 @@ def _seed_config(fixtures_dir: Path) -> Config:
 
 @pytest.mark.asyncio
 async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures_dir: Path) -> None:
-    """Spec: Search behaviour › Index — walker covers Preferences,
+    """Spec: Search behaviour › Index, walker covers Preferences,
     Collections, Keybindings, and root-level actions."""
     from fnd.tui.menu import KIND_HEADER, walk_all_sections
 
@@ -44,7 +44,7 @@ async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures
         # Collections section includes the per-collection drill row.
         assert "default" in labels
         # Keybindings keys (sample). The provider derives from the
-        # action registry — label is now the short title (Action
+        # action registry: label is now the short title (Action
         # footer_label / command), description carries the long-form
         # explanation that surfaces in the DetailStrip.
         assert any(item.label == "Quit" for _, item in all_items)
@@ -57,7 +57,7 @@ async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures
 
 @pytest.mark.asyncio
 async def test_walk_includes_scope_pseudo_row(built_index: Path, fixtures_dir: Path) -> None:
-    """Spec: Use cases › D — pre-empt confusion about active scope by
+    """Spec: Use cases › D, pre-empt confusion about active scope by
     surfacing a sidebar pointer in cross-section results."""
     from fnd.tui.menu import walk_all_sections
 
@@ -78,7 +78,7 @@ async def test_walk_includes_scope_pseudo_row(built_index: Path, fixtures_dir: P
 
 @pytest.mark.asyncio
 async def test_search_on_root_finds_preferences_leaf(built_index: Path, fixtures_dir: Path) -> None:
-    """Spec: Search behaviour — typing on root surfaces leaves from
+    """Spec: Search behaviour, typing on root surfaces leaves from
     every section, with the breadcrumb on each row."""
     from textual.widgets import Input
 
@@ -104,7 +104,7 @@ async def test_search_on_root_finds_preferences_leaf(built_index: Path, fixtures
 async def test_search_on_keybindings_finds_preference(
     built_index: Path, fixtures_dir: Path
 ) -> None:
-    """Spec: Cross-section search is global — searching from a sub-screen
+    """Spec: Cross-section search is global, searching from a sub-screen
     finds items in other sections."""
     from textual.widgets import Input
 
@@ -130,7 +130,7 @@ async def test_search_enter_navigates_only_then_second_enter_acts(
     built_index: Path, fixtures_dir: Path
 ) -> None:
     """Spec (revised): search is navigation-only. Enter in the search box
-    lands focus on the first match and fires NO effect — no edit bar, no
+    lands focus on the first match and fires NO effect: no edit bar, no
     toggle, no drill, no side-effect. A second Enter on the now-focused
     list performs the action (here: opens the scalar's edit bar inline)."""
     from textual.widgets import Input
@@ -169,7 +169,7 @@ async def test_search_enter_navigates_only_then_second_enter_acts(
 
 
 def test_search_result_label_has_bold_substring_for_query() -> None:
-    """Spec: Search › Match display — matched substring rendered bold."""
+    """Spec: Search › Match display, matched substring rendered bold."""
     from fnd.tui.menu import KIND_SCALAR, MenuItem
     from fnd.tui.settings_screen import _render_row
 
@@ -204,7 +204,7 @@ def test_render_row_no_highlight_when_query_misses() -> None:
 
 @pytest.mark.asyncio
 async def test_zero_match_shows_empty_state_hint(built_index: Path) -> None:
-    """Spec: Search › Empty-state hint — `No matches for '<q>'` placeholder."""
+    """Spec: Search › Empty-state hint; `No matches for '<q>'` placeholder."""
     from textual.widgets import Input
 
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
@@ -225,7 +225,7 @@ async def test_zero_match_shows_empty_state_hint(built_index: Path) -> None:
 
 
 def test_filter_haystack_excludes_description() -> None:
-    """Spec: Search index covers label/key/keywords/breadcrumb — NOT
+    """Spec: Search index covers label/key/keywords/breadcrumb, NOT
     description prose. Indexing descriptions muddies results."""
     import asyncio
 

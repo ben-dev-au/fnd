@@ -142,7 +142,7 @@ def scope_arms(
 
 
 # Below this many chunks/file the thread-pool overhead outweighs the
-# decode parallelism — fall back to serial decode regardless of the
+# decode parallelism: fall back to serial decode regardless of the
 # requested ``max_workers``.
 _PARALLEL_DECODE_THRESHOLD: Final = 50
 
@@ -183,7 +183,7 @@ class Hit:
     # phrase-proximity reranker can measure term spread across the whole
     # chunk, not just the ~240-char snippet. Empty until populated.
     body_text: str = ""
-    # Decoded markdown source (from F_BODY_MD) — what the structural preview
+    # Decoded markdown source (from F_BODY_MD): what the structural preview
     # renders for this chunk. Carried alongside ``body_text`` so a caller
     # holding only a Hit can still ask which text the user will actually read
     # (see ``fnd.tui.match_evidence``); the two substrates diverge, and that
@@ -210,7 +210,7 @@ class Hit:
 
 @dataclass(slots=True, frozen=True)
 class FileChunk:
-    """One indexed chunk in document order — used by the TUI's full-document
+    """One indexed chunk in document order: used by the TUI's full-document
     preview. ``score`` is None for chunks that didn't match the query.
 
     ``blocks`` is the legacy plain-text Block list (used by the snippet
@@ -235,7 +235,7 @@ class FileChunk:
 
     @property
     def body_text(self) -> str:
-        """Block text joined on newlines — the flat renderer's substrate.
+        """Block text joined on newlines: the flat renderer's substrate.
 
         Named to match :attr:`Hit.body_text` so both satisfy
         :class:`fnd.tui.preview_dispatcher.PreviewBody` and one evidence check
@@ -404,7 +404,7 @@ def _make_snippet(
     words, so a stem / wildcard / fuzzy / phrase hit centres the window on the
     occurrence the user will see highlighted. Anchoring literally meant a hit on
     "testing" for the query "test" found no anchor at all and fell back to the
-    chunk's opening characters — a row whose snippet showed no match.
+    chunk's opening characters: a row whose snippet showed no match.
 
     When ``intent`` is supplied, prefers a window whose context overlaps with
     intent tokens. Otherwise prefers the window covering the most
@@ -440,7 +440,7 @@ def _make_snippet(
 
     snippet = _window(body_text, best_pos, half)
     # The chosen window is centred on an anchor, so it normally shows that
-    # match — but a phrase span can straddle the edge once display sanitising
+    # match, but a phrase span can straddle the edge once display sanitising
     # has run. Verify rather than assume; the whole point of the change is that
     # a listed row shows its match.
     from fnd.render import text_has_any_match
@@ -735,7 +735,7 @@ class Searcher:
             if lifted.content.strip():
                 raise ValueError(f"not a filter clause: {clause!r}")
             filters.extend(lifted.filters)
-        # Tags are typed state, never query text — see fnd/tag_query.py.
+        # Tags are typed state, never query text: see fnd/tag_query.py.
         if tag_filter is not None and not tag_filter.is_empty():
             compiled_tags = compile_tag_filter(tag_filter, schema)
             if compiled_tags is not None:
@@ -760,7 +760,7 @@ class Searcher:
         # Must-clause: chunk's visible content (F_BODY) must match. A pure-filter
         # query (e.g. ``kind:pdf`` alone) has no content → match every chunk and
         # let the filters narrow. With neither content nor filters there is
-        # nothing to match — return no results rather than the whole corpus.
+        # nothing to match: return no results rather than the whole corpus.
         # Building and running the query, not reading what it found back.
         with _engine_refusals():
             has_content = bool(content.strip())
@@ -867,7 +867,7 @@ class Searcher:
 
     def _decode_chunk(self, searcher: object, address: object) -> FileChunk:
         """Decode a single chunk's stored fields at ``address`` into a
-        :class:`FileChunk`. Independent per-address — safe to call from
+        :class:`FileChunk`. Independent per-address: safe to call from
         a worker thread because ``Searcher.doc()`` releases the GIL
         inside tantivy. ``searcher`` is the generation-pinned view the
         caller searched against; passing it explicitly (rather than
@@ -900,13 +900,13 @@ class Searcher:
 
         ``max_workers`` controls decode parallelism:
 
-        * ``None`` (default) or ``<= 1``: serial decode — the historic
+        * ``None`` (default) or ``<= 1``: serial decode; the historic
           behaviour, used by tests and by callers that don't want the
           thread-pool startup cost.
         * ``> 1`` *and* chunk count ≥ ``_PARALLEL_DECODE_THRESHOLD``:
           decode addresses concurrently via a :class:`ThreadPoolExecutor`.
           Tantivy releases the GIL inside ``Searcher.doc()`` so threads
-          are the right primitive — multiprocessing would force schema /
+          are the right primitive: multiprocessing would force schema /
           searcher serialisation per worker.
         * ``> 1`` and chunk count below the threshold: serial decode (the
           thread-pool overhead is not worth it).

@@ -1,4 +1,4 @@
-"""Per-collection Update index workflow — end-to-end.
+"""Per-collection Update index workflow: end-to-end.
 
 Triggers Update index for a single collection (no chain). The
 chain bookkeeping fields on the app must remain at single-run
@@ -30,7 +30,7 @@ async def test_single_collection_update_does_not_show_chain_suffix(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         # Skip the first-reindex warning if pdf-structure is installed
-        # in this dev env — that's a separate workflow.
+        # in this dev env: that's a separate workflow.
         from fnd.tui.first_reindex_warning import mark_seen as _mark_seen
 
         _mark_seen()

@@ -5,7 +5,7 @@ serving the viewport through the line API so cost is bounded by terminal height
 rather than document size.
 
 The width-rebuild is a subclass hook rather than inherited behaviour: strips are
-cut at one width, and how they are re-derived depends on where they came from —
+cut at one width, and how they are re-derived depends on where they came from;
 the flat (PDF/TXT) path re-renders ``FileView.lines`` at the new width. A base
 class that offered a default would let a subclass silently inherit the wrong one.
 
@@ -36,15 +36,15 @@ class StripDocumentView(ScrollView, can_focus=True):
 
     Subclasses own their strips and their addressing, and supply:
 
-    * :meth:`_visual_row` — address -> visual row. An *address* is whatever
+    * :meth:`_visual_row`, address -> visual row. An *address* is whatever
       survives a reflow for that substrate: a wrap-stable logical line for the
       flat buffer, a document row for frozen captures.
-    * :meth:`_ready_for_scroll` — whether an address can be resolved yet.
-    * :meth:`_rebuild_for_width` — re-wrap, re-freeze, or nothing.
+    * :meth:`_ready_for_scroll`, whether an address can be resolved yet.
+    * :meth:`_rebuild_for_width`, re-wrap, re-freeze, or nothing.
     * :attr:`match_rows` (VISUAL rows), :meth:`address_of_chunk` and
-      :meth:`first_match_address_of_chunk` (substrate ADDRESSES — not the same
+      :meth:`first_match_address_of_chunk` (substrate ADDRESSES, not the same
       space; mixing them scrolls to the wrong place once wrapping is on).
-    * :meth:`_row_overlay_style` — optional per-row accent.
+    * :meth:`_row_overlay_style`, optional per-row accent.
     """
 
     ALLOW_SELECT = True
@@ -57,7 +57,7 @@ class StripDocumentView(ScrollView, can_focus=True):
         # In-development scrollbar match highlighting. False suppresses the
         # marker feed (the bar still scrolls; it just paints no markers).
         self._show_match_markers: bool = show_match_markers
-        # Deferred scroll target — re-applied once there is a real viewport.
+        # Deferred scroll target: re-applied once there is a real viewport.
         self._pending_scroll_address: int | None = None
         self._pending_scroll_center: bool = False
         # Fraction of the viewport to drop a match below the top (context above
@@ -80,11 +80,11 @@ class StripDocumentView(ScrollView, can_focus=True):
 
     @property
     def match_rows(self) -> list[int]:
-        """Sorted visual rows carrying a match — the scrollbar marker feed."""
+        """Sorted visual rows carrying a match: the scrollbar marker feed."""
         return []
 
     def address_of_chunk(self, chunk_id: int) -> int | None:
-        """The chunk's first ADDRESS — the substrate's own space, not a visual
+        """The chunk's first ADDRESS: the substrate's own space, not a visual
         row. `scroll_to_address` is what converts it."""
         return None
 
@@ -98,7 +98,7 @@ class StripDocumentView(ScrollView, can_focus=True):
         return None
 
     def top_address(self) -> int | None:
-        """The address at the viewport top — a restorable reading position."""
+        """The address at the viewport top: a restorable reading position."""
         if not self._strips:
             return None
         return max(0, min(int(self.scroll_offset.y), len(self._strips) - 1))
@@ -147,7 +147,7 @@ class StripDocumentView(ScrollView, can_focus=True):
                 self.call_after_refresh(self._apply_pending_scroll, retries - 1)
             return
         # Ensure the strips match the current viewport width before resolving
-        # the address — otherwise an install at one width followed by layout at
+        # the address, otherwise an install at one width followed by layout at
         # another races the resize and scrolls to a stale row.
         if self.size.width > 0 and self._rebuild_for_width(self.size.width):
             self._refresh_match_scrollbar()
@@ -237,8 +237,8 @@ class StripDocumentView(ScrollView, can_focus=True):
         composed_base = base if overlay is None else (base + overlay)
         strip = self._strips[row].crop_extend(scroll_x, scroll_x + self.size.width, composed_base)
         # Composite every cell on ``composed_base`` so plain-text segments
-        # (bgcolor=None straight out of Rich) paint at the widget's cascaded bg
-        # — without this, those cells fall through to whatever the terminal's
+        # (bgcolor=None straight out of Rich) paint at the widget's cascaded bg,
+        # without this, those cells fall through to whatever the terminal's
         # default is (Tokyo Night terminal bg = ``#1a1b26``), producing a darker
         # stripe under the text while the padding shows ``$surface``.
         # ``composed_base + seg.style`` combines them in the right direction:
@@ -264,7 +264,7 @@ class StripDocumentView(ScrollView, can_focus=True):
         """Mirror ``Log.get_selection`` so Textual's clipboard manager can
         extract multi-line selections.
 
-        ``selection`` carries ``(start, end)`` as ``(visual_row, col)`` pairs —
+        ``selection`` carries ``(start, end)`` as ``(visual_row, col)`` pairs:
         Textual measures selection coordinates in visual rows (which is what
         ``render_line`` paints), not in logical lines. Each row's plain text
         comes from the cached Strip, so every substrate behaves identically.

@@ -2,7 +2,7 @@
 
 Each subsystem the line serves contributes two things and nothing else:
 
-* an :class:`~fnd.tui.progress.model.OperationPlan` — what its phases are,
+* an :class:`~fnd.tui.progress.model.OperationPlan`, what its phases are,
   what each is expected to cost, and whether the user is waiting on it
   (:class:`~fnd.tui.progress.model.OperationKind`);
 * a tracker satisfying :class:`~fnd.tui.progress.facility.ProgressTracker`,
@@ -13,7 +13,7 @@ That translation at the boundary is what lets one line serve operations
 with no unit in common. Rendered lines, mounted chunks and indexed files
 never meet; each tracker turns its own units into ``report(done, total)``
 and the phase weights turn the rest into one 0..1 fraction. Adding a
-subsystem means adding a plan and a tracker — the facility, the widget
+subsystem means adding a plan and a tracker: the facility, the widget
 and the calibration store need no knowledge of it.
 
 Seed durations come from the measured navigation budget;
@@ -24,7 +24,7 @@ The preview tracker **reads** pipeline state rather than being called
 from inside the pipeline. Two reasons, both load-bearing:
 
 * The old design put a ``show``/``hide`` pair at every exit of the mount
-  path — sixteen call sites, each guarded by hand — and any stale one
+  path (sixteen call sites, each guarded by hand) and any stale one
   could retire a newer navigation's bar. Deriving "is anything in
   flight?" from the pipeline's own signals cannot go stale.
 * It keeps this work out of the mount/scroll code that is being changed
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 # ── Preview navigation ───────────────────────────────────────────
 #
 # Cold: a file the pane is not already showing. Seeds are the medians of
-# the per-phase budget measured on a 1018-chunk PDF — decode off-thread,
+# the per-phase budget measured on a 1018-chunk PDF: decode off-thread,
 # the ±window mount, the focus chunk's build (the single biggest item),
 # and the reconcile→scroll commit.
 PREVIEW_COLD = OperationPlan(
@@ -61,7 +61,7 @@ PREVIEW_COLD = OperationPlan(
 
 # The FLAT path (PDF, TXT) installs a prebuilt document into one shared
 # LineBufferPreview: dispatch_flat_mount never assigns a mount task and leaves
-# ``active`` as None, so ``mount`` and ``build`` are not slow on that path —
+# ``active`` as None, so ``mount`` and ``build`` are not slow on that path;
 # they are unreachable. Giving a flat navigation the structural plan handed
 # 53% of the bar to phases it could never enter, so the fill was capped there
 # and the line stopped partway every time. A plan must only contain phases the
@@ -78,7 +78,7 @@ PREVIEW_COLD = OperationPlan(
 # so no single expectation fits and the choice is which way to be wrong. The
 # curve is asymmetric: a phase that overruns creeps asymptotically from 0.78
 # towards 0.97, which still reads as progress, while one that finishes early
-# is capped proportionally — 55% of the expected duration means a bar that
+# is capped proportionally, 55% of the expected duration means a bar that
 # stops at 0.43. For a high-variance phase, under-estimating is the graceful
 # failure. Two real-corpus runs measured medians of 1325 ms and 1767 ms.
 PREVIEW_COLD_FLAT = OperationPlan(
@@ -92,12 +92,12 @@ PREVIEW_WARM_FLAT = OperationPlan(
 )
 
 # Warm: no decode to do, because the chunks are already cached. Same phases
-# so the observer needs no special case, but its own operation id — mixing a
+# so the observer needs no special case, but its own operation id: mixing a
 # genuinely cold monster into these medians would make both estimates useless.
 #
 # These are measured, not guessed, and the first guess was badly wrong: warm
 # was seeded at 10/40/40/90 on the assumption that a cache hit is nearly free.
-# On a real corpus a warm navigation costs ~1030 ms — the cache saves the
+# On a real corpus a warm navigation costs ~1030 ms: the cache saves the
 # decode, not the mount, the focus build or the scroll commit. Two effects,
 # and the second is the one that showed on screen: every phase ran 8-15x its
 # expectation and spent its whole life in the eased overrun region, and the
@@ -116,7 +116,7 @@ PREVIEW_WARM = OperationPlan(
     ),
 )
 
-# A query is INTERACTIVE — the user is waiting on it — even though it is the
+# A query is INTERACTIVE (the user is waiting on it) even though it is the
 # one operation whose work happens entirely off the loop.
 SEARCH = OperationPlan(
     operation_id="search",
@@ -143,7 +143,7 @@ INDEX = OperationPlan(
 # Warming one file whole, on request. AMBIENT for the same reason indexing is:
 # it outlasts any navigation by orders of magnitude, so it has to give the line
 # up to whatever the user does next and take it back afterwards. Countable
-# because the unit is a chunk and there are hundreds — a fraction alone would
+# because the unit is a chunk and there are hundreds: a fraction alone would
 # read as a stalled bar. Measured on a real corpus: 69s for an 854-chunk book,
 # 167s for a 719-chunk PDF, so the seed is an order of magnitude, not a promise.
 WARM_WHOLE_FILE = OperationPlan(
@@ -178,11 +178,11 @@ class PreviewProgressTracker:
 
         Two axes, and both matter:
 
-        * **Warm vs cold** — asks ``showing_parent()`` rather than reading
+        * **Warm vs cold**: asks ``showing_parent()`` rather than reading
           ``active`` directly, because the flat path leaves ``active`` as None
           and reading it classified every flat navigation as cold, including a
           jump inside an already-open PDF.
-        * **Flat vs structural** — a plan must only contain phases its path can
+        * **Flat vs structural**: a plan must only contain phases its path can
           reach (see PREVIEW_COLD_FLAT). Decided through
           ``uses_markdown_renderer``, the same predicate the dispatcher routes
           on, so the two cannot drift.
@@ -192,12 +192,12 @@ class PreviewProgressTracker:
         #
         # * the pane is already showing this file, so there is nothing to open;
         # * coverage has captured every listed hit, so each mount is a blit
-        #   rather than a markdown build (see fnd/tui/preview/coverage.py) —
+        #   rather than a markdown build (see fnd/tui/preview/coverage.py):
         #   this is now the strongest predictor, and the chunk cache alone
         #   cannot see it;
         # * the chunks are decoded, so at least the decode is skipped.
         #
-        # File size, tried first, is a far weaker signal — a 54x size range
+        # File size, tried first, is a far weaker signal: a 54x size range
         # produced only a 3.6x duration range, because the preview mounts a
         # fixed window however large the file is.
         preview = self._app._preview
@@ -215,7 +215,7 @@ class PreviewProgressTracker:
         """Whether this file will take the structural renderer.
 
         Answered from the search hits, which satisfy the same protocol as the
-        chunks the dispatcher inspects — so this works at ``begin`` time, before
+        chunks the dispatcher inspects, so this works at ``begin`` time, before
         anything has been decoded. Unknown files are treated as structural: that
         plan is a superset, so a wrong guess costs pacing rather than making a
         phase unreachable.
@@ -250,12 +250,12 @@ class PreviewProgressTracker:
         excludes a container behind ``-pre-reveal``, ``showing_parent``
         confirms it is the right file, and the scroll must have committed.
         Without the last one, arrival short-circuited the settle and the line
-        cleared while the view was still moving — measured at 3 navigations in
+        cleared while the view was still moving: measured at 3 navigations in
         30, which is the "it vanished before it finished" failure rather than
         the lingering one.
 
         A scroll that never settles cannot strand this: arrival simply stays
-        false and the fallback below bounds it — ``_landing`` gives up after
+        false and the fallback below bounds it, ``_landing`` gives up after
         the app's own reveal watchdog, and ``pipeline_busy`` goes quiet.
         """
         if self._target is None:
@@ -290,7 +290,7 @@ class PreviewProgressTracker:
         elif self._landing(preview, scroll):
             self._advance(session, "land")
 
-        # Done when the MATCH IS ON SCREEN — not when the pipeline runs dry.
+        # Done when the MATCH IS ON SCREEN, not when the pipeline runs dry.
         #
         # Those were the same thing until the capture cache landed. Now the
         # mount keeps filling below the fold long after the visible window has
@@ -310,7 +310,7 @@ class PreviewProgressTracker:
             bool(preview.pipeline_busy()) or self._landing(preview, scroll)
         )
         if not busy:
-            # The work is over — so every phase of it is over, including the
+            # The work is over, so every phase of it is over, including the
             # ones no sample ever landed inside.
             #
             # This is not bookkeeping. An observer polling at 20 Hz only sees
@@ -320,7 +320,7 @@ class PreviewProgressTracker:
             # dropped and the pipeline can pass through build and land between
             # two samples. Measured on a real corpus: 7 of 31 navigations
             # finished while the tracker still believed they were mounting,
-            # and mount is followed by 53% of the bar — so the line sat at a
+            # and mount is followed by 53% of the bar, so the line sat at a
             # median of 0.50 and then jumped to full. That jump is the
             # "pauses halfway, then completes" report.
             self._advance(session, session.plan.phases[-1].key)
@@ -329,8 +329,8 @@ class PreviewProgressTracker:
     def _landing(self, preview: Any, scroll: Any) -> bool:
         """A navigation whose scroll has not committed yet.
 
-        This is the last phase and it carries real time — the measured
-        reconcile-to-scroll-commit window is 440-740ms — so getting it wrong
+        This is the last phase and it carries real time (the measured
+        reconcile-to-scroll-commit window is 440-740ms) so getting it wrong
         is expensive in both directions.
 
         Gating it on ``inflight_target`` (an earlier attempt) made it
@@ -348,7 +348,7 @@ class PreviewProgressTracker:
         So: still landing while the scroll is outstanding AND there is
         something on screen to land on (every reset path clears that) AND the
         pipeline went idle only recently. The grace is the app's own bound on
-        how long a reveal may take — past it, the navigation is over whatever
+        how long a reveal may take: past it, the navigation is over whatever
         the scroll controller believes.
         """
         if not scroll.is_settling:
@@ -364,7 +364,7 @@ class PreviewProgressTracker:
         """Enter ``phase`` if this session's plan has one.
 
         The flat and structural plans deliberately carry different phases, and
-        the pipeline signals are not exclusive — a structural mount left over
+        the pipeline signals are not exclusive: a structural mount left over
         from the previous navigation can still be in flight while a flat
         session is active. Entering a phase the plan does not contain would
         raise, and the sampler's catch-all would then retire the line rather
@@ -414,7 +414,7 @@ class PreviewProgressTracker:
 
         The flat path's duration spans more than an order of magnitude
         (p25 226ms, p75 3135ms on a real corpus) and nothing observable at
-        dispatch predicts it — file size scales it by roughly its fourth root,
+        dispatch predicts it: file size scales it by roughly its fourth root,
         because only a window is ever mounted. Estimating it was therefore
         never going to be accurate, so the renderer counts its own lines and
         this reads them. Falls back to the timed estimate when the count is
@@ -428,7 +428,7 @@ class PreviewProgressTracker:
             session.report(min(done, total), total)
 
     def _report_mount(self, session: ProgressSession, preview: Any) -> None:
-        """Fraction of the *window* mounted — not of the file.
+        """Fraction of the *window* mounted, not of the file.
 
         The old bar divided by ``len(chunks)``, so a 1018-chunk PDF whose
         mount only ever lands a ±7 window topped out near 1%. The window is
@@ -442,7 +442,7 @@ class PreviewProgressTracker:
         # The window the mount ACTUALLY chose, when it has chosen one. It is
         # selected by rows with the chunk count only as a cap, so on a
         # tall-chunk format it can hold two chunks where the tunables suggest
-        # fifteen — and pricing it at fifteen means this phase never reads as
+        # fifteen, and pricing it at fifteen means this phase never reads as
         # finished. Falls back to the tunables before the mount has picked.
         window = getattr(container, "mount_window", 0) or (
             tuning.VISIBLE_FIRST_ABOVE + tuning.VISIBLE_FIRST_BELOW + 1
@@ -456,7 +456,7 @@ class PreviewProgressTracker:
 class IndexProgressTracker:
     """Samples a running index so a background reindex has a visible cost.
 
-    An ``open_modal=False`` run — which is what auto-resume starts on launch —
+    An ``open_modal=False`` run, which is what auto-resume starts on launch,
     used to surface nothing but a toast, so the machine could be indexing for
     minutes with no indication. The IndexerScreen keeps its own richer display
     and stays the drill-in; this only mirrors the headline onto the line.
@@ -503,7 +503,7 @@ class IndexProgressTracker:
     def _label(self, service: Any, state: Any, total: int) -> str:
         """Value only: what is being indexed and how far in.
 
-        A slow PDF gets the page counter too — during a multi-minute
+        A slow PDF gets the page counter too: during a multi-minute
         texturising the file counter alone does not move, which is the exact
         shape of "it looks frozen".
         """
@@ -513,7 +513,7 @@ class IndexProgressTracker:
         if collection:
             chain_total = getattr(service, "chain_total", 1) or 1
             if chain_total > 1:
-                # Shared with IndexerScreen's title so the two cannot drift —
+                # Shared with IndexerScreen's title so the two cannot drift,
                 # and so this keeps the clamp, which it was missing: a state
                 # where chain_remaining still holds every collection rendered
                 # as "Work (0 of 4)".

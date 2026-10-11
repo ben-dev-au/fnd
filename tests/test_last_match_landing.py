@@ -2,7 +2,7 @@
 
 The ordering trap this exists for: ``FNDMarkdown.match_blocks`` is registration
 order, and a table registers from ``compose`` (at mount) while every text block
-registers pre-mount — so the table is always last, whatever follows it in the
+registers pre-mount, so the table is always last, whatever follows it in the
 document. The rows are the only ordering that matches what the reader sees.
 """
 
@@ -48,7 +48,7 @@ async def test_the_last_stop_row_is_the_tail_paragraph_not_the_table() -> None:
         table = pilot.app.query_one(FNDMarkdownTableDT)
         table_row = table.region.y - md.region.y
         assert rows[-1] > table_row, (
-            f"the last stop {rows[-1]} is at or above the table at row {table_row} — "
+            f"the last stop {rows[-1]} is at or above the table at row {table_row}: "
             "match_blocks ordering, not painted order"
         )
         assert rows[-1] == max(rows), "rows are not sorted"
@@ -56,7 +56,7 @@ async def test_the_last_stop_row_is_the_tail_paragraph_not_the_table() -> None:
 
 @pytest.mark.asyncio
 async def test_the_table_cell_is_one_of_the_stops() -> None:
-    """The table is not skipped for being out of registration order — its cell
+    """The table is not skipped for being out of registration order: its cell
     is a stop like any other, just not the last one here."""
     async with _Harness().run_test(size=(80, 24)) as pilot:
         md = pilot.app.query_one(FNDMarkdown)
@@ -159,8 +159,8 @@ async def test_a_last_match_landing_reaches_the_tail_paragraph_past_the_table() 
 
 
 def test_a_landing_intent_serves_every_arm_of_its_own_navigation() -> None:
-    """A navigation arms more than once — the flat path arms again after the
-    structural one — so a read must not consume the request. It is dropped when
+    """A navigation arms more than once (the flat path arms again after the
+    structural one) so a read must not consume the request. It is dropped when
     a load for a DIFFERENT target starts, which is the navigation ending."""
     from fnd.tui.preview.presenter import PreviewPresenter
 
@@ -214,7 +214,7 @@ TWO_TABLES = (
 async def test_two_tables_matching_the_same_cell_keep_both_stops() -> None:
     """Cell rows are per-table: two tables in one chunk can both match at the
     same local coordinate, and keying the stop set on the coordinate alone drops
-    the first table's row — a match n/b could then never reach."""
+    the first table's row: a match n/b could then never reach."""
 
     class _Harness(App[None]):
         def compose(self) -> ComposeResult:

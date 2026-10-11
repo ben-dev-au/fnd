@@ -2,13 +2,13 @@
 
 What the preview MOUNTS ahead is decided by file size: everything below the
 landing when a file is inside ``FULLMOUNT_CHUNK_BUDGET``, and a ±7 window
-otherwise. That has to stay — the in-file match count walks the mounted subtree,
-so a file that stops being filled stops being counted in full — but it leaves the
+otherwise. That has to stay: the in-file match count walks the mounted subtree,
+so a file that stops being filled stops being counted in full, but it leaves the
 large files with nothing. A 1018-chunk PDF mounts a window and throws it away on
 the next jump, so every far jump rebuilds from source whether or not the target
 was visited moments earlier.
 
-Coverage fills that gap without touching what is mounted — with one exception.
+Coverage fills that gap without touching what is mounted, with one exception.
 A file the user has asked to warm WHOLE is mounted whole once its captures are
 in, up to ``FULLWARM_MOUNT_MAX_CHUNKS``: capturing every chunk is only half of
 what that promises, because the windowed fill adds three chunks per scroll event
@@ -20,7 +20,7 @@ under two rules:
 
 * coverage fills a CACHE, not the pane. Mounting scattered hit chunks would put
   chunk 12 directly above chunk 20 with the document between them silently
-  missing — the mounted set has to stay contiguous, because lazy mount only ever
+  missing: the mounted set has to stay contiguous, because lazy mount only ever
   fills at its edges. A capture costs 44.5 KB and NO arrange time, which is what
   lets the cache hold a scattered set spanning several files that the DOM could
   not.
@@ -31,7 +31,7 @@ The scarce resource is neither memory nor DOM but TIME: captures run serially on
 one off-screen host, measured at roughly six chunks a second. So order is the
 whole design, and it is strictly by what a navigation is most likely to need:
 
-1. every planned file's HIT chunks — the current file first, nearest to the
+1. every planned file's HIT chunks: the current file first, nearest to the
    cursor, then the neighbours outward, then the head of the result list;
 2. one file WHOLE, if the user has asked for that (see
    ``PreviewPresenter.request_full_warm``);
@@ -42,20 +42,20 @@ the next file has anything to land on cost 0.7/0.7/0.7/2.5/3.6s to five READY
 files, against 0.6s for all five in this order.
 
 A requested whole file sits between them: somebody is waiting on it, so it
-outranks context — but not landings, which are what keeps every other file's
+outranks context, but not landings, which are what keeps every other file's
 jump served. Measured, it costs nothing to be second: on a warmed session the
 request starts within a capture, and only on a cold store does it wait.
 
 A pass is only re-planned when it ENDS, so the margin walk also stands down for
 a file the cursor has moved towards that the running plan never listed. Without
-that, the file two below the cursor waited 31.0s for its first capture — 26.3s
+that, the file two below the cursor waited 31.0s for its first capture: 26.3s
 of it the previous plan's margins, over files whose hits were already captured.
 
 Whole-file coverage used to run automatically, after the rest drained: 438
 captures over 80 seconds on one already-served file while 42 other result files
 had nothing, to save a scroll lazy mount already handles. Being last did not
-stop it taking everything, which is why it is now asked for rather than assumed
-— and why what it costs goes to the user, who can watch it and stop it.
+stop it taking everything, which is why it is now asked for rather than assumed,
+and why what it costs goes to the user, who can watch it and stop it.
 
 Moving the cursor re-plans; it does not demote. Tier 1's order is taken around
 the cursor, so a move within the file invalidates the order but not the file,

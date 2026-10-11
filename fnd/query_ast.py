@@ -3,14 +3,14 @@ operator (wildcard, fuzzy, regex, phrase, ``+``/``-``, ``^`` boost) composes
 inside ``AND``/``OR``/``NOT`` and parentheses.
 
 Tantivy's own ``parse_query`` is the only string→Query parser the binding
-exposes, and it silently drops ``*`` and no-ops ``~N`` — so anything wrapped in
+exposes, and it silently drops ``*`` and no-ops ``~N``, so anything wrapped in
 a boolean expression lost its wildcard/fuzzy. There is no native helper for the
 boolean *structure* (``wildcard_query_to_regex_str`` only translates one term),
 so we own the tree: parse here, lower each leaf with the existing resolvers in
 :mod:`fnd.query_compile`, and assemble with ``boolean_query``.
 
 Grammar (precedence low→high), implicit adjacency = ``OR`` (the weighted
-default — bare multi-term OR-retrieves, BM25 ranks all-term docs higher)::
+default: bare multi-term OR-retrieves, BM25 ranks all-term docs higher)::
 
     or   := and ( (OR | <adjacent>) and )*
     and  := unary ( AND unary )*
@@ -27,13 +27,13 @@ from typing import Final
 
 from fnd.query_spans import literal_spans
 
-# Leaf classification — mirrors fnd.query so the boolean path and the flat path
+# Leaf classification: mirrors fnd.query so the boolean path and the flat path
 # recognise the same operator tokens.
 _WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")  # trailing prefix wildcard ``crypto*``
 _FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")  # ``term~`` / ``term~N``
 _REGEX_RE: Final = re.compile(r"^/(.+)/$")  # ``/pattern/``
 _GLOB_RE: Final = re.compile(r"[*?]")  # any ``*``/``?`` → glob (infix/leading)
-# A boost literal is a plain number (`^2`, `^1.5`) — kept strict so a malformed
+# A boost literal is a plain number (`^2`, `^1.5`): kept strict so a malformed
 # form like `foo^1.2.3` never reaches float() and crashes the query.
 _NUMBER: Final = r"\d+(?:\.\d+)?"
 _PHRASE_RE: Final = re.compile(rf"""^(['"])(.*)\1(?:~(\d+))?(?:\^({_NUMBER}))?$""", re.DOTALL)
@@ -129,7 +129,7 @@ def _tokenize(s: str) -> list[tuple[str, str]]:
             continue
         if ch in "[{" and buf and buf[-1] == ":":
             # ``field:[lo TO hi]`` (inclusive) or ``field:{lo TO hi}``
-            # (exclusive) — a range. The ``TO`` and its surrounding spaces are
+            # (exclusive): a range. The ``TO`` and its surrounding spaces are
             # part of the range syntax, so keep the whole bracket/brace run as
             # one atom (the leaf is handed to parse_query, which understands
             # ranges). Ranges may mix delimiters (``[lo TO hi}``), so close on
@@ -147,7 +147,7 @@ def _tokenize(s: str) -> list[tuple[str, str]]:
             continue
         if ch == "(":
             if buf and buf[-1] == ":":
-                # ``field:(…)`` — keep the scoped group attached as one atom. The
+                # ``field:(…)``, keep the scoped group attached as one atom. The
                 # AST has no field node, so the leaf is handed to parse_query
                 # (which understands field syntax); other leaves around it
                 # (wildcards/fuzzy) still compile normally.
@@ -231,7 +231,7 @@ class _Parser:
 
     def parse(self) -> Node | None:
         node = self._parse_or()
-        # Ignore any dangling tokens (malformed tails) — best-effort.
+        # Ignore any dangling tokens (malformed tails): best-effort.
         return node
 
     def _parse_or(self) -> Node | None:
@@ -318,7 +318,7 @@ def _classify(value: str) -> Node | None:
 def _classify_core(value: str) -> Node | None:
     rm = _REGEX_RE.match(value)
     if rm:
-        return Regex(rm.group(1))  # verbatim — lowercasing corrupts \D/\B/named groups
+        return Regex(rm.group(1))  # verbatim: lowercasing corrupts \D/\B/named groups
     fuzzy = fuzzy_word(value)
     if fuzzy is not None:
         return fuzzy

@@ -133,7 +133,7 @@ async def test_display_row_enter_does_nothing(built_index: Path, cfg: Config) ->
                 break
         lst.action_activate()
         await pilot.pause()
-        # EditBar should still be hidden — Enter did not open it.
+        # EditBar should still be hidden: Enter did not open it.
         bar = app.screen.query_one(EditBar)
         assert "-hidden" in bar.classes
 
@@ -141,7 +141,7 @@ async def test_display_row_enter_does_nothing(built_index: Path, cfg: Config) ->
 @pytest.mark.asyncio
 async def test_hint_says_open_in_editor_on_external_app(built_index: Path, cfg: Config) -> None:
     """External-app rows (config file / keybindings file) reveal in Finder
-    via Shift+⏎ and open in $EDITOR via ⏎ — both must appear in the hint."""
+    via Shift+⏎ and open in $EDITOR via ⏎: both must appear in the hint."""
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
     app = FNDApp(index_dir=built_index, config=cfg)
@@ -152,7 +152,7 @@ async def test_hint_says_open_in_editor_on_external_app(built_index: Path, cfg: 
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
-        # Root screen focuses the search input by default — focus the
+        # Root screen focuses the search input by default: focus the
         # list so the per-kind hint cluster kicks in instead of the
         # search-input cluster.
         lst.focus()

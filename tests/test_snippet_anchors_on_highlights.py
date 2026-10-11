@@ -3,7 +3,7 @@
 ``_make_snippet`` used to locate its window with literal substring containment,
 so a hit reached through the stemmer ("testing" for "test"), a wildcard, or a
 quoted phrase found no anchor at all and fell back to the chunk's opening 240
-characters — a listed row whose snippet showed no match. Measured at 26 of 993
+characters: a listed row whose snippet showed no match. Measured at 26 of 993
 rows on a real corpus before the change.
 """
 

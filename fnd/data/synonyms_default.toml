@@ -1,10 +1,10 @@
-# Default synonym table — curated security/tech acronyms and tight synonyms.
+# Default synonym table: curated security/tech acronyms and tight synonyms.
 # Query-time expansion only (no reindex). Groups are bidirectional: any one
 # form expands to the rest. Multi-word forms are auto-quoted as phrases.
 #
 # Scope is deliberately narrow: high-value, low-noise initialisms and exact
 # expansions sourced from public glossaries (NIST CSRC, CISA, MITRE, OWASP).
-# This is NOT a general thesaurus — broad English synonyms hurt precision in
+# This is NOT a general thesaurus: broad English synonyms hurt precision in
 # technical search. Users extend this via their own synonyms.toml.
 
 [synonyms.identity]

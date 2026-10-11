@@ -34,7 +34,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 def cfg(fixtures_dir: Path, tmp_path: Path) -> Config:
     """A self-contained config with three collections so the collections
     panel populates deterministically. These tests assert on the panel /
-    saved-scope state, which is driven by the config — without an explicit
+    saved-scope state, which is driven by the config, without an explicit
     one the app would read whatever config happens to be on disk, so it
     passed on a developer machine with collections configured and timed
     out on a clean CI runner with an empty config."""
@@ -74,16 +74,16 @@ async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> No
             pilot,
             lambda: bool(app._search.groups) and app._preview.parent_id is not None,
             timeout=30.0,
-            message="test setup — the initial query never produced a preview",
+            message="test setup: the initial query never produced a preview",
         )
         await run_search(pilot, app, "penguin")
-        assert app._search.groups, "test setup — second query produced no results"
+        assert app._search.groups, "test setup: second query produced no results"
         await wait_until(
             pilot,
             lambda: app._preview.parent_id is not None,
             timeout=30.0,
             message=(
-                "preview pane stayed empty on the second query — the cursor "
+                "preview pane stayed empty on the second query: the cursor "
                 "landed on the same line as the previous query and the "
                 "NodeHighlighted event was suppressed"
             ),
@@ -202,7 +202,7 @@ async def test_toggle_with_active_query_reruns_without_focus_shift(
     app = FNDApp(index_dir=built_index, config=cfg, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._search.groups, "test setup — initial query produced no results"
+        assert app._search.groups, "test setup: initial query produced no results"
         ctree = app.query_one("#collections_panel_tree", Tree)
         ctree.focus()
         await settle(pilot)
@@ -251,7 +251,7 @@ async def test_collapse_state_survives_collection_cli_flag(
         fpane = app.query_one("#filters_pane")
         # Scope override took effect.
         assert app._scope.collections == ["default"]
-        # Panel layout was restored from disk — wait for the saved
+        # Panel layout was restored from disk: wait for the saved
         # collapsed state to settle onto the trees, including the
         # expanded_collections / expanded_filter_branches lists which
         # restore through a separate async path that can lag the

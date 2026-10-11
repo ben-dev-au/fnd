@@ -1,4 +1,4 @@
-"""Delete collection workflow — end-to-end."""
+"""Delete collection workflow: end-to-end."""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ async def test_delete_drops_index_off_main_thread(
 
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
-    # Seed the on-disk config the delete path edits + reloads — otherwise
+    # Seed the on-disk config the delete path edits + reloads, otherwise
     # delete_collection no-ops on an absent collection and the reload assertion
     # passes vacuously.
     for cname, ccfg in cfg_three.collections.items():

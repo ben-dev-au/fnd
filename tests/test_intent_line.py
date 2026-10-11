@@ -93,14 +93,14 @@ def test_make_snippet_prefers_intent_match() -> None:
     snippet_web_intent = _make_snippet(body, "performance", intent="web page load")
     # The intent-aware snippet should mention 'web page' or 'load'.
     assert "web page" in snippet_web_intent.lower() or "load" in snippet_web_intent.lower()
-    # The intent-less snippet just picks the first match — no constraint
+    # The intent-less snippet just picks the first match: no constraint
     # on its content beyond containing 'performance'.
     assert "performance" in snippet_no_intent.lower()
 
 
 def test_make_snippet_proximity_anchors_on_cooccurrence() -> None:
     """A proximity/phrase query must anchor the snippet where its terms
-    co-occur (the real match), not on an earlier lone-term hit — and it must
+    co-occur (the real match), not on an earlier lone-term hit, and it must
     see through the ``{N}`` / ``"…"~N`` / ``*`` DSL sigils that a raw split misses."""
     from fnd.query import _make_snippet
 
@@ -120,7 +120,7 @@ def test_make_snippet_falls_back_when_no_intent_match() -> None:
     from fnd.query import _make_snippet
 
     body = "Performance varies. Athletic performance is well-studied."
-    # Intent tokens won't appear in the body — fallback to first match.
+    # Intent tokens won't appear in the body: fallback to first match.
     snippet = _make_snippet(body, "performance", intent="quantum chromodynamics")
     assert "performance" in snippet.lower()
 
@@ -128,7 +128,7 @@ def test_make_snippet_falls_back_when_no_intent_match() -> None:
 def test_make_snippet_sanitises_tabs_and_control_chars_at_source() -> None:
     """Extracted PDF body text carries tabs (exercise numbering: ``5.\\tExplain``)
     and stray controls. A snippet is a single-line display string, so the source
-    must strip them — the CLI and every label consumer inherit clean text."""
+    must strip them: the CLI and every label consumer inherit clean text."""
     from fnd.query import _make_snippet
 
     body = "of null. 5.\tExplain what is wrong\x07 with the hash table strategy"

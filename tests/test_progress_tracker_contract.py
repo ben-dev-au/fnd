@@ -4,20 +4,20 @@ The trackers **observe** their subsystems rather than being called from
 inside them, which is what stops a stale teardown retiring someone else's
 bar (see ``fnd/tui/progress/operations.py``). The price of that choice is
 a set of implicit dependencies: the tracker reads attributes it does not
-own, and renaming or removing one breaks the line **silently** — the
+own, and renaming or removing one breaks the line **silently**; the
 sampler's catch-all treats the failure as "not busy", so the bar stops
 reflecting that stage rather than raising.
 
 These tests are the tripwire, and they run against a live app because
 every one of these is an instance attribute: nothing here is visible on
-the class. They are deliberately shallow — existence, not behaviour.
+the class. They are deliberately shallow: existence, not behaviour.
 Behaviour is covered by ``test_progress_preview_tracker`` and the
 real-app tests; what nothing else catches is a signal quietly going away.
 
 **If one of these fails after a preview-architecture change**, the fix is
 not to delete the assertion. Find the replacement signal, update
 ``PreviewProgressTracker``, and then re-run
-``dev/tools/progress_phase_reachability.py`` — a phase that can no longer
+``dev/tools/progress_phase_reachability.py``: a phase that can no longer
 be entered still owns its share of the bar, which caps the fill with
 nothing to show for it. That defect class has shipped four times.
 """
@@ -38,8 +38,8 @@ from tests._pilot_wait import run_search, wait_until
 # Read by PreviewProgressTracker.sample or .plan_for. The comment is what it
 # is used for, so a replacement can be chosen rather than guessed at.
 PRESENTER_SIGNALS = {
-    "pipeline_busy": "anything in flight at all — the session's lifetime",
-    "showing_parent": "which file the pane is on — warm vs cold, and landing",
+    "pipeline_busy": "anything in flight at all: the session's lifetime",
+    "showing_parent": "which file the pane is on: warm vs cold, and landing",
     "decode_worker": "the decode phase",
     "mount_task": "the mount phase",
     "active": "the container carrying mounted_indices / _finalise_task",
@@ -48,7 +48,7 @@ PRESENTER_SIGNALS = {
 }
 
 # Read off ``presenter.active``. The mount fraction is measured against the
-# WINDOW, not the file — dividing by the whole file is why the old bar topped
+# WINDOW, not the file: dividing by the whole file is why the old bar topped
 # out near 1% on a large PDF.
 CONTAINER_SIGNALS = {
     "mounted_indices": "how much of the mount window has landed",
@@ -92,12 +92,12 @@ async def test_the_preview_still_exposes_every_signal_the_line_reads(
         assert not missing, f"the progress line reads these and they are gone: {missing}"
 
         assert hasattr(app._preview_scroll, "is_settling"), (
-            "is_settling is the whole of the `land` phase — the measured "
+            "is_settling is the whole of the `land` phase: the measured "
             "reconcile-to-scroll-commit window is 440-740 ms"
         )
 
         container = app._preview.active
-        assert container is not None, "setup — the navigation did not produce a container"
+        assert container is not None, "setup: the navigation did not produce a container"
         gone = [
             f"container.{name} ({why})"
             for name, why in CONTAINER_SIGNALS.items()

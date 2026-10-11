@@ -32,7 +32,7 @@ from tests._pilot_wait import lazy_trailing_value, settings_ready
 
 
 class _StubApp:
-    """No event loop — call_from_thread will fail (suppressed), but
+    """No event loop: call_from_thread will fail (suppressed), but
     the cache populates regardless."""
 
     def call_from_thread(self, *_args: object, **_kwargs: object) -> None:

@@ -1,4 +1,4 @@
-"""UX-B — scope persistence + section collapse-to-header."""
+"""UX-B: scope persistence + section collapse-to-header."""
 
 from __future__ import annotations
 
@@ -104,8 +104,8 @@ async def test_app_restores_persisted_scope_on_launch(
 async def test_left_at_collapsed_root_collapses_panel(
     cfg_two: Config, two_index: Path, state_path: Path
 ) -> None:
-    """Left arrow on a top-level collapsed node — with no further parent
-    to walk up to — collapses the whole panel to its header strip
+    """Left arrow on a top-level collapsed node, with no further parent
+    to walk up to, collapses the whole panel to its header strip
     (CSS ``.collapsed`` class)."""
     app = FNDApp(index_dir=two_index, config=cfg_two)
     async with app.run_test() as pilot:

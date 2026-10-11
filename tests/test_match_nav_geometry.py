@@ -12,7 +12,7 @@ from __future__ import annotations
 from fnd.tui.match_navigator import step_view, view_anchors
 
 VH = 20
-# stops at content-y 5, 8, 40, 45, 90 — three views: [5,25) [40,60) [90,110)
+# stops at content-y 5, 8, 40, 45, 90: three views: [5,25) [40,60) [90,110)
 YS = [5, 8, 40, 45, 90]
 ANCHORS = [5, 40, 90]
 
@@ -102,7 +102,7 @@ def test_b_retraces_exactly_the_viewports_n_visited() -> None:
 
 def test_one_press_moves_one_view_at_every_viewport_size() -> None:
     """A stride that differs between the two directions only shows up at some
-    sizes — the 12-stop fence at vh=40 is where it first did."""
+    sizes: the 12-stop fence at vh=40 is where it first did."""
     for vh in range(8, 61, 4):
         anchors = view_anchors(FENCE, vh)
         if len(anchors) < 3:
@@ -120,6 +120,6 @@ def test_a_wrap_onto_a_visible_view_is_no_navigation() -> None:
 
 
 def test_a_wrap_onto_an_off_screen_view_still_wraps() -> None:
-    """The wrap itself is not what was wrong — only wrapping onto a visible view."""
+    """The wrap itself is not what was wrong: only wrapping onto a visible view."""
     assert step_view([5, 90], [5, 90], 90, 20, forward=True) == 5
     assert step_view([5, 90], [5, 90], 5, 20, forward=False) == 90

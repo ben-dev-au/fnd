@@ -1,5 +1,5 @@
 """The 'outdated documents' count must key off the coarse texture
-signature, not the fine-grained per-flag extractor signature — otherwise a
+signature, not the fine-grained per-flag extractor signature, otherwise a
 minor app update flags the whole corpus as outdated.
 """
 
@@ -46,7 +46,7 @@ def test_current_engine_entries_not_counted_after_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A current-engine entry (cfg matches current) is promoted to the
-    coarse signature and then NOT counted as outdated — the guarantee the
+    coarse signature and then NOT counted as outdated: the guarantee the
     user asked about."""
     monkeypatch.setattr("fnd.cache.default_cache_dir", lambda: tmp_path)
     cache = PdfStructureCache(root=tmp_path)

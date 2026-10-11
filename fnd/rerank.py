@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 class RankingProfile:
     """Per-profile knobs.
 
-    All zeros / empty maps are the identity — passing :class:`RankingProfile`
+    All zeros / empty maps are the identity: passing :class:`RankingProfile`
     with no args leaves the BM25 order untouched.
     """
 
@@ -85,7 +85,7 @@ def apply_recency_boost(*, score: float, mtime: int, profile: RankingProfile, no
     * Future-dated ``mtime`` (clock skew) is clamped at ``now`` so the
       bonus is bounded by the configured maximum.
     * ``mtime = 0`` (unknown) effectively returns the base score because
-      the decay over ``now`` seconds is ~0 — neutral, not penalising.
+      the decay over ``now`` seconds is ~0: neutral, not penalising.
     """
     if profile.recency_boost == 0.0:
         return score
@@ -112,7 +112,7 @@ def apply_phrase_proximity(
     contiguous window covering at least one occurrence of every term.
     Map that window size onto ``[0, profile.phrase_proximity]``.
 
-    Multi-term queries only — single-term queries get neutral 0 bonus
+    Multi-term queries only: single-term queries get neutral 0 bonus
     because there's nothing to cluster.
     """
     if profile.phrase_proximity == 0.0:
@@ -128,7 +128,7 @@ def apply_phrase_proximity(
             positions[st].append(i)
 
     if any(not v for v in positions.values()):
-        # A required term doesn't appear in the body — no window possible.
+        # A required term doesn't appear in the body: no window possible.
         return score
 
     window = _smallest_covering_window(positions)

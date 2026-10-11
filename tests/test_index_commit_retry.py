@@ -78,7 +78,7 @@ def test_commit_does_not_retry_a_neighbouring_error_code(
 ) -> None:
     """The numeric markers must be anchored: bare `os error 5` also matches
     50-59, six of which are network-share failures that a NAS-hosted index will
-    really see. `os error 2` cannot detect that — it is rejected by the narrow
+    really see. `os error 2` cannot detect that: it is rejected by the narrow
     predicate and the wide one alike, so it pins the string, not the contract."""
     _fast_backoff(monkeypatch)
     network = ValueError("An IO error occurred: 'The network path was not found. (os error 53)'")

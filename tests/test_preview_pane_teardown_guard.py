@@ -9,8 +9,8 @@ Reproduced from an intermittent Windows CI failure in
 The chain is ``run_worker(..., group="preview-load")`` → ``dispatch_mount``
 → ``dispatch_flat_mount`` → ``FlatBufferView.ensure_shared_buffer``, which
 queried ``#preview_pane`` unguarded. A search dispatched just before the
-screen goes away — app quitting, screen swapped, or a test exiting its
-``run_test`` block — leaves the worker querying a pane that no longer
+screen goes away (app quitting, screen swapped, or a test exiting its
+``run_test`` block) leaves the worker querying a pane that no longer
 exists, and the raise surfaces as a worker crash rather than a no-op.
 
 Every sibling call site (``presenter`` line-wrap measurement, ``prefetch``,
@@ -18,7 +18,7 @@ Every sibling call site (``presenter`` line-wrap measurement, ``prefetch``,
 this one was simply missed. The fix follows ``_pane``'s convention of
 returning ``None`` rather than raising.
 
-Timing is not exercised here — the crash is pinned deterministically by
+Timing is not exercised here: the crash is pinned deterministically by
 removing the pane and driving the same code path directly.
 """
 
@@ -51,7 +51,7 @@ def flat_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def _drop_pane(app: FNDApp) -> None:
-    """Remove ``#preview_pane`` outright — the end state of a teardown."""
+    """Remove ``#preview_pane`` outright: the end state of a teardown."""
     app.query_one("#preview_pane", VerticalScroll).remove()
 
 

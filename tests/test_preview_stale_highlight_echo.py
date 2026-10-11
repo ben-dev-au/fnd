@@ -5,7 +5,7 @@ cursor actually moved. Two searches in quick succession each rebuild the results
 tree and each post highlight events; the earlier rebuild's events can still be
 in the queue when the later one's have already been handled. ``_load_result_node``
 took whatever node the event carried, so a stale echo scheduled a preview load
-for a row the user had already left — and because it arrived LAST, last writer
+for a row the user had already left, and because it arrived LAST, last writer
 won: the pane settled showing a file the cursor is not on, permanently.
 
 Caught by ``dev/tools/preview_blank_fuzz.py`` (verdict ``wrong-file``), whose
@@ -16,7 +16,7 @@ trace shows the giveaway directly:
     RENDER   parent=a63e874a          cursor=f9b9da1b/6
 
 A highlight event whose node is no longer the tree's cursor is stale by
-definition — the cursor moving to a node is what posts the event in the first
+definition: the cursor moving to a node is what posts the event in the first
 place.
 """
 
@@ -50,12 +50,12 @@ async def test_stale_highlight_echo_does_not_schedule_a_load(built_index: Path) 
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
         tree = app.query_one("#results_pane", Tree)
 
         current = tree.cursor_node
-        assert current is not None, "setup — the cursor should be parked on a row"
-        assert isinstance(current.data, dict), "setup — the cursor row is a result row"
+        assert current is not None, "setup: the cursor should be parked on a row"
+        assert isinstance(current.data, dict), "setup: the cursor row is a result row"
         stale = next(
             (
                 n
@@ -75,7 +75,7 @@ async def test_stale_highlight_echo_does_not_schedule_a_load(built_index: Path) 
         # cursor any more.
         app._on_tree_highlight(Tree.NodeHighlighted(stale))  # type: ignore[arg-type]
         assert not scheduled, (
-            "a highlight event for a node the cursor has already left is stale — "
+            "a highlight event for a node the cursor has already left is stale: "
             "loading it makes the preview show a file the user is not on"
         )
 
@@ -86,7 +86,7 @@ async def test_stale_highlight_echo_does_not_schedule_a_load(built_index: Path) 
 
 @pytest.mark.asyncio
 async def test_enter_still_loads_the_selected_row(built_index: Path) -> None:
-    """``NodeSelected`` (Enter) is an explicit user action on the row it names —
+    """``NodeSelected`` (Enter) is an explicit user action on the row it names:
     it must keep loading even though it routes through the same helper."""
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:

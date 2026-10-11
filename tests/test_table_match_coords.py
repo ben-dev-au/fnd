@@ -41,7 +41,7 @@ async def test_all_crc_cells_are_registered() -> None:
         assert getattr(dt, "_fnd_match_coord", None) == coords[0]
 
 
-# A header cell AND the first data row's SAME column both match — both map to
+# A header cell AND the first data row's SAME column both match: both map to
 # (0, col) (the header has no cursor coordinate of its own), so without dedup
 # the coordinate would appear twice: inflating the count and making n/b land on
 # the same cell twice.

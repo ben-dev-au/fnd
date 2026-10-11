@@ -48,14 +48,14 @@ def test_no_extension_still_middle_elides() -> None:
 
 
 def test_extension_longer_than_budget_degrades_gracefully() -> None:
-    # Suffix can't fit alongside an ellipsis — must not crash or over-run.
+    # Suffix can't fit alongside an ellipsis: must not crash or over-run.
     out = _elide_middle_keep_suffix("x.markdown", 4)
     assert len(out) <= 4, out
 
 
 def test_ellipsis_plus_suffix_fits_at_exact_boundary() -> None:
     # max_width == len(suffix) + 1: exactly room for "…" + the full
-    # extension and no stem — must show "…<ext>", not drop the extension.
+    # extension and no stem: must show "…<ext>", not drop the extension.
     assert _elide_middle_keep_suffix("longfile.txt", 5) == "….txt"
     assert _elide_middle_keep_suffix("report.docx", 6) == "….docx"
 

@@ -9,7 +9,7 @@ query.
 Extraction is deliberately conservative: a ``field:`` clause is lifted only when
 it sits at the top level (not inside ``(...)``) and is not adjacent to a boolean
 operator. Boolean-composed field clauses (``kind:pdf OR kind:docx``) are left in
-the content query for tantivy's parser to handle — never silently mis-filtered.
+the content query for tantivy's parser to handle, never silently mis-filtered.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from fnd.query_fields import FieldSpec, FieldValue, date_token_range, resolve
 from fnd.query_spans import literal_spans
 
 _BOOL_OPS = frozenset({"AND", "OR", "NOT"})
-# field:value head — value captured greedily (the tokenizer already kept any
+# field:value head, value captured greedily (the tokenizer already kept any
 # bracketed/quoted run together as one token).
 _CLAUSE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(.+)$", re.DOTALL)
 # ``[`` / ``]`` include a bound, ``{`` / ``}`` exclude it, mixed freely.
@@ -90,7 +90,7 @@ def scan_exact_values(query: str) -> list[tuple[str, str]]:
     Reuses the tokenizer and clause grammar that lower these clauses into
     filters, so a caller validating the values can't disagree with the engine
     about what counts as one. Groups (``kind:(a b)``) and collection comma
-    lists (``c:a,b``) are split exactly the way :func:`_compile` splits them —
+    lists (``c:a,b``) are split exactly the way :func:`_compile` splits them,
     notably ``kind:a,b`` is NOT split, because the compiler treats it as a
     single term.
 
@@ -252,7 +252,7 @@ def extract_filters(
             field, value = m.group(1), m.group(2)
             if field in ("has", "exists"):
                 # Presence query. A text field: any doc with a non-empty term.
-                # A numeric (u64) field: a real (non-zero) value — ``regex_query``
+                # A numeric (u64) field: a real (non-zero) value, ``regex_query``
                 # is text-only and ``.+`` would also match the 0 default, so use a
                 # ``>= 1`` range (``has:page`` ⇒ paginated, ``exists:mtime`` ⇒ dated).
                 target = resolve(value)

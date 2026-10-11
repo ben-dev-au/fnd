@@ -43,7 +43,7 @@ async def test_prefetch_populates_chunk_cache(
         await pilot.pause()
         await run_search(pilot, app, "test")
         # Wait (wall-clock, not a fixed iteration cap) for the prefetch worker
-        # to walk its targets — a fixed cap starves under full-suite CI load.
+        # to walk its targets: a fixed cap starves under full-suite CI load.
         await wait_until(
             pilot,
             lambda: (
@@ -157,7 +157,7 @@ async def test_prefetch_populates_flat_buffer_cache(
         )
         if not _flat_parents():
             pytest.skip("no flat-path results in fixture corpus for this query")
-        # Read the signature only once results exist — prefetch keys its cache
+        # Read the signature only once results exist: prefetch keys its cache
         # on the signature of the query that produced them.
         sig = app._search.query_signature()
 
@@ -208,7 +208,7 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
     app = FNDApp(index_dir=multi_md_index, config=cfg, collection="notes")
     # Prefetch pre-mounts up to the cache size; the shipped default caps the
     # cache at 1 (a larger cache adds mount/arrange overhead without speeding
-    # revisits — see PREVIEW_CACHE_MAX_FILES), with the decode still prefetched
+    # revisits: see PREVIEW_CACHE_MAX_FILES), with the decode still prefetched
     # for every target. Lift the cap here to exercise the multi-file pre-mount.
     app._preview.preview_cache.max_files = 8
     async with app.run_test() as pilot:
@@ -257,7 +257,7 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
 ) -> None:
     """Selecting a prefetched container completes mount up to the
     background-fill radius (regression for a prefetch/user-side mount
-    race that stalled at the visible window — narrower than the radius).
+    race that stalled at the visible window: narrower than the radius).
     With ``BACKGROUND_FILL_RADIUS = 10`` stages 2a/2b cap mount at
     ``focus +/- 10``; full-file completion would need a wider radius."""
 

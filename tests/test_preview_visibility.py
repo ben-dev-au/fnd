@@ -2,7 +2,7 @@
 
 `fnd.tui.preview.visibility` shows and hides preview containers without walking
 their contents to re-apply CSS. That is only sound while the two visibility
-classes are never used as an ANCESTOR in a selector — the moment a rule like
+classes are never used as an ANCESTOR in a selector: the moment a rule like
 ``.-hidden Foo`` exists, descendants really can match differently and skipping
 them would leave stale styling that no amount of staring at the CSS explains.
 
@@ -82,7 +82,7 @@ async def test_setting_visibility_applies_the_style_to_the_node(tmp_index_dir: P
         set_preview_visibility(container, hidden=True)
         assert container.has_class("-hidden")
         assert container.styles.display == "none", (
-            "the class was set but its style never applied — the node's own "
+            "the class was set but its style never applied: the node's own "
             "restyle was skipped along with its descendants"
         )
 
@@ -93,8 +93,8 @@ async def test_setting_visibility_applies_the_style_to_the_node(tmp_index_dir: P
 
 @pytest.mark.asyncio
 async def test_a_no_op_toggle_does_no_work(tmp_index_dir: Path) -> None:
-    """Called every activation over every container, so the common case — the
-    class is already right — must not reach the stylesheet at all."""
+    """Called every activation over every container, so the common case: the
+    class is already right: must not reach the stylesheet at all."""
     app = FNDApp(index_dir=tmp_index_dir, initial_query="anything")
     async with app.run_test(size=(80, 24)):
         container = PreviewContainer(parent_doc_id="x", query_signature="y", total_chunks=1)
@@ -157,7 +157,7 @@ async def test_reveal_repaints_a_translucent_background_inside_the_container(
 
 # Properties a shortcut class may set. Anything outside this changes the geometry
 # descendants are laid out against, and the descendant walk is what re-arranges
-# them — so skipping it would leave the subtree sized for the old layout. That is
+# them, so skipping it would leave the subtree sized for the old layout. That is
 # not hypothetical: `is-loading` used to set `scrollbar-size-vertical`, and
 # shortcutting it left tables laid out at the pre-scrollbar width, so a match
 # inside a tall table could not be scrolled to and the off-screen indicator never
@@ -169,7 +169,7 @@ async def test_reveal_repaints_a_translucent_background_inside_the_container(
 #
 # ANCESTOR_RULES are allowed only because the shortcut busts descendant style
 # caches when one of them moves. Spelling the set that way is what makes a new
-# inherited rule — one the bust does not cover — fail here.
+# inherited rule, one the bust does not cover, fail here.
 EXACT_ALLOWED = {"display", "visibility", *ANCESTOR_RULES}
 ALLOWED_PREFIXES = ("scrollbar_color", "scrollbar_background", "auto_scrollbar_")
 
@@ -204,7 +204,7 @@ async def test_shortcut_classes_change_visibility_only(tmp_index_dir: Path) -> N
             extra = {name for name in declared if _is_geometric(name)}
             assert not extra, (
                 f"a shortcut class now sets {sorted(extra)}, which reaches past the "
-                f"node — either into the geometry descendants are laid out against, "
+                f"node, either into the geometry descendants are laid out against, "
                 f"or into the styles they cache. fnd/tui/preview/visibility.py skips "
                 f"the descendant walk, so they would keep the old value. Either move "
                 f"the property elsewhere, or, if descendants only CACHE it, add it to "
@@ -217,7 +217,7 @@ def test_the_shortcut_never_asks_for_a_subtree_restyle() -> None:
     """The invariant the whole module exists for, and the one nothing checked.
 
     Dropping ``update=False`` costs nothing visible: the class still lands, the
-    style still applies, the no-op still no-ops — every other test here passes.
+    style still applies, the no-op still no-ops, every other test here passes.
     What comes back is `App.update_styles` walking hundreds of descendants on
     every activation, which is the 108-of-110-samples cost this module removed.
     """
@@ -268,7 +268,7 @@ def test_the_shortcut_busts_descendant_caches_only_when_it_must() -> None:
     set_preview_visibility(node, hidden=True, pre_reveal=True)
     assert [d.notified for d in fake.descendants] == [1, 1], "opacity moved; nothing was busted"
     assert [d.refreshed for d in fake.descendants] == [1, 1], (
-        "cleared the cache but left the strips it rendered — the repaint is what "
+        "cleared the cache but left the strips it rendered: the repaint is what "
         "puts the new colour on screen"
     )
 

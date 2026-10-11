@@ -74,9 +74,9 @@ def wide_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_fusion_default_returns_many_files(cfg: Config, wide_index: Path) -> None:
-    """A corpus with templates in 15 files should produce 15 result rows
-    — the fusion path must oversample enough chunks for the grouper to
-    fill ``limit`` files. The pre-fix wiring produced 2-3 files."""
+    """A corpus with templates in 15 files should produce 15 result rows:
+    the fusion path must oversample enough chunks for the grouper to
+        fill ``limit`` files. The pre-fix wiring produced 2-3 files."""
     app = FNDApp(index_dir=wide_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -88,7 +88,7 @@ async def test_fusion_default_returns_many_files(cfg: Config, wide_index: Path) 
 
 @pytest.mark.asyncio
 async def test_fusion_preserves_bm25_score_range(cfg: Config, wide_index: Path) -> None:
-    """Hit scores must stay in the BM25 range (1+) — RRF fused values
+    """Hit scores must stay in the BM25 range (1+): RRF fused values
     of 0.001-0.07 leak the implementation through to the UI."""
     app = FNDApp(index_dir=wide_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
@@ -119,7 +119,7 @@ async def test_fusion_preserves_bm25_score_range(cfg: Config, wide_index: Path) 
         key = (top.parent_id, top.chunk_seq)
         assert key in bm25, "top hit absent from single-pass results"
         # The reranker may scale scores slightly, but they should be
-        # within an order of magnitude — RRF would be off by 10x.
+        # within an order of magnitude: RRF would be off by 10x.
         assert top.score >= bm25[key] * 0.5, (
             f"top hit score {top.score} diverges from single-pass "
             f"BM25 {bm25[key]}; fusion shouldn't rewrite scores."

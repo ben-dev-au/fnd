@@ -26,12 +26,12 @@ ignore = [
     # pattern used across the codebase (`assert isinstance(x, T)` so
     # the type checker narrows). Convertible to `if not isinstance:
     # raise TypeError`, but the trade is more verbose code for no
-    # runtime safety gain — Python's `-O` flag strips asserts, but
+    # runtime safety gain, Python's `-O` flag strips asserts, but
     # we don't ship with `-O`.
     "S101",
     # S603: every subprocess call in this codebase uses list-form argv
     # (no shell=True, no string interpolation). S603 fires on every
-    # subprocess invocation regardless of input safety — the rule
+    # subprocess invocation regardless of input safety: the rule
     # can't tell argv-list calls apart from shell=True calls. Manually
     # audited; see SECURITY.md for the catalogue.
     "S603",
@@ -50,7 +50,7 @@ extend-immutable-calls = ["typer.Option", "typer.Argument"]
 # best-effort pattern for UI operations whose failure should not abort
 # the surrounding flow (e.g. a stale-widget refresh, a scroll target
 # that's been removed). Each call site has a UX-flow rationale; the
-# alternative — logging every swallowed exception — would flood the
+# alternative, logging every swallowed exception, would flood the
 # log with noise from normal rapid UI churn.
 "fnd/tui/**" = ["S110", "S112"]
 # scripts/ are dev-only TUI snapshot harnesses (one-off `make

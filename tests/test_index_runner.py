@@ -81,11 +81,11 @@ def test_load_state_returns_none_when_corrupt(tmp_path: Path) -> None:
 def test_clear_state_idempotent(tmp_path: Path) -> None:
     """clear_state must be safe to call when file doesn't exist."""
     p = tmp_path / "ghost.toml"
-    clear_state(p)  # missing — no error
+    clear_state(p)  # missing: no error
     p.write_text("[state]\ncollection = 'x'\n")
     clear_state(p)
     assert not p.exists()
-    clear_state(p)  # already gone — still no error
+    clear_state(p)  # already gone: still no error
 
 
 @pytest.mark.asyncio
@@ -251,7 +251,7 @@ async def test_cache_hit_reported_on_warm_run(tmp_path: Path, papers_dir: Path) 
     state_path = tmp_path / "state.toml"
     cfg = CollectionConfig(sources=[SourceConfig(path=papers_dir)])
 
-    # Cold run — populates the cache.
+    # Cold run: populates the cache.
     async for _ev in run_indexer(
         config=cfg,
         collection="test",
@@ -260,7 +260,7 @@ async def test_cache_hit_reported_on_warm_run(tmp_path: Path, papers_dir: Path) 
     ):
         pass
 
-    # Warm run — every file_complete should report cache_hit=True.
+    # Warm run: every file_complete should report cache_hit=True.
     hits = 0
     misses = 0
     async for ev in run_indexer(
@@ -412,7 +412,7 @@ def test_load_state_tolerates_pre_upgrade_file(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_warm_run_skips_unchanged_files(tmp_path: Path, papers_dir: Path) -> None:
     """Incremental: a second run over the SAME index_dir with no file
-    changes skips every file — counted as indexed_already with ZERO cache
+    changes skips every file: counted as indexed_already with ZERO cache
     activity (the extractor is never invoked, proving a true skip rather
     than a re-extract-with-cache-hit)."""
     cfg = CollectionConfig(sources=[SourceConfig(path=papers_dir)])
@@ -437,7 +437,7 @@ async def test_warm_run_skips_unchanged_files(tmp_path: Path, papers_dir: Path) 
 
 def test_run_sync_returns_chunks_written(tmp_path: Path) -> None:
     """The CLI's `indexed N chunks for collection X` line needs a chunk
-    count, not a file count — one file split into two heading-sections
+    count, not a file count: one file split into two heading-sections
     must report 2, proving this isn't just len(files)."""
     notes = tmp_path / "notes"
     notes.mkdir()
@@ -452,7 +452,7 @@ def test_run_sync_returns_chunks_written(tmp_path: Path) -> None:
 def test_chunks_written_excludes_rolled_back_chunks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A file that yields chunks and then fails has those chunks deleted —
+    """A file that yields chunks and then fails has those chunks deleted:
     the reported total must not count chunks that aren't in the index."""
     import fnd.index_runner as runner_module
 
@@ -478,7 +478,7 @@ def test_chunks_written_excludes_rolled_back_chunks(
 
 @pytest.mark.asyncio
 async def test_changed_mtime_reprocesses(tmp_path: Path, papers_dir: Path) -> None:
-    """A file whose mtime changed must NOT be skipped — it is re-extracted
+    """A file whose mtime changed must NOT be skipped: it is re-extracted
     (here the content is unchanged, so it cache-hits, proving the extractor
     actually ran rather than the file being skipped)."""
     import os
@@ -575,7 +575,7 @@ def test_not_resumable_unknown_collection() -> None:
 
 
 def test_not_resumable_when_stale() -> None:
-    # Six days old — abandoned, not a just-interrupted run.
+    # Six days old: abandoned, not a just-interrupted run.
     st = _state(last_update="2026-05-29T13:40:00+00:00")
     assert is_state_resumable(st, known_collections={"default"}, now=_now()) is False
 

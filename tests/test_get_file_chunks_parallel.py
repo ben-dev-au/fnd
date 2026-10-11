@@ -3,8 +3,8 @@
 The contract these tests pin:
 
 * Serial and parallel decode produce **identical** chunk lists. Decode
-  order isn't a contract — the result is sorted by ``chunk_seq`` either
-  way — so test on the sorted list directly.
+  order isn't a contract (the result is sorted by ``chunk_seq`` either
+  way) so test on the sorted list directly.
 * Below the parallel-decode threshold the worker pool is not spun up,
   even when ``max_workers > 1``. This avoids the thread-startup tax for
   small markdown files / short PDFs that don't benefit.
@@ -47,7 +47,7 @@ def _find_parent_id(searcher: Searcher, path_suffix: str) -> str:
 
 
 def test_serial_and_parallel_decode_produce_identical_chunks(built_index: Path) -> None:
-    """Same inputs, same chunks — regardless of decode path."""
+    """Same inputs, same chunks: regardless of decode path."""
     searcher = Searcher(index_dir=built_index)
     parent_id = _find_parent_id(searcher, "papers/test.pdf")
 
@@ -132,7 +132,7 @@ def test_above_threshold_dispatches_to_thread_pool(
 
 
 def test_max_workers_one_stays_serial(built_index: Path) -> None:
-    """``max_workers=1`` is an explicit opt-out — no thread pool even
+    """``max_workers=1`` is an explicit opt-out: no thread pool even
     when over the threshold."""
     searcher = Searcher(index_dir=built_index)
     parent_id = _find_parent_id(searcher, "papers/test.pdf")

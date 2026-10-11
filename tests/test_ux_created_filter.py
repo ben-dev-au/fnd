@@ -153,7 +153,7 @@ async def test_created_persists_across_restart(
 
 @pytest.mark.asyncio
 async def test_created_enter_toggles_off(cfg_one_collection: Config, mixed_index: Path) -> None:
-    """Enter on the selected value clears it back to 'any' — no separate 'any'
+    """Enter on the selected value clears it back to 'any': no separate 'any'
     row to navigate to, matching every other filter toggle."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:

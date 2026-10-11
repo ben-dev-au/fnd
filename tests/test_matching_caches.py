@@ -2,7 +2,7 @@
 enough to allow it.
 
 Proving a highlight is visible word-matches every listed result before the first
-paint — measured at 130,298 ``word_matches`` calls on a real corpus — and each
+paint (measured at 130,298 ``word_matches`` calls on a real corpus) and each
 one reached the Snowball stemmer. Re-measured in-process on that path, cache
 live against ``__wrapped__``: 85.5ms -> 10.1ms over 551 hit texts, at 23,156
 hits against 1,896 misses.
@@ -62,7 +62,7 @@ def test_caching_does_not_change_glob_translation() -> None:
 def test_the_stem_cache_is_actually_used() -> None:
     """The point of the exercise: a repeated word must not re-enter the stemmer.
 
-    Asserted on the cache itself rather than on elapsed time — a timing
+    Asserted on the cache itself rather than on elapsed time: a timing
     threshold would be flaky on a loaded machine and would not say WHY it got
     slower.
     """

@@ -81,5 +81,5 @@ def test_optional_extractors_not_imported_eagerly(modname: str) -> None:
             sys.modules.pop(k, None)
     importlib.import_module("fnd.extract.pdf")
     assert modname not in sys.modules, (
-        f"{modname} was imported at fnd.extract.pdf import time — should be lazy"
+        f"{modname} was imported at fnd.extract.pdf import time: should be lazy"
     )

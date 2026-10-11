@@ -2,8 +2,8 @@
 
 The widget replaces ~250,000 ``Static`` widgets (one per line of a
 1000-page PDF) with a single ``ScrollView`` subclass that owns a
-``list[Strip]``. These tests exercise the widget in isolation —
-no FNDApp coupling, no real Tantivy index — so they can pin down
+``list[Strip]``. These tests exercise the widget in isolation (
+no FNDApp coupling, no real Tantivy index) so they can pin down
 the data model + rendering contract before the host app starts
 calling it.
 
@@ -66,12 +66,12 @@ def test_build_file_view_match_spans_register_per_line() -> None:
     bolded, the whole line gets the subtle-accent style, and
     first_hit_line_in_chunk points at the first matched line in the
     chunk."""
-    # Chunk "alpha\nbravo\ncharlie" — substring "bra" lives in line 1
+    # Chunk "alpha\nbravo\ncharlie": substring "bra" lives in line 1
     # at offsets 6..9 (b after 'alpha\n' which is 6 chars).
     fv = build_file_view([_chunk(7, "alpha\nbravo\ncharlie", (6, 9))])
     assert fv.match_lines == {1}
     assert fv.first_hit_line_in_chunk == {7: 1}
-    # The matched line carries a bold span over (0, 3) — local offsets.
+    # The matched line carries a bold span over (0, 3): local offsets.
     bra_line = fv.lines[1]
     bold_spans = [s for s in bra_line.spans if "bold" in str(s.style).lower()]
     assert bold_spans, "expected a bold span over the matched substring"
@@ -80,7 +80,7 @@ def test_build_file_view_match_spans_register_per_line() -> None:
 def test_build_file_view_first_hit_prefers_full_over_dimmed() -> None:
     """A proximity query dims lone-term occurrences (#76); the auto-scroll
     target must skip a dim-only line and land on the first FULL co-occurrence
-    match — otherwise a ``{N}`` query strands the preview on a faint stray hit."""
+    match, otherwise a ``{N}`` query strands the preview on a faint stray hit."""
     from fnd.render import DIM_MATCH_STYLES, MATCH_STYLES
 
     # "alpha\nbravo\ncharlie": alpha 0..5 (dim, line 0), charlie 12..19 (full, line 2).
@@ -102,7 +102,7 @@ def test_build_file_view_first_hit_falls_back_to_dim_only() -> None:
 def test_build_file_view_handles_multiple_matches_on_same_line() -> None:
     """Two match spans on the same line both register; only one entry
     is added to ``match_lines`` (it's a set)."""
-    # "alpha bravo alpha" — two "alpha" matches at (0,5) and (12,17).
+    # "alpha bravo alpha": two "alpha" matches at (0,5) and (12,17).
     fv = build_file_view([_chunk(1, "alpha bravo alpha", (0, 5), (12, 17))])
     assert fv.match_lines == {0}
     bold_spans = [s for s in fv.lines[0].spans if "bold" in str(s.style).lower()]
@@ -176,7 +176,7 @@ async def test_widget_render_line_returns_strip_with_expected_text() -> None:
         fv = build_file_view([_chunk(0, "apple\nbanana\ncherry")])
         buf.set_file_view(fv)
         await pilot.pause()
-        # Render y=0 from the top — the scroll offset is 0, so y=0 maps
+        # Render y=0 from the top: the scroll offset is 0, so y=0 maps
         # to line 0.
         strip = buf.render_line(0)
         assert isinstance(strip, Strip)
@@ -207,7 +207,7 @@ async def test_widget_scroll_to_line_moves_viewport() -> None:
         assert int(buf.scroll_offset.y) == 50
         buf.scroll_to_line(100, center=True)
         await pilot.pause()
-        # Centred — line 100 sits at viewport mid, so scroll y is line
+        # Centred: line 100 sits at viewport mid, so scroll y is line
         # 100 minus half the viewport height.
         assert int(buf.scroll_offset.y) == 100 - (buf.size.height // 2)
 
@@ -238,7 +238,7 @@ async def test_widget_scroll_to_line_context_fraction_drops_match_down() -> None
 @pytest.mark.asyncio
 async def test_widget_scroll_to_chunk_prefers_first_match_line() -> None:
     """Clicking a section in the sidebar should land the user on the
-    matched line within the chunk, not the chunk's first line — this
+    matched line within the chunk, not the chunk's first line: this
     is feature 2 in the audit."""
     from textual.app import App, ComposeResult
 
@@ -266,7 +266,7 @@ async def test_widget_scroll_to_chunk_prefers_first_match_line() -> None:
 
 @pytest.mark.asyncio
 async def test_widget_focused_chunk_overlay_is_per_render() -> None:
-    """``set_focused_chunk`` doesn't rebuild Strips — focused-chunk
+    """``set_focused_chunk`` doesn't rebuild Strips: focused-chunk
     accent is applied at render time via the component class. The
     cached Strip array stays identical across focus changes (cheap to
     flip back and forth), and the row overlay style is non-None only
@@ -315,7 +315,7 @@ async def test_widget_focused_chunk_overlay_is_per_render() -> None:
 
 @pytest.mark.asyncio
 async def test_widget_match_lines_property_exposes_sorted_positions() -> None:
-    """``match_lines`` returns a sorted list of global line indices —
+    """``match_lines`` returns a sorted list of global line indices:
     the scrollbar renderer consumes this directly to paint markers."""
     from textual.app import App, ComposeResult
 
@@ -327,7 +327,7 @@ async def test_widget_match_lines_property_exposes_sorted_positions() -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         buf = app.query_one(LineBufferPreview)
-        # Two chunks each with one match — global lines 0 and 4
+        # Two chunks each with one match: global lines 0 and 4
         # (chunk2 = gap row + 2 chunk lines, match on second of those).
         fv = build_file_view(
             [
@@ -425,7 +425,7 @@ def test_build_md_file_view_emits_structural_map() -> None:
 
 
 def test_rendered_document_packs_strips_and_indexes() -> None:
-    """build_rendered_document is the prefetch-bundle constructor —
+    """build_rendered_document is the prefetch-bundle constructor:
     strips and per-row indexes must agree with what set_prebuilt_view
     consumes."""
     fv = build_file_view([_chunk(0, "alpha\nbravo\ncharlie")])
@@ -454,7 +454,7 @@ def test_rendered_document_wraps_long_lines() -> None:
 @pytest.mark.asyncio
 async def test_set_prebuilt_view_consumes_rendered_document() -> None:
     """A widget installed with the RenderedDocument's fields paints the
-    expected line count — the value type is a faithful prebuilt bundle."""
+    expected line count: the value type is a faithful prebuilt bundle."""
     from textual.app import App, ComposeResult
 
     class _Host(App[None]):
@@ -529,7 +529,7 @@ async def test_widget_wrap_mode_splits_long_lines_to_visual_rows() -> None:
 @pytest.mark.asyncio
 async def test_widget_wrap_mode_match_lines_project_to_visual_rows() -> None:
     """In wrap mode ``match_lines`` returns the visual row indices that
-    contain a match — not the logical line indices. The scrollbar's
+    contain a match, not the logical line indices. The scrollbar's
     line-precise math expects visual offsets so this is the right
     interpretation."""
     from textual.app import App, ComposeResult
@@ -551,7 +551,7 @@ async def test_widget_wrap_mode_match_lines_project_to_visual_rows() -> None:
         fv = build_file_view([_chunk(5, body, (match_start, match_start + 5))])
         buf.set_file_view(fv)
         await pilot.pause()
-        # The logical match line is 1 — but in wrap mode the visual
+        # The logical match line is 1, but in wrap mode the visual
         # row index is past the wrap of line 0.
         assert buf.match_lines == [buf._logical_to_visual_y(1)]
 
@@ -588,7 +588,7 @@ async def test_widget_set_wrap_toggles_layout() -> None:
 @pytest.mark.asyncio
 async def test_widget_wrap_mode_get_selection_uses_visual_rows() -> None:
     """Drag-select across wrapped visual rows extracts the wrapped
-    plain text — not the logical-line-indexed text the no-wrap path
+    plain text, not the logical-line-indexed text the no-wrap path
     used to assume."""
     from textual.app import App, ComposeResult
 

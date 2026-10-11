@@ -6,7 +6,7 @@ effect without re-importing consumers.
 """
 
 # Preview widget cache. Repeat visits to a previously-loaded file
-# should be instant — keep the mounted widget tree alive in a per-file
+# should be instant: keep the mounted widget tree alive in a per-file
 # Container; switching files is then a single class-toggle. LRU-bounded.
 # Option A: only the active file stays mounted. Cached inactive containers
 # stayed in the pane and inflated every mount/settle (measured net-negative:
@@ -14,11 +14,11 @@ effect without re-importing consumers.
 # model, while taxing the active path). 1 = no stale DOM behind the active file.
 PREVIEW_CACHE_MAX_FILES = 1
 PREVIEW_CACHE_MIN_CHUNKS = 1
-# Visible-first mount window — chunks are decoded already, mounting
+# Visible-first mount window: chunks are decoded already, mounting
 # focused ± these counts synchronously gives the user instant viewport
 # feedback before the background fill starts.
 #
-# ``VISIBLE_FIRST_ABOVE`` is a CAP, not a count — see
+# ``VISIBLE_FIRST_ABOVE`` is a CAP, not a count: see
 # ``PreviewPresenter.above_window_start``. The reveal cannot happen until every
 # chunk above the focus has built (they decide where the match lands, see
 # _finalise_via_lock_body), so each one is paid for on the critical path, while
@@ -34,7 +34,7 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # 1457 -> 848ms, the reconcile-to-scroll gap 731 -> 517ms.
 # How long the freeze sweep waits for its container to be revealed before
 # giving up (ticks of 50ms). Capturing from a `-pre-reveal` container yields
-# blank strips with correct geometry — invisible to every guard, and served
+# blank strips with correct geometry: invisible to every guard, and served
 # later as an empty preview.
 FREEZE_REVEAL_WAIT_TICKS = 40
 
@@ -46,7 +46,7 @@ FREEZE_UNLAID_RETRY_SECONDS = 0.1
 
 # How long the freeze sweep may hold the event loop before yielding, in seconds.
 # The sweep swaps every out-of-window chunk's widget tree for its capture, and it
-# used to do the whole file in ONE synchronous loop — so the cold-to-frozen
+# used to do the whole file in ONE synchronous loop, so the cold-to-frozen
 # transition was a hard stall of however long that took. Measured on synthetic
 # six-line chunks: 221ms at 57 mounted, 452ms at 147, 559ms at 237, and real
 # chunks (PDF pages, rich markdown) cost 46-384ms EACH rather than ~2ms.
@@ -60,49 +60,49 @@ FREEZE_SLICE_SECONDS = 0.016
 # How long to wait after a frozen chunk reports a stale width before re-cutting
 # its strips. A window drag emits a resize per column and every mounted frozen
 # chunk reports independently, so this coalesces a whole gesture into one repair
-# pass — and a drag that returns to its original width costs nothing at all.
+# pass, and a drag that returns to its original width costs nothing at all.
 STALE_STRIP_REPAIR_DELAY = 0.25
 
 # How many repair passes may chain before giving up. A pass abandons whenever the
 # width moves again mid-drag, and reports arriving during a pass are dropped, so
-# it must be able to re-arm itself — but a chunk whose capture keeps failing
+# it must be able to re-arm itself, but a chunk whose capture keeps failing
 # (`freeze` refuses an unlaid DataTable or a nested scroll region) would re-arm
 # forever without a bound. Three is enough for a drag that settles; beyond that
 # the next navigation rebuilds correctly anyway.
 STALE_STRIP_MAX_PASSES = 3
 
 # Debounce before a coverage pass starts, so a held-down arrow key does not
-# spawn a plan per keypress — a superseded plan then does no work at all.
+# spawn a plan per keypress: a superseded plan then does no work at all.
 PREVIEW_WARM_DELAY = 0.35
 
 # How many NEIGHBOURING files each side of the cursor coverage captures ahead.
 # Between-file navigation is the slow case: within a file the target is already
 # mounted or served, but arriving at a file with nothing captured pays the full
 # build. Only the neighbours' HIT chunks are captured, so the cost per file is
-# its hit count rather than its size — a 1000-chunk neighbour with eight hits
+# its hit count rather than its size: a 1000-chunk neighbour with eight hits
 # costs eight captures, and the buffer re-plans around the cursor on every move.
 COVERAGE_NEIGHBOUR_FILES = 2
 
 # How many files from the TOP of the result list to warm regardless of where the
 # cursor is. The cursor window is relative, so on a fresh query it can only warm
-# the first file's immediate neighbours — yet the opening moves of a search are
+# the first file's immediate neighbours, yet the opening moves of a search are
 # the most likely to be made. Seeding the head covers them. Beyond it the window
 # takes over: a cursor past the seed warms its own neighbours as before, and the
 # seeded files cost a store lookup each to skip.
 COVERAGE_SEED_FILES = 8
 
 # The structural renderer's size cap lives in fnd.tui.preview_dispatcher as
-# MARKDOWN_MAX_CHARS — that module is what every path asks, and it sits below
+# MARKDOWN_MAX_CHARS: that module is what every path asks, and it sits below
 # this package, so it cannot import from here.
 
 # How long coverage must stand idle after each capture, as a multiple of what
 # that capture cost. A capture builds a real markdown widget, and Textual pumps
-# its blocks through the SAME event loop the UI runs on — so a capture in flight
+# its blocks through the SAME event loop the UI runs on, so a capture in flight
 # is a frozen UI, and the yield between captures is the only place to give the
 # loop back.
 #
 # Measured without this, sitting still for 12s after opening a file: 154
-# captures, median 52ms each, 10.1 SECONDS of the 12 spent inside a capture —
+# captures, median 52ms each, 10.1 SECONDS of the 12 spent inside a capture,
 # 84% of the loop, with stalls up to 393ms. Responsive enough to open a file and
 # then find that changing focus or stepping to the next match takes a second or
 # more to answer.
@@ -125,12 +125,12 @@ COVERAGE_IDLE_MAX = 0.5
 # Duty cycle for a warm the USER asked for and is watching on the progress
 # line. Background coverage must never be felt, so it yields four times what it
 # takes; a foreground warm is the thing being waited on, and the earlier sweep
-# put p95 keypress at 10.2ms here against 8.7ms at 4.0 — indistinguishable,
+# put p95 keypress at 10.2ms here against 8.7ms at 4.0: indistinguishable,
 # while a 33s file finishes in ~100s instead of ~167s.
 COVERAGE_FOREGROUND_IDLE_RATIO = 2.0
 # Above this many capturable chunks, a requested whole-file warm asks first.
-# Cost is not predictable from anything known in advance — measured across real
-# files, time per chunk varies 6x and memory per chunk 9x — so the honest move
+# Cost is not predictable from anything known in advance: measured across real
+# files, time per chunk varies 6x and memory per chunk 9x, so the honest move
 # is to show the estimate and let the user decide, not to guess a gate.
 FULL_WARM_CONFIRM_CHUNKS = 500
 # Capture bytes per 1000 characters of chunk text, for that estimate. Observed
@@ -142,7 +142,7 @@ FULL_WARM_KB_PER_1K_CHARS = 87
 
 # How long warming waits for an in-flight landing before giving up its turn
 # (ticks of 50ms). Warming must never compete with the scroll the user is
-# waiting on — that competition cost 170ms -> 579ms median on a real corpus.
+# waiting on: that competition cost 170ms -> 579ms median on a real corpus.
 PREVIEW_WARM_YIELD_TICKS = 40
 
 VISIBLE_FIRST_ABOVE = 7
@@ -167,7 +167,7 @@ BACKGROUND_FILL_RADIUS = 3
 # match count walks the mounted subtree (``MatchNavigator._count_stops``), so a
 # file that stops being filled stops being counted in full. Measured marginal
 # cost of a frozen chunk on a fast machine: 37us of arrange, 78us of a far
-# scroll, 0.9ms to mount — linear, no cliff, with the knee for "a navigation
+# scroll, 0.9ms to mount, linear, no cliff, with the knee for "a navigation
 # still feels instant" around 1000-2000 mounted chunks.
 FULLMOUNT_CHUNK_BUDGET = 250
 # How many chunks of a file coverage will CAPTURE ahead, so a jump outside the
@@ -178,7 +178,7 @@ FULLMOUNT_CHUNK_BUDGET = 250
 # The cap is on CAPTURES, not on mounted widgets: captures cost memory (44.5 KB
 # each, so 500 is ~22 MB against a machine-scaled cache budget) and the build
 # time to make them, while costing no arrange time at all. What stays MOUNTED is
-# still the contiguous window — see fnd/tui/preview/coverage.py for why coverage
+# still the contiguous window: see fnd/tui/preview/coverage.py for why coverage
 # must not put its scattered set into the DOM.
 COVERAGE_CHUNK_BUDGET = 500
 # Chunks captured either side of a hit, so a landing has context above and below
@@ -224,14 +224,14 @@ LAZY_MOUNT_ABSORB_TICKS = 25
 LAZY_MOUNT_ABSORB_QUIET = 7
 LAZY_MOUNT_BATCH = 3
 # Batch size for a run already in the capture store, which only ``fill_all``
-# asks for — and it checks per batch, because FULL does not imply it.
+# asks for, and it checks per batch, because FULL does not imply it.
 # The scroll-driven path keeps LAZY_MOUNT_BATCH: it cannot know the next chunks
 # are served without checking, and a cold batch this size is a freeze. A mount
 # that is served is a
 # blit; one that is built is a parse and a message-pump round, and the batch
 # above is sized for the latter. Measured on a real file, an above-batch costs
-# 0.07s at 3 and 0.14s at 32 when served — the cost is the settle and the
-# re-anchor, not the chunks — against 5.5s at 32 when it has to build them.
+# 0.07s at 3 and 0.14s at 32 when served (the cost is the settle and the
+# re-anchor, not the chunks) against 5.5s at 32 when it has to build them.
 LAZY_MOUNT_BATCH_SERVED = 32
 # Above this many chunks a fully warmed file stays windowed. Mounted frozen
 # chunks cost arrange time whether or not they are on screen: measured, 727
@@ -244,7 +244,7 @@ MATCH_CONTEXT_FRACTION = 0.25
 # Reveal watchdog: an active container mounts invisible (``-pre-reveal``) and is
 # revealed by its finalise task once the layout settles. Under rapid navigation
 # that task can be cancelled before it reveals, or hang for seconds awaiting
-# above-window chunks a cancelled mount never mounted — leaving the container
+# above-window chunks a cancelled mount never mounted, leaving the container
 # invisible ("preview blank until I select a different result and come back").
 # This is the bounded-time backstop: if a container is still ``-pre-reveal`` this
 # long after it became active, reveal it regardless. Set well above a normal

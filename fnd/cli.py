@@ -3,11 +3,11 @@
 Phases 1-3 surface:
 
 - ``fnd version``
-- ``fnd index <root>`` — quick ad-hoc index of a single root into the
+- ``fnd index <root>``: quick ad-hoc index of a single root into the
   default collection
-- ``fnd search "<query>"`` — query the index
-- ``fnd config show|edit|validate`` — manage ~/Library/Application Support/fnd/config.toml
-- ``fnd collection list|add|rm|reindex`` — manage collections
+- ``fnd search "<query>"``, query the index
+- ``fnd config show|edit|validate``, manage ~/Library/Application Support/fnd/config.toml
+- ``fnd collection list|add|rm|reindex``, manage collections
 """
 
 from __future__ import annotations
@@ -215,7 +215,7 @@ def parse_filter_flags(
         resolve_or_exit(found)
 
     # Expand category ids (e.g. "code" → its member language kinds) and de-dupe,
-    # so BOTH `search` and `tui` seed the index-compatible fine-grained ids —
+    # so BOTH `search` and `tui` seed the index-compatible fine-grained ids:
     # F_KIND never stores a category, so a raw ``kind:code`` clause matches
     # nothing. Centralised here so the two command surfaces can't drift.
     kind_values: list[str] = []
@@ -294,7 +294,7 @@ def tui(
                 raise typer.Exit(code=1) from e
 
     # Ahead of the rebuild prompt and the worker pool, and well ahead of
-    # Textual taking the screen — the prompt has to land on a plain terminal.
+    # Textual taking the screen: the prompt has to land on a plain terminal.
     _check_query_filters(initial_query, cfg, issues)
     collection = resolve_launch_collection(collection, cfg, issues)
     resolve_or_exit(issues)
@@ -422,7 +422,7 @@ def search(
     # ``flags.kinds`` is already category-expanded + de-duped by
     # parse_filter_flags. All values collapse into ONE kind:(a b …) OR-group
     # (F_KIND stores fine-grained ids) so multiple --kind flags match ANY of the
-    # kinds — matching the TUI. Emitting one clause per flag would AND them and
+    # kinds, matching the TUI. Emitting one clause per flag would AND them and
     # match nothing (a chunk has a single kind).
     if flags.kinds:
         kv = list(flags.kinds)
@@ -436,7 +436,7 @@ def search(
 
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
-    # Tags never enter the query string — see fnd/tag_query.py. They are
+    # Tags never enter the query string: see fnd/tag_query.py. They are
     # normalised the same way indexed tags were, then passed as typed state.
     tag_filter = None
     if flags.tags or flags.not_tags:
@@ -521,7 +521,7 @@ def search(
 def _check_query_filters(query: str, cfg: Config, issues: FilterIssues) -> None:
     """Record any ``c:`` / ``kind:`` value typed inside the query itself.
 
-    These are reported but never rewritten — see ``fnd.cli_scope``. The
+    These are reported but never rewritten: see ``fnd.cli_scope``. The
     ``all`` pseudo-name isn't valid in the DSL (it would be a literal
     collection name), so it isn't special-cased here.
 
@@ -632,7 +632,7 @@ def config_validate() -> None:
         f"✓ {path} valid; {len(cfg.collections)} collection(s): "
         f"{', '.join(sorted(cfg.collections)) or '(none)'}"
     )
-    # Not a schema error — the file parses — but a default naming a collection
+    # Not a schema error (the file parses) but a default naming a collection
     # that no longer exists silently widens every fresh launch to everything.
     want = cfg.defaults.collection
     if want and not is_all_collections(want, known=set(cfg.collections)):
@@ -836,7 +836,7 @@ def collection_reindex(
         resolve_or_exit(issues)
         # Reached only when the user accepted the proposal. Start a fresh issue
         # set: the accepted one is still in `issues`, and resolving `raw` below
-        # runs resolve_or_exit again — which would re-offer what they just said
+        # runs resolve_or_exit again, which would re-offer what they just said
         # yes to.
         issues = FilterIssues()
         raw = "all"
@@ -1035,7 +1035,7 @@ def extras_uninstall(
         raise typer.Exit(code=2)
 
     _print_uninstall_disclosure(extra)
-    # --dry-run is a planning preview — show the full plan as if
+    # --dry-run is a planning preview: show the full plan as if
     # everything were installed. The real uninstall (below) uses the
     # filtered version that skips already-removed packages.
     if dry_run:

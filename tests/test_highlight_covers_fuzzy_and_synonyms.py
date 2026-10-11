@@ -1,4 +1,4 @@
-"""Highlights cover every match the cascade would surface — exact
+"""Highlights cover every match the cascade would surface: exact
 literal stems, fuzzy-AUTO variants, and synonym-expanded forms.
 
 Pre-fix the highlighter only marked words whose Snowball stem matched
@@ -37,7 +37,7 @@ def test_match_spec_exact_stem() -> None:
 
 
 def test_match_spec_fuzzy_variant() -> None:
-    """User typed a typo (Templatas) — the cascade's fuzzy pass would
+    """User typed a typo (Templatas): the cascade's fuzzy pass would
     have surfaced docs containing "templates" / "template". The spec
     must therefore highlight those words too."""
     spec = MatchSpec.from_query("templatas")
@@ -47,7 +47,7 @@ def test_match_spec_fuzzy_variant() -> None:
 
 def test_match_spec_two_typo_fuzzy() -> None:
     """An explicit ``~2`` highlights 2-edit typos. (AUTO-fuzzy highlighting is
-    capped at distance 1 — distance 2 lights up too many unrelated false friends
+    capped at distance 1: distance 2 lights up too many unrelated false friends
     on a clean query; the search-side cascade still uses AUTO distance 2.)"""
     spec = MatchSpec.from_query("tempplatas~2")
     assert word_matches("templates", spec)
@@ -57,7 +57,7 @@ def test_match_spec_two_typo_fuzzy() -> None:
 
 def test_match_spec_synonym_expansion() -> None:
     """A query for "k8s" with a synonym group {k8s, kubernetes}
-    highlights both forms — the synonym pass would have surfaced docs
+    highlights both forms: the synonym pass would have surfaced docs
     that only mention "kubernetes"."""
     syns = SynonymTable.from_groups([["k8s", "kubernetes"]])
     spec = MatchSpec.from_query("k8s pod", synonyms=syns)
@@ -85,7 +85,7 @@ def test_match_spec_joined_compound_paints_exactly() -> None:
 
 
 def test_match_spec_short_term_skips_fuzzy() -> None:
-    """Stems of 1-2 chars get AUTO distance 0 — typos at that length
+    """Stems of 1-2 chars get AUTO distance 0: typos at that length
     almost always change meaning, and any-1-edit explodes false
     positives. Only exact matches highlight."""
     spec = MatchSpec.from_query("ai")
@@ -118,7 +118,7 @@ def test_word_runs_exact_match_is_one_yellow_run() -> None:
 def test_word_runs_fuzzy_match_marks_only_diverging_char_orange() -> None:
     """User types "Templatas"; the doc word "templates" matches via the
     fuzzy pass. Char-level alignment marks the matching prefix and
-    suffix yellow and the one diverging char orange — exactly the
+    suffix yellow and the one diverging char orange: exactly the
     spec the user asked for."""
     from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
 
@@ -129,13 +129,13 @@ def test_word_runs_fuzzy_match_marks_only_diverging_char_orange() -> None:
     # Aligned to "templatas": match through index 6, sub at 7, match at 8.
     assert runs == [
         (0, 7, HIGHLIGHT_STYLE),  # "templat"
-        (7, 8, MISMATCH_STYLE),  # "e" — divergent from query "a"
+        (7, 8, MISMATCH_STYLE),  # "e": divergent from query "a"
         (8, 9, HIGHLIGHT_STYLE),  # "s"
     ]
 
 
 def test_word_runs_synonym_match_is_all_yellow() -> None:
-    """A synonym hit has no char-level discrepancy story — the user
+    """A synonym hit has no char-level discrepancy story: the user
     typed "k8s" but a synonym group expanded to "kubernetes". The
     whole synonym word should read as a clean match (yellow) rather
     than mostly-orange because of low char-level overlap."""
@@ -148,7 +148,7 @@ def test_word_runs_synonym_match_is_all_yellow() -> None:
 
 
 def test_word_runs_two_typo_fuzzy_marks_both_diverging_chars() -> None:
-    """An explicit ``~2`` for a 2-edit typo ("tempplatas" — extra 'p' AND 'a'
+    """An explicit ``~2`` for a 2-edit typo ("tempplatas": extra 'p' AND 'a'
     for 'e') still surfaces "templates", and alignment marks both diverging
     positions orange. (AUTO-fuzzy highlighting caps at distance 1.)"""
     from fnd.render import MISMATCH_STYLE, word_highlight_runs
@@ -170,7 +170,7 @@ def test_word_runs_non_match_returns_empty() -> None:
 
 
 def test_word_runs_case_difference_alone_is_not_a_mismatch() -> None:
-    """Matching is case-insensitive — "Templates" against query
+    """Matching is case-insensitive: "Templates" against query
     "templates" is a literal stem hit, all yellow. No orange even
     though 'T' is uppercase in the doc and lowercase in the query."""
     from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
@@ -236,7 +236,7 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         word_lower = "templates"
 
         def word_rendered() -> bool:
-            """The widget existing is not the word being in it — Windows mounted
+            """The widget existing is not the word being in it: Windows mounted
             the FNDMarkdown a frame before its blocks carried any content, and
             the search below then read -1."""
             for md in pane.query(FNDMarkdown):
@@ -255,7 +255,7 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         md_widgets = list(pane.query(FNDMarkdown))
         assert md_widgets, "expected fuzzy-hit chunk to mount"
         # The chars of the doc word "templates" must be COVERED by
-        # highlight spans (collectively — for a fuzzy hit the word
+        # highlight spans (collectively: for a fuzzy hit the word
         # is split into yellow / orange runs, so a single span won't
         # span the whole word).
         all_styled_chars: set[int] = set()

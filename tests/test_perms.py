@@ -18,7 +18,7 @@ from fnd._perms import secure_mkdir, secure_write_text
 
 # The 0o700/0o600 hardening is POSIX-only; os.chmod merely toggles the read-only
 # bit on Windows (the user-profile data dir is already ACL-scoped there). So we
-# skip only the mode-bit assertions on Windows — the functional behaviour
+# skip only the mode-bit assertions on Windows: the functional behaviour
 # (creation, atomic replace, idempotence) still runs and is asserted, giving
 # _perms real Windows coverage. See fnd/_perms.py for the platform note.
 _POSIX_MODES = sys.platform != "win32"

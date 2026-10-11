@@ -1,9 +1,9 @@
 """Data / config extractor.
 
 Two shapes, keyed by kind:
-* ``csv`` / ``tsv`` — parsed with the stdlib ``csv`` module and rendered as GFM
+* ``csv`` / ``tsv``: parsed with the stdlib ``csv`` module and rendered as GFM
   pipe tables (previewed as a DataTable), chunked by row groups.
-* ``json`` / ``yaml`` / ``toml`` / ``xml`` / ``ini`` — **not interpreted**; the
+* ``json`` / ``yaml`` / ``toml`` / ``xml`` / ``ini``, **not interpreted**; the
   raw text is line-windowed and fenced with its language for a syntax-highlighted
   preview. Keeping them uninterpreted is deliberate: it avoids pulling in a
   parser per format and still indexes + previews the content faithfully.

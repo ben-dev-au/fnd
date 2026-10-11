@@ -39,7 +39,7 @@ def cfg(cfg_path: Path) -> Config:
     return load(cfg_path)
 
 
-# 1 — Provider shape
+# 1: Provider shape
 
 
 def test_provider_indexing_has_auto_resume_toggle() -> None:
@@ -83,7 +83,7 @@ def test_indexer_auto_resume_persists(tmp_path: Path) -> None:
     assert load(cfg_path).defaults.indexer_auto_resume is True
 
 
-# 1 — Chrome shape (pilot)
+# 1: Chrome shape (pilot)
 
 
 @pytest.mark.asyncio
@@ -112,7 +112,7 @@ async def test_indexing_subscreen_chrome(built_index: Path, cfg: Config) -> None
         assert "Auto-resume on launch" in labels
 
 
-# 2 — Keyboard equivalence
+# 2: Keyboard equivalence
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_indexing_toggle_via_enter(built_index: Path, cfg: Config) -> None
         open_settings_section(app, SECTION_INDEXING)
         await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
-        # Move cursor to the toggle row specifically — the Indexing
+        # Move cursor to the toggle row specifically: the Indexing
         # screen now has multiple selectable rows above it.
         for i, item in enumerate(lst._items):
             if item.id == "indexing.auto_resume":
@@ -142,7 +142,7 @@ async def test_indexing_toggle_via_enter(built_index: Path, cfg: Config) -> None
         assert before != after
 
 
-# 3 — Hint-bar content
+# 3: Hint-bar content
 
 
 @pytest.mark.asyncio
@@ -160,7 +160,7 @@ async def test_indexing_hint_bar(built_index: Path, cfg: Config) -> None:
         assert "Back" in text
 
 
-# 4 — Detail-strip content
+# 4: Detail-strip content
 
 
 @pytest.mark.asyncio
@@ -185,7 +185,7 @@ async def test_indexing_detail_strip_populated(built_index: Path, cfg: Config) -
         assert strip._description, "auto-resume row should populate the detail strip"
 
 
-# 6 — Cross-section search
+# 6: Cross-section search
 
 
 @pytest.mark.asyncio

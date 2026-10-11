@@ -1,4 +1,4 @@
-"""OS launcher — open a file/URL in the desktop's default handler and reveal
+"""OS launcher: open a file/URL in the desktop's default handler and reveal
 a file in the platform file manager, isolated behind one seam.
 
 Mirrors :mod:`fnd.tui.clipboard`: the OS-specific choice is made once by
@@ -6,7 +6,7 @@ Mirrors :mod:`fnd.tui.clipboard`: the OS-specific choice is made once by
 (and, on Windows, ``os.startfile``) as injectable dependencies, so every
 branch is unit-testable without spawning anything.
 
-Deep-linking to a page/line is deliberately *not* here — that is a per-app
+Deep-linking to a page/line is deliberately *not* here: that is a per-app
 concern owned by the :mod:`fnd.apps` handlers. This seam only covers "hand
 it to the OS default" (:meth:`Launcher.open_path`), "hand this URL scheme to
 the OS" (:meth:`Launcher.open_url`), and "show the file in the file manager"
@@ -35,7 +35,7 @@ Spawner = Callable[[list[str]], None]
 StartFile = Callable[[str], None]
 
 # Non-zero code returned when a launch can't even start (missing opener binary,
-# no OS handler for the type). The API contract is return-code-only — a UI
+# no OS handler for the type). The API contract is return-code-only: a UI
 # action handler must never have to catch an exception from an open/reveal.
 LAUNCH_FAILED = 127
 
@@ -169,7 +169,7 @@ class LinuxLauncher(_PosixCommands):
             if self._which(binary):
                 self._spawn([binary, flag, str(path)])
                 return
-        # No selecting file manager available — open the containing folder.
+        # No selecting file manager available: open the containing folder.
         self._spawn(["xdg-open", str(path.parent)])
 
 
@@ -185,7 +185,7 @@ class WindowsLauncher:
     ) -> None:
         # ``os.startfile`` only exists on Windows and is resolved lazily (at
         # call time) so the class type-checks, imports, and constructs on
-        # every platform — the factory builds it before any call, and tests
+        # every platform: the factory builds it before any call, and tests
         # inject a fake ``startfile`` when running off-Windows.
         self._startfile = startfile
         self._spawn = spawn

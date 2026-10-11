@@ -7,7 +7,7 @@ view counts so the user knows they exist.
 
 A hop stays inside the current result's chunk. At its edge the press HANDS OVER
 to the file's adjacent listed section in document order, by moving the results
-selection — so leaving a section is always a visible result switch, never a
+selection, so leaving a section is always a visible result switch, never a
 silent scroll into a neighbour's match. The counts stay per-section, which is
 what they are for: ``▼0`` means the next press leaves this section, not that it
 does nothing.
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 def view_anchors(ys: list[int], vh: int, home: int | None = None) -> list[int]:
-    """Content-space tops of the views ``n``/``b`` step through — a greedy tiling
+    """Content-space tops of the views ``n``/``b`` step through: a greedy tiling
     of the stops, each view spanning ``vh`` from the first match it reaches.
 
     ONE list drives both directions and both border counts, so a hop and a count
@@ -47,7 +47,7 @@ def view_anchors(ys: list[int], vh: int, home: int | None = None) -> list[int]:
     match, so tiling from the match leaves it a position no key can return to.
     """
     if vh <= 0:
-        return []  # unlaid-out / hidden pane — no meaningful screenful width
+        return []  # unlaid-out / hidden pane: no meaningful screenful width
     anchors: list[int] = []
     covered_to: int | None = None
     if home is not None and ys and home <= ys[0] < home + vh:
@@ -61,10 +61,10 @@ def view_anchors(ys: list[int], vh: int, home: int | None = None) -> list[int]:
 
 
 def adjacent_section(seqs: list[int], current: int, *, forward: bool) -> int | None:
-    """The listed section ``n``/``b`` hands over to once ``current`` is exhausted
-    — the next (or previous) in DOCUMENT order, wrapping at the file's ends, and
-    ``None`` when there is nowhere to go. Not results order: the tree ranks by
-    score, so its neighbouring row is somewhere else in the file entirely."""
+    """The listed section ``n``/``b`` hands over to once ``current`` is exhausted:
+    the next (or previous) in DOCUMENT order, wrapping at the file's ends, and
+        ``None`` when there is nowhere to go. Not results order: the tree ranks by
+        score, so its neighbouring row is somewhere else in the file entirely."""
     ordered = sorted(set(seqs))
     if not ordered or ordered == [current]:
         return None
@@ -74,7 +74,7 @@ def adjacent_section(seqs: list[int], current: int, *, forward: bool) -> int | N
 
 
 def _view_of(anchors: list[int], y: int) -> int:
-    """Index of the view that shows stop ``y`` — the last anchor at or above it.
+    """Index of the view that shows stop ``y``: the last anchor at or above it.
     Every stop falls in a view by construction of :func:`view_anchors`."""
     return max(0, bisect_right(anchors, y) - 1)
 
@@ -112,7 +112,7 @@ def _reveals(stops: list[int], target: int, top: int, vh: int) -> bool:
 
 
 def offscreen_views(anchors: list[int], stops: list[int], top: int, vh: int) -> tuple[int, int]:
-    """``(views above, views below)`` — the ``▲a ▼b`` border: views holding a
+    """``(views above, views below)``: the ``▲a ▼b`` border: views holding a
     match this viewport does not show.
 
     Counted over the same stops :func:`step_view` walks, so ``▼2`` is two more
@@ -145,41 +145,41 @@ _CONFIRM_BUDGET = 10.0
 class MatchNavigator:
     """Owns intra-file match navigation for the live preview pane.
 
-    The three surfaces deliberately use DIFFERENT data so each stays correct,
-    cheap, AND free of side effects on unrelated scroll timing:
+        The three surfaces deliberately use DIFFERENT data so each stays correct,
+        cheap, AND free of side effects on unrelated scroll timing:
 
-    * **The footer-hint gate** (`count`) is derived from match DATA —
-      ``_fnd_match_coords`` on the mounted tables + each chunk's ``match_blocks``
-      — plain list attributes set at compose time. Counting them never reads a
-      region, so it never forces layout, so it can't perturb the delicate cold-
-      nav scroll-settle window (region reads did — measured to stall the
-      landing). It is cached; the footer reads the cache, so a focus change
-      never re-walks the preview subtree (a perf contract the pane keeps).
-    * **Navigation** (``next``/``prev``) enumerates the match stops fresh on
-      the keypress — a snapshot goes stale as the lazy-mounted preview reflows
-      (the reported bug: n did nothing because the snapshot was captured empty
-      before a deep table laid out). Layout reads here are fine: they happen on
-      a deliberate keypress, never during a cold-nav settle.
-    * **The ▲a/▼b view arrows** answer the original awareness question — "does
-      the result I'm on have matches I can't see?" Users navigate *between*
-      results with the results-pane arrows, which skip straight past matches
-      lower down in the *same* chunk; the arrows count how many screenfuls
-      ("views") of the CURRENT result hold an off-screen match, above and below.
-      Everything here is scoped to the current chunk (``anchor.focus_chunk_seq``
-      and its widget extent) — never the whole file. The counts ARE layout-
-      derived, but the read is deferred to settle-safe moments only (after the
-      mount settles, on a nav keypress, on a user scroll) and cached, so the
-      border refresh stays layout-free.
+        * **The footer-hint gate** (`count`) is derived from match DATA:
+          ``_fnd_match_coords`` on the mounted tables + each chunk's ``match_blocks``:
+    plain list attributes set at compose time. Counting them never reads a
+          region, so it never forces layout, so it can't perturb the delicate cold-
+          nav scroll-settle window (region reads did: measured to stall the
+          landing). It is cached; the footer reads the cache, so a focus change
+          never re-walks the preview subtree (a perf contract the pane keeps).
+        * **Navigation** (``next``/``prev``) enumerates the match stops fresh on
+          the keypress: a snapshot goes stale as the lazy-mounted preview reflows
+          (the reported bug: n did nothing because the snapshot was captured empty
+          before a deep table laid out). Layout reads here are fine: they happen on
+          a deliberate keypress, never during a cold-nav settle.
+        * **The ▲a/▼b view arrows** answer the original awareness question: "does
+          the result I'm on have matches I can't see?" Users navigate *between*
+          results with the results-pane arrows, which skip straight past matches
+          lower down in the *same* chunk; the arrows count how many screenfuls
+          ("views") of the CURRENT result hold an off-screen match, above and below.
+          Everything here is scoped to the current chunk (``anchor.focus_chunk_seq``
+          and its widget extent): never the whole file. The counts ARE layout-
+          derived, but the read is deferred to settle-safe moments only (after the
+          mount settles, on a nav keypress, on a user scroll) and cached, so the
+          border refresh stays layout-free.
 
-    ``n``/``b`` hop between the current result's matching views, and at its edge
-    hand over to the file's adjacent listed section (see the module docstring).
+        ``n``/``b`` hop between the current result's matching views, and at its edge
+        hand over to the file's adjacent listed section (see the module docstring).
     """
 
     def __init__(self, app: FNDApp) -> None:
         self._app = app
         self._count = 0  # cached data-derived match count (footer-hint gate)
         # Cached matching-view counts for the current result, relative to the
-        # viewport — the ▲a/▼b markers on the preview border. Region-derived
+        # viewport: the ▲a/▼b markers on the preview border. Region-derived
         # (unlike _count) but only re-measured at settle-safe moments (see
         # _measure_after_settle); the border reads the cache, never the regions.
         self._above = 0
@@ -196,7 +196,7 @@ class MatchNavigator:
         self._confirm_until = 0.0
         # The generation a confirmation chain is armed for, or None. Keyed by
         # generation, not a bare flag: a chain armed under an older one is dead
-        # on arrival, and a flag cannot say so — it just blocks the arm the new
+        # on arrival, and a flag cannot say so; it just blocks the arm the new
         # navigation needs, leaving an open window with nothing running.
         self._confirm_armed_gen: int | None = None
         # The last hop's destination and the landing the chunk was entered at,
@@ -242,7 +242,7 @@ class MatchNavigator:
             return None
 
     def _stops_within(self, root: Widget, spec: MatchSpec) -> int:
-        """Match stops inside ``root``, from DATA only — no region reads, so no
+        """Match stops inside ``root``, from DATA only: no region reads, so no
         layout is forced: one per matching table cell, one per non-table match
         block, one per matching plain line.
 
@@ -253,7 +253,7 @@ class MatchNavigator:
         while a fill is hiding chunks.
 
         Shared by the preview-wide count and the current-chunk check so the two
-        can't drift on what counts as a stop — they answer the same question at
+        can't drift on what counts as a stop: they answer the same question at
         different scopes, and a footer hint disagreeing with what n/b can reach
         is exactly the confusion this scan exists to prevent.
         """
@@ -281,7 +281,7 @@ class MatchNavigator:
         # Frozen chunks carry their stop count from capture time. Counting them
         # keeps the footer hint and ``current_chunk_has_stops`` honest: without
         # it a frozen chunk reads as having no matches, so ``n``/``b`` would be
-        # advertised as unavailable on a chunk that does have them — or, worse,
+        # advertised as unavailable on a chunk that does have them, or, worse,
         # silently do nothing. Data only, no region reads, like everything else
         # in this method.
         from fnd.tui.preview.frozen import FrozenChunkView
@@ -296,7 +296,7 @@ class MatchNavigator:
         return n
 
     def _count_stops(self, pane: VerticalScroll) -> int:
-        """Stops across the whole mounted preview — the footer-hint cache."""
+        """Stops across the whole mounted preview: the footer-hint cache."""
         return self._stops_within(pane, self._app._effective_match_spec)
 
     def _content_stops(self, pane: VerticalScroll) -> list[int]:
@@ -307,7 +307,7 @@ class MatchNavigator:
         return enumerate_stop_rows(pane, self._app._effective_match_spec)
 
     def _current_chunk_extent(self, pane: VerticalScroll) -> tuple[int, int] | None:
-        """Content-space ``[top, bottom)`` of the CURRENT result's chunk — the
+        """Content-space ``[top, bottom)`` of the CURRENT result's chunk: the
         one the results-pane selection revealed (``anchor.focus_chunk_seq``).
         ``bottom`` is the next chunk's top (so it works whether the chunk widget
         is the full ``FNDMarkdown`` or just a plain chunk's first line); the last
@@ -354,7 +354,7 @@ class MatchNavigator:
 
     def _chunk_stops(self, pane: VerticalScroll) -> list[int]:
         """The current result's match stops (content-space tops). An unknown
-        extent (flat preview) falls back to every mounted stop — which on that
+        extent (flat preview) falls back to every mounted stop, which on that
         substrate is none, so the keys are inert rather than unscoped."""
         stops = self._content_stops(pane)
         extent = self._current_chunk_extent(pane)
@@ -381,7 +381,7 @@ class MatchNavigator:
 
     @property
     def count(self) -> int:
-        return self._count  # cached — cheap, no subtree walk
+        return self._count  # cached: cheap, no subtree walk
 
     def current_chunk_has_stops(self) -> bool:
         """Whether ``n``/``b`` can do anything from where the user is: walk this
@@ -389,7 +389,7 @@ class MatchNavigator:
         return self._chunk_has_match_data() or self.can_hop_section()
 
     def _is_dead_end(self) -> bool:
-        """Whether this chunk offers nothing to walk to — the only state a
+        """Whether this chunk offers nothing to walk to: the only state a
         hand-over may fire from when no stop resolved. A chunk still mounting or
         still building is not one: the data gate reads False in both windows, and
         handing over there walks the reader out of the section mid-navigation."""
@@ -399,8 +399,8 @@ class MatchNavigator:
         if seq is None or seq not in widgets:
             return False
         # Its blocks register DURING the build, so an empty match set before
-        # ``build_done`` means "not yet". This is the wide window — seconds on a
-        # big chunk — where the un-mounted one above is a tick.
+        # ``build_done`` means "not yet". This is the wide window, seconds on a
+        # big chunk, where the un-mounted one above is a tick.
         build_done = getattr(widgets[seq], "build_done", None)
         if build_done is not None and not build_done.is_set():
             return False
@@ -410,10 +410,10 @@ class MatchNavigator:
         """Whether the current chunk carries a match at all.
 
         ``count`` spans the whole mounted preview, but ``_go`` operates on
-        ``_chunk_stops`` — scoped to the current result's chunk. Gating the
+        ``_chunk_stops``: scoped to the current result's chunk. Gating the
         footer hint on ``count`` therefore advertised ``n/b Matches`` on a chunk
         where both keys silently no-op. Mirrors ``_chunk_stops``' own scoping,
-        and reads data only — never regions — so it answers while the layout is
+        and reads data only, never regions, so it answers while the layout is
         still resolving, which is what tells a mid-mount press from a dead end.
         """
 
@@ -428,7 +428,7 @@ class MatchNavigator:
         widgets: dict[int, object] = getattr(self._app._preview, "chunk_widgets", None) or {}
         current = widgets.get(anchor.focus_chunk_seq) if anchor is not None else None
         if current is None:
-            # Flat preview, or nothing mounted yet — _chunk_stops falls back to
+            # Flat preview, or nothing mounted yet: _chunk_stops falls back to
             # every mounted stop here, so the file-wide count is the honest gate.
             return self._count > 0
         if isinstance(current, FNDMarkdown):
@@ -436,26 +436,26 @@ class MatchNavigator:
         from fnd.tui.preview.frozen import FrozenChunkView
 
         if isinstance(current, FrozenChunkView):
-            # A capture has no blocks and no match target — serving one pops the
-            # target — so without this branch the plain-chunk fallback below
+            # A capture has no blocks and no match target: serving one pops the
+            # target, so without this branch the plain-chunk fallback below
             # reads `None` and hides the `n/b Matches` hint on a chunk where both
             # keys work. Routed through `_stops_within` rather than reading
             # `stop_rows` here, so the count and this gate cannot drift on what
-            # counts as a stop — which is the reason that method has a frozen arm.
+            # counts as a stop, which is the reason that method has a frozen arm.
             return self._stops_within(current, self._app._effective_match_spec) > 0
         # Plain per-line chunk: the mount records the first matching line as the
-        # match target, falling back to the first line when nothing matched — so
+        # match target, falling back to the first line when nothing matched, so
         # the match class on that target is exactly "this chunk has a stop".
         target = self._app._preview.match_targets.get(anchor.focus_chunk_seq) if anchor else None
         return target is not None and target.has_class("chunk-line-match")
 
     @property
     def above(self) -> int:
-        return self._above  # cached — matching views above the viewport (this result)
+        return self._above  # cached: matching views above the viewport (this result)
 
     @property
     def below(self) -> int:
-        return self._below  # cached — matching views below the viewport (this result)
+        return self._below  # cached: matching views below the viewport (this result)
 
     def on_manual_scroll(self) -> None:
         """Drop the burst memory so the next ``n``/``b`` is computed purely from
@@ -480,12 +480,12 @@ class MatchNavigator:
         # Unconditional: this used to skip the notify when the arrow counts were
         # already (0, 0), which is exactly the case for a result the preview
         # can't paint. The border then kept whatever the PREVIOUS result had put
-        # there — so the "match not shown here" notice never appeared on the
+        # there, so the "match not shown here" notice never appeared on the
         # rows that need it, and never cleared on the rows that don't. One
         # border + footer update per preview mount is not worth the ambiguity.
         # ``_count`` too: it is the fallback ``current_chunk_has_stops`` uses
         # while no current chunk is resolvable, which is exactly the window a
-        # mounting preview sits in — so a retained count advertised "n/b
+        # mounting preview sits in, so a retained count advertised "n/b
         # Matches" for the result the user just navigated AWAY from. Recomputed
         # by the count tick below once the new preview is up.
         self._above = self._below = self._count = 0
@@ -507,7 +507,7 @@ class MatchNavigator:
         landing). Just wait for is_complete, then count.
 
         ``is_complete`` means every chunk of the file is mounted, which above
-        ``FULLMOUNT_CHUNK_BUDGET`` is deliberately never true — the file stays
+        ``FULLMOUNT_CHUNK_BUDGET`` is deliberately never true: the file stays
         windowed by design. So on a large file this runs its whole budget out and
         looks like pure waste. **It is not.** Burning the budget is what holds
         ``_count_tick``'s subtree walk back until after the mount, which is the
@@ -518,7 +518,7 @@ class MatchNavigator:
         The protection is therefore accidental, and anything that makes
         ``is_complete`` reachable removes it silently. Gating on the landing
         instead (``is_settling`` plus ``pipeline_busy``) states it deliberately
-        and measures neutral — correct, but not worth the churn on its own."""
+        and measures neutral: correct, but not worth the churn on its own."""
         if gen != self._refresh_gen:
             return  # superseded by a newer rebuild
         active = getattr(getattr(self._app, "_preview", None), "active", None)
@@ -543,7 +543,7 @@ class MatchNavigator:
         if retries > 0 and (retries > 1 or self._count != prev):
             self._app.call_after_refresh(lambda: self._count_tick(gen, retries - 1))
         else:
-            # Count is stable; now measure the off-screen arrows — but only once
+            # Count is stable; now measure the off-screen arrows, but only once
             # the nav scroll has provably landed (region reads mid-settle perturb
             # the cold-nav landing).
             self._measure_after_settle(gen, retries=30)
@@ -558,7 +558,7 @@ class MatchNavigator:
     ) -> None:
         """Reschedule until the reveal scroll has actually LANDED, then run
         ``on_landed``. Two conditions must hold: the controller is not settling
-        (cold-nav gate) AND ``scroll_y`` has stopped moving — a warm nav commits
+        (cold-nav gate) AND ``scroll_y`` has stopped moving; a warm nav commits
         its reveal scroll without ever flipping ``is_settling``, so the settle
         flag alone would measure against the pre-reveal viewport. Only the scroll
         reactive is read while polling (no layout), so the delicate settle path
@@ -568,7 +568,7 @@ class MatchNavigator:
             return
         pane = self._pane()
         if pane is None:
-            on_landed()  # pane gone (teardown) — let on_landed settle/clear state
+            on_landed()  # pane gone (teardown): let on_landed settle/clear state
             return
         cur = pane.scroll_offset.y
         ctrl = getattr(self._app, "_preview_scroll", None)
@@ -584,7 +584,7 @@ class MatchNavigator:
         on_landed()
 
     def _measure_after_settle(self, gen: int, retries: int) -> None:
-        """Post-mount initial measure: land, then measure — self-cancelling if a
+        """Post-mount initial measure: land, then measure, self-cancelling if a
         newer rebuild superseded this generation."""
         self._poll_until_landed(
             retries,
@@ -620,7 +620,7 @@ class MatchNavigator:
         """One confirmation: read now unless a navigation is mid-settle.
 
         Not routed through :meth:`_schedule_measure`, whose landing poll
-        reschedules per refresh — a window of that is per-frame work on the
+        reschedules per refresh; a window of that is per-frame work on the
         settle path. A skipped tick costs nothing; the next is 250ms away."""
         if gen != self._refresh_gen:
             return  # superseded; its own generation's chain owns the window
@@ -667,7 +667,7 @@ class MatchNavigator:
         self._schedule_measure()
 
     def on_result_revealed(self) -> None:
-        """A new result was positioned in the preview — the AUTHORITATIVE switch
+        """A new result was positioned in the preview: the AUTHORITATIVE switch
         event. The scroll watcher misses switches whose reveal doesn't move the
         scroll (so the old result's markers would linger); this fires regardless.
         Clear the old markers now, reset the burst memory (a new result is a
@@ -690,7 +690,7 @@ class MatchNavigator:
         clear the counts and advance the generation, and this poll would then
         land mid-mount, read regions during the cold-nav settle window, and
         repopulate ▲/▼ counts belonging to the previous result. Coalescing made
-        it worse — while the stale poll was pending, requests for the NEW
+        it worse, while the stale poll was pending, requests for the NEW
         preview were dropped as duplicates.
         """
         if self._measure_pending:
@@ -726,7 +726,7 @@ class MatchNavigator:
 
     def _active_parent(self) -> str | None:
         """The file both the preview and the anchor name, or ``None`` when they
-        disagree — a whole navigation long, since the anchor is armed before the
+        disagree: a whole navigation long, since the anchor is armed before the
         container is activated. ``None`` on a flat preview, which nulls
         ``active`` and contributes no stops for n/b to walk."""
         preview = getattr(self._app, "_preview", None)
@@ -805,7 +805,7 @@ class MatchNavigator:
         return True
 
     def can_hop_section(self) -> bool:
-        """Whether a hand-over is available from here — data only (results rows
+        """Whether a hand-over is available from here: data only (results rows
         and the active file), so it is safe wherever the footer gate is.
 
         Never with highlights off: the spec is empty, there is nothing to walk
@@ -845,7 +845,7 @@ class MatchNavigator:
             return
         # Scope to the CURRENT result's chunk so a hop reveals its hidden matches
         # and stops at its boundaries; the edge is where the hand-over below takes
-        # over. Fresh each press — never a stale snap.
+        # over. Fresh each press: never a stale snap.
         stops = self._chunk_stops(pane)
         vh = pane.scrollable_content_region.height
         if not stops or vh <= 0:
@@ -875,7 +875,7 @@ class MatchNavigator:
             return
         self._last_rel, self._last_seq = target - base, self._focus_seq()
         self._scroll_to_stop(pane, target, vh)
-        # Re-measure the view arrows AFTER the scroll commits — reading regions
+        # Re-measure the view arrows AFTER the scroll commits: reading regions
         # synchronously here (before layout settles) yields an unresolved
         # viewport. Coalesced; runs on the next refresh with the scroll applied.
         self._schedule_measure()
@@ -894,7 +894,7 @@ class MatchNavigator:
         # treat it as a user scroll (which would clear the burst memory we just
         # set). Mirrors StructuralScrollStrategy's reconcile-scroll guard.
         # ``immediate`` (not animated) so the scroll commits synchronously
-        # inside the reconcile window — an animated scroll's watcher trips fire
+        # inside the reconcile window: an animated scroll's watcher trips fire
         # after ``end_reconcile_scroll``, outside the guard, and would then be
         # mistaken for a user scroll.
         preview = getattr(self._app, "_preview", None)

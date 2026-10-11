@@ -3,7 +3,7 @@
 The filters tree is wrapped in ``#filters_pane`` which carries the collapse
 class and, at header height, the only clickable rows (the tree has zero height
 when collapsed). So the click has to be caught on the container and the reopen
-has to act on that frame — not the tree, which is what results/collections use.
+has to act on that frame, not the tree, which is what results/collections use.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ async def test_clicking_collapsed_filters_pane_reopens_it(cfg: Config, idx: Path
 
 @pytest.mark.asyncio
 async def test_clicking_collapsed_results_pane_still_reopens(cfg: Config, idx: Path) -> None:
-    """Regression guard for the unwrapped panels — the click path they use must
+    """Regression guard for the unwrapped panels: the click path they use must
     keep working."""
     app = FNDApp(index_dir=idx, config=cfg, initial_query="saffron")
     async with app.run_test(size=(120, 45)) as pilot:
@@ -96,7 +96,7 @@ async def test_clicking_collapsed_results_pane_still_reopens(cfg: Config, idx: P
 
 @pytest.mark.asyncio
 async def test_clicking_expanded_filters_pane_is_not_swallowed(cfg: Config, idx: Path) -> None:
-    """The container click handler must only act while collapsed — an expanded
+    """The container click handler must only act while collapsed: an expanded
     filters pane's clicks still reach the tree (it takes focus), so filter rows
     stay togglable by mouse."""
     app = FNDApp(index_dir=idx, config=cfg, initial_query="saffron")

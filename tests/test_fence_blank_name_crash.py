@@ -4,8 +4,8 @@ guessed lexer emits a zero-width ``Token.Name`` token.
 Some Pygments lexers (e.g. Perl, which ``guess_language`` picks for a bare
 fence whose content contains ``□``/``<<``/``|``) emit empty ``Token.Name``
 tokens. ``_build_spans`` skips blank tokens when building its neighbour-lookup
-map, but the ``Token.Name`` branch then looked the token up unconditionally —
-``KeyError`` — which propagated out of ``FNDMarkdownFence.__init__`` and crashed
+map, but the ``Token.Name`` branch then looked the token up unconditionally,
+``KeyError``, which propagated out of ``FNDMarkdownFence.__init__`` and crashed
 the whole ``FNDMarkdown`` mount (Textual ``_parse_markdown``).
 """
 

@@ -22,7 +22,7 @@ class PreviewContainer(Container):
 
     One container per cached file lives inside ``#preview_pane``; only
     one is ``-active`` (visible) at a time. Switching files toggles
-    classes — no remount cost. Each container tracks which chunk
+    classes: no remount cost. Each container tracks which chunk
     indices have been mounted so a partial-then-cancelled mount can be
     resumed on revisit.
     """
@@ -33,7 +33,7 @@ class PreviewContainer(Container):
     PreviewContainer { width: 100%; height: auto; }
     PreviewContainer.-hidden { display: none; }
     /* opacity:0 (not visibility:hidden) so the pane can be scrolled to the
-       match WHILE the container is invisible — scroll_to_region is a no-op
+       match WHILE the container is invisible, scroll_to_region is a no-op
        under visibility:hidden, which forced a reveal-at-top-then-scroll jump.
        The reveal lands only after the scroll commits (see _finalise_via_lock). */
     PreviewContainer.-pre-reveal { opacity: 0%; }
@@ -60,7 +60,7 @@ class PreviewContainer(Container):
         # a frame or two after the reveal has been decided.
         self.has_painted: bool = False
         # How this container's chunks were obtained. The one number that
-        # says whether the capture cache is doing anything at all — its
+        # says whether the capture cache is doing anything at all: its
         # absence hid a cache that stored thousands of captures and served
         # none of them.
         self.served_chunks: int = 0
@@ -76,8 +76,8 @@ class PreviewContainer(Container):
 
     def get_content_height(self, container, viewport, width):  # type: ignore[no-untyped-def]
         # Textual's VerticalLayout has an "all children are dynamic
-        # height" shortcut that arranges them inside ``container.height``
-        # — fine for flex-style nested containers, wrong here because
+        # height" shortcut that arranges them inside ``container.height``:
+        # fine for flex-style nested containers, wrong here because
         # this widget is the scrollable canvas of #preview_pane. The
         # shortcut caps total height at the pane's viewport height
         # (~19 cells), so chunks past that y are positioned in widget
@@ -112,7 +112,7 @@ class _HitWithQuery:
 class PreviewCache:
     """LRU cache of :class:`PreviewContainer`, keyed by
     ``(parent_doc_id, query_signature)``. Files with fewer than
-    :data:`tuning.PREVIEW_CACHE_MIN_CHUNKS` chunks are NOT cached — they
+    :data:`tuning.PREVIEW_CACHE_MIN_CHUNKS` chunks are NOT cached; they
     mount fast enough that keeping the widget tree alive isn't worth
     the memory.
     """
@@ -143,12 +143,12 @@ class PreviewCache:
         """Cache ``container`` and return any LRU-evicted containers for the
         caller to remove. ``protect`` is skipped during eviction.
 
-        ``protect`` is load-bearing, not just tidy: a STALE mount — one an
-        overshoot-and-return navigation cancelled — runs its ``finally`` LATE,
+        ``protect`` is load-bearing, not just tidy: a STALE mount, one an
+        overshoot-and-return navigation cancelled, runs its ``finally`` LATE,
         after a newer navigation has already re-activated a *different*
         container. With ``max_files == 1`` a put that protected only the entry
         it was inserting would evict that newly-active container out of the DOM
-        while ``self.active`` still pointed at it — a detached-active blank pane
+        while ``self.active`` still pointed at it: a detached-active blank pane
         that never self-heals. Callers therefore pass ``protect=<active>`` so the
         active preview is never the one evicted (the stale/incoming container is
         evicted instead, keeping the cache at ``max_files``)."""

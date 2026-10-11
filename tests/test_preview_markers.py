@@ -2,7 +2,7 @@
 
 Regression for markers that were placed by chunk *ordinal* (a bool per
 chunk mapped uniformly across the bar), which put a match in a short
-chunk following a long one near the top when it actually sat far down —
+chunk following a long one near the top when it actually sat far down:
 off by up to half the bar. The fix weights each chunk by its rendered
 line count so a match's line fraction tracks its scroll-track fraction.
 """
@@ -95,7 +95,7 @@ def test_no_marker_when_the_match_is_only_in_unrendered_text() -> None:
     chunk should be silent. But the marker is a promise that a highlight is
     down there: scrolling to it showed the user nothing, and the scrollbar
     disagreed with the pane. The results row carries the ``◌`` flag for exactly
-    this chunk, so the match is still reported — just not by a marker that
+    this chunk, so the match is still reported: just not by a marker that
     can't lead anywhere.
     """
     spec = MatchSpec.from_query("glimmer")

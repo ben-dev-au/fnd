@@ -103,7 +103,7 @@ _uses_markdown_renderer = uses_markdown_renderer
 
 
 def _short_label(action_id: str) -> str:
-    """Footer-hint label for an action — uses Action.footer_label when set,
+    """Footer-hint label for an action: uses Action.footer_label when set,
     otherwise falls back to the first word of the description. Localised
     because this also becomes the Textual ``Binding`` description, which no
     longer passes through the hint-bar renderer."""
@@ -151,7 +151,7 @@ def _hint_clusters(
                 out.append_text(Text("…", style="dim"))
                 continue
             # Both clusters run through localise so a hint table can hold
-            # ``{alt_key}`` and render ⌥ on macOS, Alt elsewhere — the footer
+            # ``{alt_key}`` and render ⌥ on macOS, Alt elsewhere: the footer
             # and the Keybindings page then can't disagree.
             key = os_labels.localise(key)
             label = os_labels.localise(label)
@@ -329,7 +329,7 @@ class FNDApp(PlainToastApp):
        stock MarkdownFence sets ``overflow: scroll hidden`` and lets its
        inner Label size to the longest line, so long lines spill into a
        horizontal scrollbar. Hiding overflow-x and pinning the Label to
-       the fence width makes the content reflow to the pane — no
+       the fence width makes the content reflow to the pane: no
        horizontal bar to chase. The bottom padding is dropped (the stock
        ``padding: 1 2`` left a dark backdrop row that read as a thick
        scrollbar) and the vertical bar stays the app-wide hairline. */
@@ -358,12 +358,12 @@ class FNDApp(PlainToastApp):
         width: auto;
     }
     /* Pane borders dim by default, brighten when the pane (or any
-       descendant) is focused — lazygit's active-section convention.
+       descendant) is focused, lazygit's active-section convention.
        Results expands to fill remaining space; Collections + Filters
        size to their content so each panel stays exactly as tall as
        its rows demand. */
     #results_column { width: 1fr; height: 1fr; }
-    /* Cancel Textual's focused-Tree tint — border colour is the focus signal. */
+    /* Cancel Textual's focused-Tree tint: border colour is the focus signal. */
     #results_column Tree {
         background-tint: transparent;
     }
@@ -372,20 +372,20 @@ class FNDApp(PlainToastApp):
         border: round $primary 50%;
         overflow-x: hidden;
         /* `scroll`, not `auto`: file rows are elided to the pane's content
-           width, and that budget is measured before the rows exist — under
+           width, and that budget is measured before the rows exist, under
            `auto` the rows then bring the scrollbar back and every label runs a
            cell long, losing the last character of the extension. */
         overflow-y: scroll;
     }
     /* Class-toggled focus border (not :focus-within) so it survives a
-       terminal blur — Textual clears :focus-within when the app loses focus,
+       terminal blur, Textual clears :focus-within when the app loses focus,
        which dropped the border on tab-away and reinstated it a beat late on
        return. ``on_descendant_focus`` drives the class; nothing clears it on
        blur. Mirrors the preview pane below. */
     #results_pane.-focused { border: round $accent; }
     /* height is driven at runtime by the dynamic allocator (_reflow_sidebar /
        sidebar_layout.py); the `auto` here is only the pre-reflow default. No
-       max-height cap — the allocator, not CSS, decides each panel's share. */
+       max-height cap: the allocator, not CSS, decides each panel's share. */
     #collections_panel_tree {
         width: 100%; height: auto;
         border: round $primary 50%;
@@ -414,7 +414,7 @@ class FNDApp(PlainToastApp):
     /* Docked at the top so it floats above the scrolling tree, always in view
        while a filter is active; hidden otherwise. */
     #filters_pane #clear_filters_bar {
-        /* visibility (not display) so the row is always reserved — the bar
+        /* visibility (not display) so the row is always reserved: the bar
            appearing on the first active filter must not shove the tree down. */
         dock: top; height: 1; padding: 0 1; visibility: hidden;
         color: $primary 50%;
@@ -453,7 +453,7 @@ class FNDApp(PlainToastApp):
        the collapsed height when the inner tree has more rows than fit.
        The results pane intentionally keeps a 1-row content area
        (height: 3 = top border + 1 row + bottom border) so the
-       currently-selected hit — which drives the preview pane — stays
+       currently-selected hit, which drives the preview pane, stays
        visible. The secondary panels (collections, filters) drop to
        just the two border rows so their cursor highlight doesn't bleed
        through and read as "still selected" when the panel is closed. */
@@ -481,8 +481,8 @@ class FNDApp(PlainToastApp):
         padding: 0 0 0 1;
         /* `scroll`, not `auto`: the gutter is reserved whether or not there is
            anything to scroll, so the pane's content width does not depend on
-           its content HEIGHT. Under `auto` it does — a file short enough to
-           drop the bar widens the pane by a column — and that width is part of
+           its content HEIGHT. Under `auto` it does: a file short enough to
+           drop the bar widens the pane by a column, and that width is part of
            the capture key, so every warmed capture taken at the old width goes
            unreachable in a single navigation. Measured on the real index, the
            width flipped 76 -> 77 mid-session and READY files collapsed 6 -> 1;
@@ -491,7 +491,7 @@ class FNDApp(PlainToastApp):
            rather than by size: changing the gutter re-wraps the document. */
         overflow-y: scroll;
     }
-    /* Class-toggled focus border — :focus-within would re-style every descendant. */
+    /* Class-toggled focus border, :focus-within would re-style every descendant. */
     #preview_pane.-focused { border: round $accent; }
     /* Reading view: drop the border + padding so a full-width terminal
        selection copies only the text, not the frame. Listed after
@@ -516,7 +516,7 @@ class FNDApp(PlainToastApp):
        bar's chrome, not scrolling.
 
        Hidden by COLOUR, not by size. ``scrollbar-size-vertical: 0`` removes
-       the gutter, which changes the pane's content width — so every chunk in
+       the gutter, which changes the pane's content width, so every chunk in
        the document re-wraps, twice per navigation, and the class toggle has to
        restyle the whole subtree to make that happen. Measured, that was the
        single widest restyle in a navigation. Painting the bar in the pane's own
@@ -541,8 +541,8 @@ class FNDApp(PlainToastApp):
     .chunk-first { padding: 1 0 0 0; }
     #placeholder { color: $text-muted; }
     Tree > .tree--label { padding: 0 1; }
-    /* Selected-row highlight: only when the panel actually owns focus
-       — sidebar panels stop showing a stale ``current selection`` band
+    /* Selected-row highlight: only when the panel actually owns focus,
+sidebar panels stop showing a stale ``current selection`` band
        when the user is typing in the query bar or has focus elsewhere. */
     Tree > .tree--cursor { background: transparent; color: $text; }
     Tree:focus-within > .tree--cursor { background: $accent 40%; text-style: bold; }
@@ -555,7 +555,7 @@ class FNDApp(PlainToastApp):
 
     # BINDINGS is built from the action registry at import time so footer
     # hints, help overlay, and runtime keymap all share one source.
-    BINDINGS = [  # noqa: RUF012 — Textual's App.BINDINGS expects a class-level list literal
+    BINDINGS = [  # noqa: RUF012, Textual's App.BINDINGS expects a class-level list literal
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("escape", "escape_back", "Back", show=False),
         Binding("ctrl+shift+d", "diag_dump_preview", "Dump preview widget tree", show=False),
@@ -629,7 +629,7 @@ class FNDApp(PlainToastApp):
         # update-all chain bookkeeping); see fnd/tui/indexer_service.py.
         # The modal reads this through the app's _indexer_* accessors.
         self._indexer = IndexerService(self)
-        # Structured-PDF extras install/uninstall — sibling to the
+        # Structured-PDF extras install/uninstall: sibling to the
         # indexer task so the modal can be dismissed (Background) and
         # reopened against the live task. See
         # fnd/tui/extras_install_progress.py.
@@ -693,17 +693,17 @@ class FNDApp(PlainToastApp):
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
-        # Calm, practical one-liner for malformed queries — collapsed until set.
+        # Calm, practical one-liner for malformed queries: collapsed until set.
         yield PlainStatic("", id="query_notice")
         with Horizontal():
             # Left column: results on top, the outline, then Collections and Filters.
             with Vertical(id="results_column"):
                 yield ResultsTree("Results", id="results_pane")
                 yield OutlineTree("Outline", id="outline_pane")
-                # Single-widget panels — each carries its summary in
+                # Single-widget panels: each carries its summary in
                 # ``border_title``, matching the results-pane styling.
                 # Collections tree uses the plain Tree (expanded
-                # collection rows stay selectable — Enter toggles the
+                # collection rows stay selectable: Enter toggles the
                 # whole collection in/out of scope). Filters tree uses
                 # the skip-expanded-parent subclass so File-type /
                 # Modified headers behave the same as file rows.
@@ -726,7 +726,7 @@ class FNDApp(PlainToastApp):
             with Vertical(id="preview_column"), MatchAwareScroll(id="preview_pane") as pane:
                 pane.fit_edges = self._fit_preview_edges
                 yield PlainStatic("Type a query and press Enter.", id="placeholder")
-        # App-level progress strip — one row, full width, hidden via
+        # App-level progress strip: one row, full width, hidden via
         # ``visibility: hidden`` so the row occupancy is stable across
         # show / hide (no preview reflow). Driven by ``ProgressFacility``.
         yield FNDProgressBar()
@@ -756,7 +756,7 @@ class FNDApp(PlainToastApp):
         border/padding so the frame isn't copied. Toggle to restore."""
         # Hiding the sidebar widens the preview, which re-wraps the content and
         # shifts the scroll position. Read the current reading position and
-        # scroll back to it once the reflow lands — the same regardless of how
+        # scroll back to it once the reflow lands: the same regardless of how
         # the position was reached (match nav or user scroll), so a reader who
         # scrolled away keeps their place rather than snapping back to the match.
         location = self._preview_scroll.locate()
@@ -770,14 +770,14 @@ class FNDApp(PlainToastApp):
         self._apply_mouse_capture(not self._reading_mode)
         if self._reading_mode:
             preview.focus()
-            # Reading View is pure scroll-nav — there are no result-driven
+            # Reading View is pure scroll-nav: there are no result-driven
             # match-jumps here, so the full-document mount (kept for instant
             # in-file jumps in normal preview) buys nothing and just makes the
             # widen-reflow and every subsequent scroll repaint a heavier tree.
             # Drop to the visible window; scroll-driven lazy-mount refills as
             # the reader scrolls. prune_active_to_window is scroll-compensated
             # and flash-free, so the on-screen content stays put. On exit we
-            # leave it windowed — the next match-nav's render_full_doc restores
+            # leave it windowed: the next match-nav's render_full_doc restores
             # the full mount when the results-driven workflow actually needs it.
             self._preview.prune_active_to_window()
         else:
@@ -791,8 +791,8 @@ class FNDApp(PlainToastApp):
         # measured at 37 columns, because it drops the border, the left padding
         # and the bar on top of widening the column. Every capture taken before
         # the toggle is filed under the old width and can never be served, and
-        # coverage starts building a second full set against the same row budget
-        # — so this must invalidate exactly as a terminal resize does. Deferred,
+        # coverage starts building a second full set against the same row budget,
+        # so this must invalidate exactly as a terminal resize does. Deferred,
         # so the width it reads is the one after the reflow rather than before.
         self.call_after_refresh(self._preview.invalidate_captures_on_resize)
         self._refresh_preview_match_indicator()
@@ -802,7 +802,7 @@ class FNDApp(PlainToastApp):
         """A frozen chunk is painting strips cut for a width it no longer has.
 
         Bubbles up from the view because only the view knows: the pane-level
-        resize hook runs before the re-layout. The presenter debounces — a drag
+        resize hook runs before the re-layout. The presenter debounces: a drag
         produces one of these per column per mounted chunk.
         """
         event.stop()
@@ -812,7 +812,7 @@ class FNDApp(PlainToastApp):
         """Stop background work before Textual tears the app down.
 
         Textual's exit drains the message queue, and the preview's background
-        capturing holds the event loop for the length of each build — so a quit
+        capturing holds the event loop for the length of each build, so a quit
         issued mid-capture waits for work whose result is about to be discarded.
         """
         import contextlib
@@ -821,7 +821,7 @@ class FNDApp(PlainToastApp):
             self._preview.stop_background_work()
         # The drainer is a raw `create_task`, so Textual's worker teardown does
         # not know about it. Left running it can pull one more mount job off the
-        # queue while the app is already tearing down — the exact class of work
+        # queue while the app is already tearing down: the exact class of work
         # the line above exists to stop.
         drainer = getattr(self._prefetch, "sink_drainer", None)
         if drainer is not None:
@@ -832,12 +832,12 @@ class FNDApp(PlainToastApp):
             # job returns normally and the drainer loops back to `q.get()` and
             # blocks for ever. An unbounded await then never returns and the app
             # cannot be quit without a kill. Reachable only if
-            # `PREVIEW_CACHE_MAX_FILES` rises above 1 — a tuning constant, which
+            # `PREVIEW_CACHE_MAX_FILES` rises above 1: a tuning constant, which
             # is not a thing to stake "the app can be closed" on.
             #
             # CancelledError is named explicitly: it is a BaseException, so it
-            # lands ON this await and walks straight through `suppress(Exception)`
-            # — taking the stall-watch stop and `super()._on_exit_app()` with it.
+            # lands ON this await and walks straight through `suppress(Exception)`,
+            # taking the stall-watch stop and `super()._on_exit_app()` with it.
             # `suppress` also swallows an OUTER cancel of the teardown itself,
             # which is deliberate: finishing the teardown is the point.
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -882,7 +882,7 @@ class FNDApp(PlainToastApp):
 
             _cache = PdfStructureCache()
             _sentinel = _cache.root / ".keys-migrated"
-            # Only when a cache actually exists — never create the dir for a
+            # Only when a cache actually exists: never create the dir for a
             # fresh user (a freshly-written entry is already tex-vN anyway).
             if _cache.root.exists() and not _sentinel.exists():
                 _migrated, _failed = _cache.promote_current_engine_entries(
@@ -905,7 +905,7 @@ class FNDApp(PlainToastApp):
         try:
             self._search.searcher = Searcher(index_dir=self._index_dir)
         except (FileNotFoundError, RuntimeError):
-            # No index yet — the app still opens so the user can manage
+            # No index yet: the app still opens so the user can manage
             # collections, then reindex outside or from the CLI.
             self._search.searcher = None
         # Before the panel's first paint, or adopted rows flash "not indexed". Only
@@ -915,28 +915,28 @@ class FNDApp(PlainToastApp):
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
-        # Results parents (file rows) are not cursor-selectable when expanded —
+        # Results parents (file rows) are not cursor-selectable when expanded:
         # the cursor bounces past them onto the first hit. See
         # ``_skip_expanded_parent``.
         tree._skip_expanded_parents = True  # type: ignore[attr-defined]
-        # Collections panel — populated from the loaded Config.
+        # Collections panel: populated from the loaded Config.
         ctree = self.query_one("#collections_panel_tree", Tree)
         ctree.show_root = False
         ctree.guide_depth = 2
         # Collections parents stay cursor-selectable so Enter still toggles
         # the whole collection (`_on_collections_panel_selected`).
         ctree._skip_expanded_parents = False  # type: ignore[attr-defined]
-        # Enter must not auto-expand — that fires NodeExpanded and
+        # Enter must not auto-expand: that fires NodeExpanded and
         # persists state the user didn't ask for. Right still expands
         # via action_tree_smart_expand.
         ctree.auto_expand = False
         self._scope.refresh_collections_panel()
-        # Filters panel — kind/date selectors that compose into the query.
+        # Filters panel: kind/date selectors that compose into the query.
         ftree = self.query_one("#filters_panel_tree", Tree)
         ftree.show_root = False
         ftree.guide_depth = 2
         # Filters parents (Modified / Created / Tags headers) are no-ops on
-        # Enter — skip past them when expanded. File-type *category* rows are
+        # Enter: skip past them when expanded. File-type *category* rows are
         # exempt: they toggle, so they stay selectable (see ResultsTree).
         ftree._skip_expanded_parents = True  # type: ignore[attr-defined]
         # Enter must TOGGLE only, never auto-expand the category (left/right do
@@ -952,7 +952,7 @@ class FNDApp(PlainToastApp):
         # Focus the query bar first and let the search take it back: results
         # no longer exist synchronously after ``run()``, so there is nothing to
         # branch on here. ``_refresh_results_tree`` focuses the tree itself once
-        # groups land, and skips that when there are none — the same end state
+        # groups land, and skips that when there are none: the same end state
         # the old ``not self._search.groups`` check produced.
         self.query_one("#query_bar", Input).focus()
         if self._initial_query:
@@ -966,7 +966,7 @@ class FNDApp(PlainToastApp):
             self._indexer.maybe_resume()
         # Pre-upgrade cache entries (PDFs textured on an older extractor
         # version) are surfaced passively in Settings → Indexing & PDF
-        # Texture, not via a startup popup — re-texturising is a
+        # Texture, not via a startup popup: re-texturising is a
         # preview-quality refresh the user opts into, never urgent.
 
     # ── Ranking profile ───────────────────────────────────────────
@@ -1071,7 +1071,7 @@ class FNDApp(PlainToastApp):
     def _current_match_unlocatable(self) -> bool:
         """True when the chunk the preview is showing for the current result
         carries no paintable match. Reads the decoded chunk, not the mounted
-        widgets, so it is settle-independent — the answer is the same before
+        widgets, so it is settle-independent: the answer is the same before
         and after the scroll lands.
 
         Gated on the anchor still being *armed*: the notice describes where the
@@ -1154,7 +1154,7 @@ class FNDApp(PlainToastApp):
         ``"global"`` (when nothing app-relevant is focused, e.g. an
         overlay)."""
         # A background mount task can finalise and refresh the footer
-        # after the app has begun tearing down — at which point the screen
+        # after the app has begun tearing down: at which point the screen
         # stack is empty and ``self.focused`` (→ ``self.screen``) raises
         # ScreenStackError. No screen means no focus context to resolve.
         if not self.screen_stack:
@@ -1181,7 +1181,7 @@ class FNDApp(PlainToastApp):
             node = getattr(node, "parent", None)
         return "global"
 
-    # Anchor cluster — keys that never move regardless of focus. Muscle
+    # Anchor cluster: keys that never move regardless of focus. Muscle
     # memory: search, settings menu, keybindings, quit. Sourced as a
     # tuple-of-tuples so the order is explicit.
     _FOOTER_ANCHORS: tuple[tuple[str, str], tuple[str, str], tuple[str, str], tuple[str, str]] = (
@@ -1191,7 +1191,7 @@ class FNDApp(PlainToastApp):
         ("q", "Quit"),
     )
 
-    # Contextual cluster, keyed by focus context — what's *relevant* in
+    # Contextual cluster, keyed by focus context: what's *relevant* in
     # the pane that has focus right now. Empty list = no contextual hints
     # (anchor cluster alone).
     _FOOTER_CONTEXTUAL: ClassVar[dict[str, tuple[tuple[str, str], ...]]] = {
@@ -1249,11 +1249,11 @@ class FNDApp(PlainToastApp):
             overlay_hint if overlay_hint is not None else self._FOOTER_CONTEXTUAL.get(ctx, ())
         )
         # Reading view focuses the preview, so the per-pane table would hide
-        # the toggle key — surface the exit hint while it's active.
+        # the toggle key: surface the exit hint while it's active.
         if self._reading_mode and overlay_hint is None:
             contextual = (("z", "Reading View"), ("j/k", "Scroll"))
 
-        # Match navigation key hint — shown in the keybinding area (like every
+        # Match navigation key hint: shown in the keybinding area (like every
         # other key) whenever the current preview has matches. The k/N COUNT
         # itself lives on the preview's border, not here. Placed first so it
         # isn't clipped off the crowded footer line. Suppressed in Reading View,
@@ -1283,7 +1283,7 @@ class FNDApp(PlainToastApp):
             self.query_one("#footer_hints", Static).update(render_hint_bar(anchors, contextual))
 
     # Maps a ``_focus_context`` result to the pane id that wears the accent
-    # border. ``query``/``global`` map to nothing — no pane is accented.
+    # border. ``query``/``global`` map to nothing: no pane is accented.
     _FOCUS_BORDER_PANES: ClassVar[dict[str, str]] = {
         "results": "#results_pane",
         "outline": "#outline_pane",
@@ -1311,8 +1311,8 @@ class FNDApp(PlainToastApp):
         terminal blur: Textual clears focus on ``AppBlur`` and only restores it
         on the next keypress, which made every pane's border vanish on tab-away
         and reappear a beat late. We only touch the class on a genuine focus
-        move; ``AppBlur`` fires a descendant *blur*, not focus, so the class —
-        and the border — stays put. ``set_class(update=False)`` + a per-pane
+        move; ``AppBlur`` fires a descendant *blur*, not focus, so the class,
+        and the border, stays put. ``set_class(update=False)`` + a per-pane
         ``stylesheet.apply`` keeps this off the subtree style-walk path."""
         # No screen (teardown mid-quit) → self.query_one would raise
         # ScreenStackError; bail like _focus_context does rather than mask it.
@@ -1405,7 +1405,7 @@ class FNDApp(PlainToastApp):
         # Enter loads the highlighted row even after an Option-scan (which
         # suppressed the per-row load): end scan mode and load it now, so a user
         # can browse with Option then press Enter to mount exactly what they
-        # landed on. (NodeSelected stays unbound from opening the file — see the
+        # landed on. (NodeSelected stays unbound from opening the file: see the
         # note above.) Cancel any armed cooldown timer first so the load fires
         # immediately (leading edge) rather than waiting out the debounce window.
         self._preview._scan_move = False
@@ -1524,7 +1524,7 @@ class FNDApp(PlainToastApp):
         force_fresh: bool = False,
         _bump_seq: bool = True,
     ) -> bool:
-        """Spawn the async indexer task for ``collection`` — see
+        """Spawn the async indexer task for ``collection``: see
         :meth:`IndexerService.start`. Kept as a real app method so
         chain continuations and test patches address the app."""
         return self._indexer.start(
@@ -1668,7 +1668,7 @@ class FNDApp(PlainToastApp):
         from fnd.tui.preview import tuning
 
         # The estimate decodes an uncached file and the app stays live for
-        # all of it, so the query can change before the answer arrives — and
+        # all of it, so the query can change before the answer arrives, and
         # a request made after that reset outlives it.
         asked_under = self._search.query_signature()
         count, chars = await self._preview.full_warm_estimate(group.parent_id)
@@ -1823,7 +1823,7 @@ class FNDApp(PlainToastApp):
         """Recompute the sidebar panels' heights from live content demand.
 
         Coalesced to one pass per frame, so it's safe (and cheap) to call from
-        any change that alters what the panels want to show — a new result set,
+        any change that alters what the panels want to show: a new result set,
         a rebuilt filter/collection list, a section expanding or collapsing, a
         panel collapsing to its header, or a terminal resize. That breadth is
         the point: the split stays responsive to every one of those the way a
@@ -1832,8 +1832,8 @@ class FNDApp(PlainToastApp):
         ``immediate`` runs the reallocation NOW, in the same message handler as
         the change, rather than after the next refresh. Use it when a panel
         toggles its ``collapsed`` class: deferring the reflow leaves the panel
-        drawn at its old (taller) inline height for one frame — visible as a
-        container with side walls but no bottom edge — before it snaps to the
+        drawn at its old (taller) inline height for one frame, visible as a
+        container with side walls but no bottom edge, before it snaps to the
         header box. Doing it inline clears the stale height in the same frame,
         so the collapse/expand is a single clean step. Content-demand reflows
         (new results, section folds) still defer, since their new
@@ -1955,7 +1955,7 @@ class FNDApp(PlainToastApp):
             parent = node.parent
             # tree.root is a hidden virtual root; treat it as "no parent".
             if parent is None or parent is tree.root:
-                # Top of the tree, already collapsed — collapse the
+                # Top of the tree, already collapsed: collapse the
                 # entire panel to its header strip.
                 self._collapse_panel_frame(frame)
                 return
@@ -2020,7 +2020,7 @@ class FNDApp(PlainToastApp):
         self._move_cursor_to_first_child(tree, node)
 
     def action_tree_expand_all_children(self) -> None:
-        """Expand the focused node and reveal its whole subtree — the node plus
+        """Expand the focused node and reveal its whole subtree: the node plus
         every descendant. Works in every focusable sidebar tree (results,
         collections, filters)."""
         tree = self._focused_tree()
@@ -2079,7 +2079,7 @@ class FNDApp(PlainToastApp):
 
     def action_tree_collapse_all_children(self) -> None:
         """Collapse the focused node's *children* (each child and its subtree),
-        leaving the node itself open. Only the descendants fold away — the row
+        leaving the node itself open. Only the descendants fold away: the row
         you're on stays put, so this tidies a deep subtree without backing out
         of it (use the plain Left arrow to collapse the node itself)."""
         tree = self._focused_tree()
@@ -2100,7 +2100,7 @@ class FNDApp(PlainToastApp):
         the freshly-revealed children still carry a stale ``_line`` of -1.
         Going through ``move_cursor(child)`` then sets ``cursor_line`` to -1,
         which the skip-expanded-parents validator clamps to 0 and walks into
-        a jump to the first file — visible when the rebuild is delayed (e.g.
+        a jump to the first file: visible when the rebuild is delayed (e.g.
         the preview pane is mid full-mount). ``move_cursor_to_line`` forces
         the rebuild (it reads ``_tree_lines``) and the first child always
         sits one row below its parent, so the move is correct synchronously.
@@ -2117,13 +2117,13 @@ class FNDApp(PlainToastApp):
     @on(ResultsTree.ReopenRequested)
     def _on_results_reopen_requested(self, ev: ResultsTree.ReopenRequested) -> None:
         """A click on a collapsed-to-header panel reopens it and expands the
-        clicked result — the ``Right``-arrow reopen (``action_tree_smart_expand``)
+        clicked result: the ``Right``-arrow reopen (``action_tree_smart_expand``)
         for the mouse, surfacing the specific row the user pointed at rather
         than toggling a node hidden behind the collapsed height."""
         tree = ev.tree
-        # The collapse state lives on the panel frame — the tree itself for the
+        # The collapse state lives on the panel frame: the tree itself for the
         # results/collections panels, but the #filters_pane wrapper for the
-        # filters tree — so resolve it the same way the keyboard reopen does.
+        # filters tree, so resolve it the same way the keyboard reopen does.
         if not self._reopen_panel_frame(tree):
             return
         node = ev.node
@@ -2163,7 +2163,7 @@ class FNDApp(PlainToastApp):
     @property
     def _effective_match_spec(self) -> MatchSpec:
         """The MatchSpec the renderers should consult. Falls back to an
-        empty spec when the user has toggled highlights off — the
+        empty spec when the user has toggled highlights off: the
         preview pane then renders the plain document with no yellow /
         orange overlays and no scrollbar match markers."""
         return self._search.match_spec if self._search.highlights_enabled else MatchSpec()
@@ -2174,7 +2174,7 @@ class FNDApp(PlainToastApp):
         match (:mod:`fnd.tui.match_evidence`).
 
         Same as :meth:`_effective_match_spec` but without AUTO-fuzzy. Painting
-        is deliberately generous — a query for "test" highlights "best" and
+        is deliberately generous: a query for "test" highlights "best" and
         "rest" at edit distance 1 so a typo still lands somewhere. Those are not
         evidence: judging visibility by them reported "your match is here" over
         a paragraph containing nothing the user typed, which is precisely the
@@ -2192,7 +2192,7 @@ class FNDApp(PlainToastApp):
         self._search.search_as_typed()
 
     def action_nav_next_match(self) -> None:
-        # Reading View is pure scroll-nav — no result-driven match jumps there.
+        # Reading View is pure scroll-nav: no result-driven match jumps there.
         if self._reading_mode:
             return
         self._match_nav.next()
@@ -2288,7 +2288,7 @@ class FNDApp(PlainToastApp):
         self._scope.on_filter_branch_collapsed(ev)
 
     # A section (branch) folding open or closed in any sidebar tree changes how
-    # many rows that panel wants — reflow so the shares track it live.
+    # many rows that panel wants: reflow so the shares track it live.
     _SIDEBAR_TREE_IDS: ClassVar[frozenset[str]] = frozenset(
         {"results_pane", "collections_panel_tree", "filters_panel_tree"}
     )
@@ -2339,7 +2339,7 @@ class FNDApp(PlainToastApp):
         handler (back one level / dismiss form). This action only fires
         when the main app screen is on top.
         """
-        # Step 1 — dismiss in-app overlay if present.
+        # Step 1: dismiss in-app overlay if present.
         dismissed = False
         for selector in ("#explain_overlay", "#multi_panel"):
             for w in self.query(selector):
@@ -2348,13 +2348,13 @@ class FNDApp(PlainToastApp):
         if dismissed:
             return
 
-        # Step 1.5 — in reading view, Esc returns to the normal app
+        # Step 1.5: in reading view, Esc returns to the normal app
         # (restore the sidebar) rather than cascading focus.
         if self._reading_mode:
             self.action_toggle_reading_mode()
             return
 
-        # Step 2 — cascade focus toward the results pane.
+        # Step 2: cascade focus toward the results pane.
         ctx = self._focus_context()
         if ctx in ("query", "preview", "outline", "filters", "collections"):
             import contextlib
@@ -2368,7 +2368,7 @@ class FNDApp(PlainToastApp):
         ``?`` always pushes Keybindings ON TOP of whatever screen the
         user is currently on so ``Esc`` from Keybindings returns them
         to exactly that screen (a sub-menu, the source-edit form, the
-        Open-with modal — wherever they invoked ``?``). The previous
+        Open-with modal: wherever they invoked ``?``). The previous
         behaviour popped the entire settings stack first, which
         dropped users back to the main app and made ``?`` useless as a
         "what can I do here?" affordance.
@@ -2406,7 +2406,7 @@ class FNDApp(PlainToastApp):
         # If we're inside the Settings stack, the relevant section
         # depends on which screen the user is on. SourceFormScreen
         # has its own static section; SettingsScreen catches the rest
-        # (Preferences / Collections / Keybindings sub-screens — the
+        # (Preferences / Collections / Keybindings sub-screens: the
         # SettingsList widget bindings apply across all of them).
         current = self.screen
         if isinstance(current, FilterBrowserScreen):
@@ -2416,7 +2416,7 @@ class FNDApp(PlainToastApp):
         if isinstance(current, SettingsScreen):
             return "Settings menu"
 
-        # Main app — pick by the focused pane.
+        # Main app: pick by the focused pane.
         focused = self.focused
         widget = focused
         while widget is not None:
@@ -2442,7 +2442,7 @@ class FNDApp(PlainToastApp):
         Mirrors the help-overlay style: a Vertical with an embedded
         Markdown widget rendering the SearchTrace as a fenced ``json``
         block. The trace covers the entire search call, not just the
-        focused hit — focused-hit details are visible in the trace's
+        focused hit: focused-hit details are visible in the trace's
         per-hit ``contributions`` list.
         """
         existing = self.query("#explain_overlay")

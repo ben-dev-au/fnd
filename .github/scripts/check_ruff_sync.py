@@ -37,7 +37,7 @@ def main() -> int:
 
     if hook != locked:
         print(
-            f"::error::ruff drift — .pre-commit-config.yaml pins v{hook}, uv.lock resolves {locked}"
+            f"::error::ruff drift, .pre-commit-config.yaml pins v{hook}, uv.lock resolves {locked}"
         )
         print(
             "\nThe hook and CI must run the same ruff. Drift means the hook "

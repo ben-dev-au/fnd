@@ -76,7 +76,7 @@ async def test_delete_modal_confirm_removes_source_and_lands_above(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """After confirming, both the DeleteSourceScreen and the now-stale
-    SourceFormScreen pop — the user lands on the screen they were on
+    SourceFormScreen pop: the user lands on the screen they were on
     before opening the form (not the main app)."""
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
@@ -106,7 +106,7 @@ async def test_delete_modal_confirm_removes_source_and_lands_above(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._config = load()
-        sentinel = app.screen  # main screen — pop target after delete
+        sentinel = app.screen  # main screen: pop target after delete
         app.push_screen(SourceFormScreen(collection_name="probe", source_index=1))
         await pilot.pause()
         await pilot.press("ctrl+d")

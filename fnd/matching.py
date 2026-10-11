@@ -1,7 +1,7 @@
 """Shared match semantics for the search and highlight pipelines.
 
 The cascade fuzzy pass (`fnd.cascade._fuzzy_pass`) widens a query
-into "any indexed stem within edit distance N of a query stem" — same
+into "any indexed stem within edit distance N of a query stem": same
 shape as Lucene's ``MultiTermQuery`` rewrite. The preview highlighter
 needs to mark every word that *would* have caused a hit so the user
 sees why a chunk surfaced (literal exact, fuzzy variant, or synonym
@@ -10,14 +10,14 @@ notion of "matches" can never drift.
 
 Public surface:
 
-* :class:`MatchSpec` — frozen carrier for the per-query match data.
-* :func:`MatchSpec.from_query` — factory that pre-stems the query
+* :class:`MatchSpec`, frozen carrier for the per-query match data.
+* :func:`MatchSpec.from_query`, factory that pre-stems the query
   terms, applies optional synonym expansion, and per-stem assigns the
   Lucene-AUTO fuzzy distance.
-* :func:`word_matches` — predicate evaluated on each rendered word.
-* :func:`auto_fuzzy_distance` — exposed for cascade so it picks the
+* :func:`word_matches`, predicate evaluated on each rendered word.
+* :func:`auto_fuzzy_distance`, exposed for cascade so it picks the
   same per-term distance bound the highlighter uses.
-* :func:`levenshtein_within` — capped edit distance with early exit.
+* :func:`levenshtein_within`, capped edit distance with early exit.
 """
 
 from __future__ import annotations
@@ -36,12 +36,12 @@ from fnd.query_spans import literal_spans, map_outside
 from fnd.stopwords import STOPWORDS, is_all_stopwords
 from fnd.synonyms import SynonymTable, expand
 
-# Canonical doc-text word scanner — the single source of truth for how every
+# Canonical doc-text word scanner: the single source of truth for how every
 # match/highlight surface tokenises document text. ``fnd_text`` (the F_BODY
 # analyser) splits on EVERY non-alphanumeric char, INCLUDING underscore, so an
 # identifier like ``recursive_directory_iterator`` is indexed as three tokens
 # and a search for ``iterator`` finds it. A plain ``\w+`` keeps underscore, so
-# it would see one token that fails to stem-match ``iterator`` — the match is
+# it would see one token that fails to stem-match ``iterator``: the match is
 # found but goes unhighlighted. ``[^\W_]`` is "word char except underscore"
 # (Unicode letters/digits intact), the complement of the ``[\W_]+`` split
 # fnd/query_compile.py already uses to mirror the analyzer. Route all doc-text
@@ -58,11 +58,11 @@ _QUOTED_PHRASE = re.compile(r'"([^"]*)"')
 _HL_REGEX = re.compile(r"^/(.+)/$")
 _HL_GLOB = re.compile(r"[*?]")
 
-# Boolean operators are query structure, not content — they must never become
+# Boolean operators are query structure, not content: they must never become
 # highlight terms or consume a colour slot.
 _BOOL_KEYWORDS = frozenset({"AND", "OR", "NOT"})
 # A field qualifier (``kind:pdf``, ``c:notes``, ``title:x``) is a filter, not a
-# body term — its value must not highlight or spend a colour slot.
+# body term; its value must not highlight or spend a colour slot.
 _FIELD_QUALIFIER_RE = re.compile(r"^[A-Za-z_]\w*:")
 # ``~N`` fuzzy / ``^boost`` modifiers. Stripped when deriving plain terms and
 # colour slots (so ``mitochondira~1`` doesn't light up a bare ``1``), but KEPT in
@@ -181,7 +181,7 @@ def _phrase_word_lists(query: str) -> list[list[str]]:
 
 
 def _strip_quoted_spans(query: str) -> str:
-    """Query with quoted-phrase contents removed — leaves only loose terms."""
+    """Query with quoted-phrase contents removed: leaves only loose terms."""
     return _QUOTED_PHRASE.sub(" ", query)
 
 
@@ -327,7 +327,7 @@ class MatchSpec:
     * The stems of every plain-word query term (``_terms_from_query``
       output, as the index analyses them).
     * Stems of every synonym variant the SynonymTable would expand
-      those terms into — so a query for "k8s" highlights "kubernetes"
+      those terms into, so a query for "k8s" highlights "kubernetes"
       in the doc.
 
     ``fuzzy_per_stem`` lists ``(stem, max_distance)`` pairs for every
@@ -347,7 +347,7 @@ class MatchSpec:
     fuzzy_per_stem: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     raw_terms: tuple[str, ...] = field(default_factory=tuple)
     # Original glob tokens (``discoun*``, ``cr*to``, ``*graph``, ``gr?y``) and
-    # literal ``/regex/`` patterns, matched against the stemmed doc word — so
+    # literal ``/regex/`` patterns, matched against the stemmed doc word, so
     # wildcard, regex, and glob matches highlight the same words the search
     # surfaced. The glob tokens are kept verbatim (not pre-compiled) so the
     # highlighter can colour literal chars yellow and wildcard-filled chars
@@ -365,8 +365,8 @@ class MatchSpec:
     # "and") doesn't light up document-wide.
     phrases: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
     # Proximity groups: ``((member, …), slop)`` per ``{N}`` / ``NEAR/N`` / typed
-    # ``"a b"~N`` operator (slop > 0). A member is a stem, or — when the user
-    # wrote a wildcard (``{6}respons* mobile``) — the raw glob, matched against
+    # ``"a b"~N`` operator (slop > 0). A member is a stem, or, when the user
+    # wrote a wildcard (``{6}respons* mobile``), the raw glob, matched against
     # the token stem exactly as :func:`word_matches` does. Members ALSO live in
     # ``exact_stems`` / ``wildcards``; the slop only governs which occurrences
     # highlight at full vs dim strength (see :func:`proximity_tier_indices`).
@@ -397,7 +397,7 @@ class MatchSpec:
         cascade pass does. ``min_term_chars`` is the post-stem floor
         below which auto-fuzzy is suppressed. Per-term ``~N`` modifiers
         in the query always produce fuzzy pairs, regardless of either
-        knob — explicit user opt-in overrides the safety net.
+        knob: explicit user opt-in overrides the safety net.
 
         Imports :func:`fnd.render._terms_from_query` lazily to avoid
         a render-side dependency on the parser (render already
@@ -415,7 +415,7 @@ class MatchSpec:
 
         # Proximity groups. Reuse the DSL's own expansion so ``{N} a b``,
         # ``a NEAR/N b`` and a typed ``"a b"~N`` all resolve to the same
-        # ``"…"~N`` form the matcher sees — no drift. A group is a phrase with
+        # ``"…"~N`` form the matcher sees: no drift. A group is a phrase with
         # slop > 0; its words also feed the loose term set below so every
         # occurrence is found (proximity only splits full vs dim at render time).
         # Globs and regexes match folded index tokens, so fold their accents too.
@@ -435,7 +435,7 @@ class MatchSpec:
         # kept out of the loose (document-wide) term set, so only the
         # unquoted remainder drives word-by-word highlighting. A typed
         # ``"a b"~N`` (slop > 0) is a proximity group, not a contiguous phrase,
-        # so strip those spans before extracting phrases — but keep ``"a b"~0``
+        # so strip those spans before extracting phrases, but keep ``"a b"~0``
         # (slop 0 == contiguous) and any separately-typed unsloped ``"a b"`` even
         # when a proximity group happens to share its terms.
         contiguous_src = _PROX_PHRASE.sub(
@@ -448,12 +448,12 @@ class MatchSpec:
         )
         # Loose terms come from the EXPANDED query so ``{N}``/``NEAR/N`` aliases
         # are already rewritten to ``"…"~N`` (then stripped as quoted spans, with
-        # their words re-supplied via ``prox_words`` below) — identical handling
+        # their words re-supplied via ``prox_words`` below): identical handling
         # to a typed ``"a b"~N``, and the alias's ``{N}`` digits never leak into
         # term/colour parsing.
         loose_query = _strip_quoted_spans(expanded_query)
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
-        # fold it back into the loose terms — otherwise it's stripped above and
+        # fold it back into the loose terms, otherwise it's stripped above and
         # never highlights, despite the search surfacing it. "Single word" means a
         # single DOC_WORD_RE token, matching how _phrase_word_lists splits: a
         # quoted underscore identifier ("recursive_directory_iterator") is a
@@ -472,7 +472,7 @@ class MatchSpec:
         if single_quoted:
             loose_query = f"{loose_query} {' '.join(single_quoted)}".strip()
         # Fold proximity-group words into the loose run so they flow through the
-        # normal term / exact-stem / colour machinery — their quoted ``"…"~N``
+        # normal term / exact-stem / colour machinery: their quoted ``"…"~N``
         # span was stripped from ``loose_query`` above. Duplicates dedupe
         # downstream. Tokens below the split point are the free ones.
         free_token_count = len(loose_query.split())
@@ -487,7 +487,7 @@ class MatchSpec:
         # (``+``/``-`` prefixes, surrounding parens/quotes, ``^boost``) is stripped
         # before classifying so a grouped/boosted token like ``(discoun*`` is
         # recognised as the wildcard it is; field qualifiers and prohibited
-        # (``-x`` / ``NOT x``) terms are dropped entirely — neither should light up.
+        # (``-x`` / ``NOT x``) terms are dropped entirely, neither should light up.
         wildcards: list[str] = []
         regexes: list[str] = []
         plain_tokens: list[str] = []
@@ -498,7 +498,7 @@ class MatchSpec:
         skip_depth = 0  # >0 while inside a skipped NOT-/-/field-scoped group
         for tok_index, tok in enumerate(loose_query.split()):
             is_free = tok_index < free_token_count
-            if skip_depth > 0:  # inside a skipped group — track until it closes
+            if skip_depth > 0:  # inside a skipped group: track until it closes
                 skip_depth = max(0, skip_depth + tok.count("(") - tok.count(")"))
                 continue
             if tok == "NOT":  # excludes the following token or group
@@ -512,7 +512,7 @@ class MatchSpec:
             # token so the explicit-fuzzy pass below can still read them.
             cleaned = tok.lstrip("+-").strip("()'\"")
             is_field = bool(_FIELD_QUALIFIER_RE.match(cleaned))
-            # An open ``NOT (…)`` / ``-(…)`` / ``field:(…)`` group — none of its
+            # An open ``NOT (…)`` / ``-(…)`` / ``field:(…)`` group, none of its
             # contents are body highlight terms; skip until it closes.
             if tok.count("(") > tok.count(")") and (negated or is_field):
                 skip_depth = tok.count("(") - tok.count(")")
@@ -525,7 +525,7 @@ class MatchSpec:
             key = re.sub(r"(?:~\d*|\^[\d.]+)+$", "", cleaned)
             rm = _HL_REGEX.match(key)
             if rm:
-                # Keep the pattern verbatim — lowercasing would corrupt syntax
+                # Keep the pattern verbatim: lowercasing would corrupt syntax
                 # (``\D``→``\d``, ``\B``→``\b``, named groups). Case-insensitivity
                 # is applied at match time (the doc word is already lowercased).
                 regexes.append(rm.group(1))
@@ -583,7 +583,7 @@ class MatchSpec:
                     if t:
                         raw.add(t.lower())
                         exact.add(index_token(t))
-        # Explicit per-term ~N — always honoured (user opt-in).
+        # Explicit per-term ~N: always honoured (user opt-in).
         explicit_pairs: dict[str, int] = {}
         for term, dist in _terms_with_fuzzy(loose_query):
             if dist is None or dist <= 0:
@@ -609,8 +609,8 @@ class MatchSpec:
         order: list[tuple[str, str, int]] = []
         seen: set[tuple[str, str]] = set()
         # A quoted phrase renders in the single phrase colour (slot 0). Reserve
-        # that slot so the loose terms around it get distinct *following* colours
-        # — e.g. `"defence in depth" OR diverse` → phrase yellow, diverse cyan.
+        # that slot so the loose terms around it get distinct *following* colours:
+        # e.g. `"defence in depth" OR diverse` → phrase yellow, diverse cyan.
         # The sentinel never matches a word in ``match_color`` (it ignores the
         # "phrase" kind); it only occupies the index.
         if multicolour and quoted_word_lists:
@@ -736,7 +736,7 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
 
 
 def match_color(word: str, spec: MatchSpec) -> int:
-    """Colour slot of the first ordered query term ``word`` matches — so each
+    """Colour slot of the first ordered query term ``word`` matches, so each
     distinct term in a multi-word query highlights in its own colour. Returns 0
     (the default yellow slot) when no ordered term matches (e.g. a synonym
     variant, or an empty ``order``)."""
@@ -886,7 +886,7 @@ def proximity_qualifying_indices(
     ``group`` is ``((member, …), slop)``. A window of tokens qualifies when all
     ``n`` distinct group members appear within a token span ``<= slop + (n - 1)``
     (Tantivy's in-order slop bound; order is ignored, so this is a slight
-    superset of the matcher — fine for a dim/full split). Returns the indices of
+    superset of the matcher: fine for a dim/full split). Returns the indices of
     every group-member occurrence that falls inside at least one such window."""
     positions, n = _group_member_positions(stems_by_token, group[0])
     return _qualifying_from_positions(positions, n, group[1])
@@ -932,7 +932,7 @@ def glob_match_mask(word: str, glob: str) -> list[bool] | None:
     """For ``word`` matched by a wildcard ``glob``, one bool per char: True where
     the char aligns to a LITERAL glob char (a "match"), False where ``*``/``?``
     filled it (a wildcard "variance"). None when the surface word doesn't fully
-    match the glob (e.g. stemming dropped a suffix) — caller falls back to a
+    match the glob (e.g. stemming dropped a suffix): caller falls back to a
     whole-word highlight."""
     folded = fold(word).lower()
     if len(folded) != len(word):
@@ -953,12 +953,12 @@ def align_doc_word(doc_word: str, query_word: str) -> list[bool]:
 
     Returns one ``bool`` per char of ``doc_word``: ``True`` when that
     char aligns to an identical char in ``query_word`` (a "match"
-    character), ``False`` otherwise (substitution or insertion — the
+    character), ``False`` otherwise (substitution or insertion; the
     doc has a char the query didn't have, or a different char in its
     place). Deletions on the query side don't produce a doc char and
     are silently absorbed.
 
-    Comparison is case-insensitive — case differences alone don't
+    Comparison is case-insensitive: case differences alone don't
     count as mismatches.
     """
     a = fold(query_word).lower()
@@ -1000,16 +1000,16 @@ def align_doc_word(doc_word: str, query_word: str) -> list[bool]:
             i -= 1
             j -= 1
         elif i > 0 and j > 0 and dp[i][j] == dp[i - 1][j - 1] + 1:
-            # Substitution — doc has a different char at this position.
+            # Substitution: doc has a different char at this position.
             matches[j - 1] = False
             i -= 1
             j -= 1
         elif j > 0 and dp[i][j] == dp[i][j - 1] + 1:
-            # Insertion — doc has an extra char the query didn't.
+            # Insertion: doc has an extra char the query didn't.
             matches[j - 1] = False
             j -= 1
         elif i > 0:
-            # Deletion — query had a char missing from doc; nothing to
+            # Deletion: query had a char missing from doc; nothing to
             # paint on the doc side.
             i -= 1
         else:

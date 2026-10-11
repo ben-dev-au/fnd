@@ -71,7 +71,7 @@ def test_strong_signal_fires_for_unambiguous_keyword(cfg: Config, unambiguous_in
 def test_strong_signal_does_not_fire_for_ambiguous_query(
     cfg: Config, unambiguous_index: Path
 ) -> None:
-    """A common word spread across many docs — bypass must NOT fire;
+    """A common word spread across many docs: bypass must NOT fire;
     fusion runs as default."""
     from fnd.fusion import (
         STRONG_SIGNAL_MIN_NORM_GAP,
@@ -95,7 +95,7 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
     # Bypass must not fire: regime is fusion (or cascade if extremely sparse).
     assert trace.regime != "strong-signal"
     assert trace.strong_signal.fired is False
-    # Probe directly — gap should be tight, normalized top score modest.
+    # Probe directly: gap should be tight, normalized top score modest.
     probe = searcher._candidates(
         "note filler", window=100, collection="notes", metadata_filter=None
     ).hits
@@ -109,7 +109,7 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
 
 
 def test_intent_disables_strong_signal_bypass(cfg: Config, unambiguous_index: Path) -> None:
-    """Same unambiguous query, but with intent supplied — bypass must
+    """Same unambiguous query, but with intent supplied: bypass must
     be disabled, fusion runs."""
     from fnd.layered import _evaluate_strong_signal, search_layered
     from fnd.query import Searcher
@@ -147,7 +147,7 @@ def test_normalise_bm25_monotone_and_bounded() -> None:
     assert normalise_bm25(-5.0) == 0.0  # negative scores clamped to 0
     assert 0.0 < normalise_bm25(0.1) < 1.0
     assert normalise_bm25(1.0) == pytest.approx(0.5)
-    # Monotone — higher input → higher output
+    # Monotone: higher input → higher output
     assert normalise_bm25(0.5) < normalise_bm25(1.5) < normalise_bm25(5.0)
-    # Asymptote — large values approach but never reach 1
+    # Asymptote: large values approach but never reach 1
     assert 0.99 < normalise_bm25(100.0) < 1.0

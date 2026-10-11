@@ -7,7 +7,7 @@ the real TUI in a terminal exposed either one:
   truncated it at the border on every row that had one;
 * the preview's border notice was refreshed only when the ▲/▼ counts changed
   or the document re-mounted. Stepping between section rows of the same file
-  does neither — and a chunk with no match doesn't scroll — so the border kept
+  does neither, and a chunk with no match doesn't scroll, so the border kept
   showing the previous row's state.
 
 These tests pin the reachability, not the computation (which

@@ -19,7 +19,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_pressing_key_in_keybindings_invokes_action(built_index: Path) -> None:
-    """Spec: Keybindings › Press-key-to-invoke — pressing a listed key
+    """Spec: Keybindings › Press-key-to-invoke, pressing a listed key
     dispatches the action and closes the settings stack."""
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
@@ -61,7 +61,7 @@ async def test_pressing_key_while_search_focused_does_not_invoke(built_index: Pa
 
 
 def test_drill_summary_mode_default_and_validation() -> None:
-    """Spec: Drill-cue preference — defaults to always_show; validates set."""
+    """Spec: Drill-cue preference, defaults to always_show; validates set."""
     from pydantic import ValidationError
 
     from fnd.config import Defaults
@@ -83,7 +83,7 @@ def test_drill_summary_mode_default_and_validation() -> None:
 async def test_drill_mode_always_ellipsis(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: Drill-cue preference — `always_ellipsis` mode renders `…`
+    """Spec: Drill-cue preference, `always_ellipsis` mode renders `…`
     instead of content summaries."""
     from fnd.config import write_setting
 

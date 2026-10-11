@@ -2,7 +2,7 @@
 
 ``Widget.remove()`` is asynchronous. ``App._prune`` posts a ``Prune`` message and
 flags ``_pruning``; the widget keeps a live ``.parent`` and still turns up in
-``app.query()`` until that message is processed — and when it is, ``on_prune``
+``app.query()`` until that message is processed, and when it is, ``on_prune``
 closes the widget's message loop and detaches it. So between the two there is a
 window where a container looks perfectly healthy but is doomed.
 
@@ -10,7 +10,7 @@ Every previous guard in this subsystem tested ``parent is None`` ("already
 detached"), which is blind to that window. The consequence, reproduced by
 ``dev/tools/preview_blank_fuzz.py``: ``dispatch_mount`` sweeps stranded
 containers with ``.remove()`` and then, a few lines later in the same
-synchronous block, re-scans the DOM for an adoptable container — and adopts the
+synchronous block, re-scans the DOM for an adoptable container, and adopts the
 very one it just condemned. Because that container still reports a parent, the
 mount skips its ``pane.mount()`` and simply builds into it and makes it
 ``self.active``; the queued ``Prune`` then detaches it. Result: ``active``
@@ -73,12 +73,12 @@ async def _quiesce_pane(app: FNDApp, pilot: object) -> None:
 async def test_dispatch_never_adopts_a_container_it_just_condemned(built_index: Path) -> None:
     """The stranded-container sweep and the DOM-scan adopt run in the same
     synchronous block. The sweep must not be able to hand the adopt a widget it
-    has already condemned — the mount would build into a doomed container and
+    has already condemned: the mount would build into a doomed container and
     strand ``active`` on a detached widget (permanent blank pane)."""
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
         preview = app._preview
         g, chunks = _structural_group(app)
         query_sig = app._search.query_signature()
@@ -97,8 +97,8 @@ async def test_dispatch_never_adopts_a_container_it_just_condemned(built_index: 
         preview.active = None
         preview.chunk_cache[g.parent_id] = chunks
         await safe_pause(pilot)
-        assert stray.parent is not None, "setup — stray is mounted"
-        assert not stray._pruning, "setup — stray is not condemned"
+        assert stray.parent is not None, "setup: stray is mounted"
+        assert not stray._pruning, "setup: stray is not condemned"
 
         mounted_on: list[PreviewContainer] = []
         orig = preview._mount_chunks_async
@@ -116,7 +116,7 @@ async def test_dispatch_never_adopts_a_container_it_just_condemned(built_index: 
         adopted = mounted_on[0] if mounted_on else None
         assert adopted is not None, "dispatch should have started a mount"
         assert not adopted._pruning, (
-            "dispatch adopted a container whose Prune is already queued — the "
+            "dispatch adopted a container whose Prune is already queued: the "
             "mount will build into a widget that is about to be torn out of the DOM"
         )
 
@@ -150,8 +150,8 @@ async def test_condemned_cache_entry_is_a_miss(built_index: Path) -> None:
         await app.query_one("#preview_pane").mount(doomed)
         await safe_pause(pilot)
         doomed.remove()  # queued, not yet processed
-        assert doomed.parent is not None, "setup — still attached"
-        assert doomed._pruning, "setup — removal is queued (condemned)"
+        assert doomed.parent is not None, "setup: still attached"
+        assert doomed._pruning, "setup: removal is queued (condemned)"
 
         preview.active = None
         preview.chunk_cache[g.parent_id] = chunks
@@ -193,8 +193,8 @@ async def test_already_active_fast_path_skipped_when_active_is_condemned(
         await app.query_one("#preview_pane").mount(doomed)
         await safe_pause(pilot)
         doomed.remove()
-        assert doomed.parent is not None, "setup — still attached"
-        assert doomed._pruning, "setup — removal is queued (condemned)"
+        assert doomed.parent is not None, "setup: still attached"
+        assert doomed._pruning, "setup: removal is queued (condemned)"
         preview.active = doomed
         preview.chunk_cache[g.parent_id] = chunks
 
@@ -216,7 +216,7 @@ async def test_already_active_fast_path_skipped_when_active_is_condemned(
 @pytest.mark.asyncio
 async def test_mount_finally_does_not_cache_a_condemned_container(built_index: Path) -> None:
     """The mount's ``finally`` refuses to cache a *detached* container. A
-    condemned one is equally dead — caching it hands the next visit a hit on a
+    condemned one is equally dead: caching it hands the next visit a hit on a
     widget that is being torn down."""
     import asyncio
     import contextlib
@@ -257,13 +257,13 @@ async def test_mount_finally_does_not_cache_a_condemned_container(built_index: P
         )
         preview.mount_task = task
         await safe_pause(pilot)
-        assert container.parent is not None, "setup — parked mount has the container mounted"
+        assert container.parent is not None, "setup: parked mount has the container mounted"
 
         # Condemn it mid-flight, then release + cancel so the finally runs while
         # the Prune is still only queued.
         container.remove()
-        assert container.parent is not None, "setup — still attached in flight"
-        assert container._pruning, "setup — condemned in flight"
+        assert container.parent is not None, "setup: still attached in flight"
+        assert container._pruning, "setup: condemned in flight"
         task.cancel()
         gate.set()
         with contextlib.suppress(asyncio.CancelledError):

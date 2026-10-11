@@ -1,6 +1,6 @@
 """Number<->word synonym groups (cardinals + ordinals).
 
-`4` matches `four`, `1st` matches `first`, bidirectionally — but a number
+`4` matches `four`, `1st` matches `first`, bidirectionally, but a number
 inside a user's quoted phrase stays literal (the exact-match request wins).
 """
 

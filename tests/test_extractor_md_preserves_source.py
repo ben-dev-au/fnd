@@ -2,7 +2,7 @@
 
 Pre-fix the extractor only kept ``h1..h6`` and ``p`` blocks; tables,
 nested lists, blockquotes, and fenced code blocks were either flattened
-to ``p`` or — in the case of code-only sections — silently dropped from
+to ``p`` or, in the case of code-only sections, silently dropped from
 the index. ``body_md`` carries the verbatim section source so the
 preview renderer can pass it to the Textual Markdown widget without any
 lossy reconstruction.
@@ -23,8 +23,8 @@ def _write(tmp_path: Path, body: str) -> Path:
 
 
 def test_body_md_round_trips_table_source(tmp_path: Path) -> None:
-    """A markdown table survives extraction verbatim — same pipes,
-    same alignment row — so the preview renderer can hand it straight
+    """A markdown table survives extraction verbatim (same pipes,
+    same alignment row) so the preview renderer can hand it straight
     to Textual's Markdown widget."""
     body = textwrap.dedent(
         """\
@@ -125,8 +125,8 @@ def test_blockquote_round_trips(tmp_path: Path) -> None:
 
 
 def test_heading_path_unchanged(tmp_path: Path) -> None:
-    """``heading_path`` is built from the heading stack inline text —
-    not from the new line-map slice — so adding ``body_md`` mustn't
+    """``heading_path`` is built from the heading stack inline text,
+    not from the new line-map slice, so adding ``body_md`` mustn't
     change sidebar locator labels."""
     body = textwrap.dedent(
         """\
@@ -149,7 +149,7 @@ def test_heading_path_unchanged(tmp_path: Path) -> None:
 
 
 def test_body_struct_remains_plain_text_for_snippets(tmp_path: Path) -> None:
-    """``body_struct`` Block list stays as plain-text blocks — snippets
+    """``body_struct`` Block list stays as plain-text blocks: snippets
     must not show literal markdown markers like ``**bold**``."""
     body = textwrap.dedent(
         """\
@@ -162,7 +162,7 @@ def test_body_struct_remains_plain_text_for_snippets(tmp_path: Path) -> None:
     assert len(chunks) == 1
     block_texts = [b.text for b in chunks[0].body_struct]
     # Inline tokens preserve markdown markers in their content (markdown-it
-    # behaviour) — that's fine because snippets show what the user typed.
+    # behaviour): that's fine because snippets show what the user typed.
     # The key invariant is that body_struct is *not* the preview renderer's
     # source; body_md is. Either presentation reads as expected English.
     assert any("bold" in t for t in block_texts)

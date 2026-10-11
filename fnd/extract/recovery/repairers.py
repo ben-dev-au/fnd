@@ -12,10 +12,10 @@ _REPLACEMENT = "�"
 
 # The letter runs a ligature glyph can stand for. The repairer recovers
 # the exact dropped letters from the flat layer (so it isn't tied to this
-# corpus's ff/fi/fl), but the recovered run must be an actual ligature —
+# corpus's ff/fi/fl), but the recovered run must be an actual ligature,
 # otherwise a skeleton like "_ows" would match "allows" (gap "all") as
 # readily as "flows" (gap "fl"). This is the full Unicode ligature set
-# (FB00–FB06) plus the extended f-ligatures real text fonts ship; extend it
+# (FB00: FB06) plus the extended f-ligatures real text fonts ship; extend it
 # if a font surfaces another. Compared case-insensitively.
 _LIGATURES = frozenset(
     {
@@ -23,7 +23,7 @@ _LIGATURES = frozenset(
         "fi",
         "fl",
         "ffi",
-        "ffl",  # Unicode FB00–FB04 (the common case)
+        "ffl",  # Unicode FB00: FB04 (the common case)
         "st",
         "ct",  # FB05/FB06 (long-s t, st) and old-style ct
         "ft",
@@ -46,7 +46,7 @@ _GAP = rf"(\w{{{_MIN_GAP},{_MAX_GAP}}})"
 
 # A word run carrying at least one U+FFFD AND at least one real word char,
 # so a bare standalone U+FFFD (a non-ligature unmapped glyph) is never a
-# match — repair only ever fires inside a word.
+# match: repair only ever fires inside a word.
 _BROKEN_WORD_RE = re.compile(
     rf"\w+{_REPLACEMENT}[\w{_REPLACEMENT}]*|{_REPLACEMENT}[\w{_REPLACEMENT}]*\w+"
 )
@@ -63,7 +63,7 @@ class LigatureRepairer:
 
     Each U+FFFD stands for a ligature glyph the font couldn't map. The flat
     layer resolves those glyphs, so the repairer treats the broken token as
-    a skeleton — literal letters around one or more gaps — and looks for the
+    a skeleton, literal letters around one or more gaps, and looks for the
     single flat-layer word that fits, where each gap is a real ligature (see
     ``_LIGATURES``). It recovers the exact dropped letters rather than
     brute-forcing a fixed list, so it handles any ligature in that set while
@@ -73,7 +73,7 @@ class LigatureRepairer:
 
     Repair never guesses. A bare U+FFFD, a token with no fitting flat word,
     or an ambiguous skeleton (more than one distinct flat word fits) is left
-    untouched — so a hard case is dropped, never corrupted. The true word is
+    untouched, so a hard case is dropped, never corrupted. The true word is
     always present in the flat layer (same page), so a unique fit is always
     the right word.
     """
@@ -104,7 +104,7 @@ class LigatureRepairer:
                 continue  # a skeleton twin whose gap isn't a ligature (allows vs flows)
             seen.add(candidate.lower())
             if len(seen) > 1:
-                return word  # two genuine ligature fits — refuse to guess
+                return word  # two genuine ligature fits: refuse to guess
             if match is None:
                 match = m
         if match is None:

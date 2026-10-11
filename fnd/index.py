@@ -72,7 +72,7 @@ def _commit_is_retryable(exc: BaseException) -> bool:
 
     The prefix is what makes this safe, not the Win32 text: a store-write
     refusal (``Failed to open file for write:``) prints the same
-    ``Access is denied.`` and leaves the writer DEAD — measured, every later
+    ``Access is denied.`` and leaves the writer DEAD, measured, every later
     commit then returns success and discards its documents in silence."""
     text = str(exc)
     if not text.startswith("An IO error occurred:"):
@@ -118,7 +118,7 @@ def commit(writer: IndexWriter) -> None:
 
 
 async def commit_async(writer: IndexWriter) -> None:
-    """:func:`commit` for the async runner — yields the loop between attempts."""
+    """:func:`commit` for the async runner, yields the loop between attempts."""
     import asyncio
 
     for delay in _commit_attempts(writer):
@@ -143,8 +143,8 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
        on mismatch we either raise (default) or wipe the dir (``force=True``).
     2. Tantivy itself stores the schema in ``meta.json`` and rejects any
        constructor call whose schema doesn't match the on-disk segments.
-       Both gates can disagree — e.g. if a prior rebuild bumped the
-       sidecar but crashed before Tantivy wrote new segments — so we
+       Both gates can disagree: e.g. if a prior rebuild bumped the
+       sidecar but crashed before Tantivy wrote new segments, so we
        also retry on Tantivy's ``ValueError`` when ``force=True``,
        wiping and re-opening with a fresh schema.
     """
@@ -169,7 +169,7 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
     try:
         return register(Index(schema, path=str(index_dir)))
     except ValueError as e:
-        # Tantivy's "Schema error: ... does not match" — the sidecar said
+        # Tantivy's "Schema error: ... does not match": the sidecar said
         # OK but Tantivy disagrees (e.g. recovery from a half-completed
         # rebuild). With force=True we wipe and retry once; otherwise we
         # surface a clearer recovery instruction.

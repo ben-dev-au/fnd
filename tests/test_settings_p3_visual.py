@@ -11,7 +11,7 @@ from tests._pilot_wait import settings_ready, wait_until
 
 
 def test_indexer_filetypes_exposed_and_complete() -> None:
-    """Spec: Add Collection wizard › Includes — file types come from a
+    """Spec: Add Collection wizard › Includes, file types come from a
     single source of truth, not hardcoded in two places."""
     from fnd.config import INDEXER_FILETYPES
     from fnd.kinds import ALL_KIND_IDS
@@ -33,7 +33,7 @@ def test_indexer_filetypes_exposed_and_complete() -> None:
 
 
 def test_f3_no_longer_in_keymap() -> None:
-    """Spec: Locked decisions — F3 dropped."""
+    """Spec: Locked decisions, F3 dropped."""
     from fnd.tui.actions import load_keymap
 
     keymap = load_keymap()
@@ -43,12 +43,12 @@ def test_f3_no_longer_in_keymap() -> None:
 
 
 def test_detail_strip_renders_description_and_metadata() -> None:
-    """Spec: Visual system › Detail strip — 2 lines, description then
+    """Spec: Visual system › Detail strip, 2 lines, description then
     metadata in $text-muted."""
     from fnd.tui.widgets.detail_strip import DetailStrip
 
     strip = DetailStrip()
-    strip._description = "Result limit (1–1000) — max results returned per query."
+    strip._description = "Result limit (1 to 1000): max results returned per query."
     strip._metadata = "Stored in defaults.result_limit · Applies on next search"
     rendered = strip._render_lines()
     assert len(rendered) == 2
@@ -57,7 +57,7 @@ def test_detail_strip_renders_description_and_metadata() -> None:
 
 
 def test_row_with_key_renders_bracketed_accent() -> None:
-    """Spec: Visual system › Key style — bracketed `[o]` accent."""
+    """Spec: Visual system › Key style, bracketed `[o]` accent."""
     from fnd.tui.menu import KIND_ACTION, MenuItem
     from fnd.tui.settings_screen import _render_row
 
@@ -75,7 +75,7 @@ def test_row_with_key_renders_bracketed_accent() -> None:
 
 
 def test_root_container_hugs_content() -> None:
-    """Spec: Visual system › Container — height: auto, not 1fr."""
+    """Spec: Visual system › Container, height: auto, not 1fr."""
     from fnd.tui.settings_screen import SettingsScreen
 
     css = SettingsScreen.CSS
@@ -98,7 +98,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_root_rows_show_trailing_summaries(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: IA › Root — every drill row shows what's inside (always_show mode)."""
+    """Spec: IA › Root, every drill row shows what's inside (always_show mode)."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
@@ -128,7 +128,7 @@ async def test_root_rows_show_trailing_summaries(
 async def test_collection_row_shows_source_count_and_ranking(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: IA › Collections sub-screen — each collection row's trailing
+    """Spec: IA › Collections sub-screen, each collection row's trailing
     shows source count and `ranking:<profile>` with scope dot prefix."""
     from fnd.config import (
         CollectionConfig,
@@ -168,7 +168,7 @@ async def test_collection_row_shows_source_count_and_ranking(
 async def test_source_row_shows_filetypes_and_path_warning(
     tmp_path: Path, built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: IA › Sources sub-screen — source rows show file-types and
+    """Spec: IA › Sources sub-screen, source rows show file-types and
     `⚠ path not found` when the path no longer resolves."""
     from fnd.config import (
         CollectionConfig,
@@ -212,7 +212,7 @@ async def test_source_row_shows_filetypes_and_path_warning(
 
 @pytest.mark.asyncio
 async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
-    """Spec: Visual system › Detail strip — populates on focus change."""
+    """Spec: Visual system › Detail strip, populates on focus change."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
     from fnd.tui.widgets.detail_strip import DetailStrip
@@ -248,7 +248,7 @@ async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
 async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
     built_index: Path,
 ) -> None:
-    """Spec: Hint bar — append `Shift+⏎ Reveal` when row supports reveal."""
+    """Spec: Hint bar, append `Shift+⏎ Reveal` when row supports reveal."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
@@ -267,7 +267,7 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
         idx = next(i for i, it in enumerate(lst._items) if it.id == "root.open_config_file")
         lst.cursor_index = idx
         await pilot.pause()
-        # Assert on the resolved cluster (the actual logic) — Static.render
+        # Assert on the resolved cluster (the actual logic): Static.render
         # in the test pilot doesn't always reflect the last .update() call.
         cluster = screen._hint_cluster()
         labels = [label for _, label in cluster]
@@ -278,7 +278,7 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
 
 @pytest.mark.asyncio
 async def test_hint_bar_keybindings_variant(built_index: Path) -> None:
-    """Spec: Hint bar — Keybindings screen shows `⏎ Run · [key] Run directly · Esc Back`."""
+    """Spec: Hint bar, Keybindings screen shows `⏎ Run · [key] Run directly · Esc Back`."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
@@ -300,7 +300,7 @@ async def test_hint_bar_keybindings_variant(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_hint_bar_search_focused_variant(built_index: Path) -> None:
-    """Spec: Hint bar — Search input focused shows results / open-first / clear hints."""
+    """Spec: Hint bar, Search input focused shows results / open-first / clear hints."""
     from textual.widgets import Input
 
     from fnd.tui import FNDApp
@@ -361,7 +361,7 @@ async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
-    """Spec: Use case A4 — version visible at the bottom of the root menu."""
+    """Spec: Use case A4, version visible at the bottom of the root menu."""
     from textual.widgets import Static
 
     from fnd import __version__
@@ -382,7 +382,7 @@ async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_subscreen_omits_version_status(built_index: Path) -> None:
-    """Sub-screens don't carry the version line — only the root does."""
+    """Sub-screens don't carry the version line: only the root does."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsScreen
 
@@ -410,7 +410,7 @@ async def test_preferences_refreshes_trailing_after_picker_pops(
 ) -> None:
     """Regression: drilling into a KIND_PICKER setting (e.g. Drill row
     summaries) commits the new value via the picker, which pops. The
-    parent SettingsScreen must re-render its trailings on resume —
+    parent SettingsScreen must re-render its trailings on resume,
     otherwise the user sees the old value until they leave and return."""
     from fnd.tui import FNDApp
     from fnd.tui.menu import SECTION_PREFERENCES
@@ -460,7 +460,7 @@ async def test_preferences_refreshes_trailing_after_picker_pops(
 @pytest.mark.asyncio
 async def test_on_reindex_complete_swaps_searcher(fixtures_dir: Path, tmp_index_dir: Path) -> None:
     """Regression: after a reindex finishes the in-memory Searcher must
-    be rebuilt — otherwise the captured ``self._index.searcher()`` keeps
+    be rebuilt, otherwise the captured ``self._index.searcher()`` keeps
     returning hits from the pre-rebuild generation and the user sees zero
     results until they restart the app."""
     from fnd.index import build_index
@@ -475,7 +475,7 @@ async def test_on_reindex_complete_swaps_searcher(fixtures_dir: Path, tmp_index_
         app._indexer.on_reindex_complete()
         assert app._search.searcher is not None
         assert app._search.searcher is not original, (
-            "Searcher instance was not replaced — stale searcher would keep "
+            "Searcher instance was not replaced: stale searcher would keep "
             "querying the pre-rebuild index generation"
         )
 
@@ -524,7 +524,7 @@ async def test_on_screen_resume_rebuilds_items_from_provider(
         before_ids = [it.id for it in lst._items]
         # Simulate a child screen mutating config: append a second source.
         cfg.collections["default"].sources.append(SourceConfig(path=_Path(str(tmp_path))))
-        # Fire on_screen_resume directly — equivalent to a child popping.
+        # Fire on_screen_resume directly: equivalent to a child popping.
         screen.on_screen_resume()
         await pilot.pause()
         after_ids = [it.id for it in lst._items]
@@ -615,7 +615,7 @@ async def test_collections_sidebar_toggle_preserves_cursor(
         await pilot.pause()
         cursor_before = tree.cursor_line
         assert cursor_before > 0, "expected cursor to land on a non-root row"
-        # Fire the selection directly — Tree.action_select_cursor in
+        # Fire the selection directly: Tree.action_select_cursor in
         # headless tests doesn't always post NodeSelected via the focus
         # path. Posting the message exercises the real handler.
         tree.post_message(Tree.NodeSelected(bravo))
@@ -634,7 +634,7 @@ async def test_cursor_move_does_not_call_render_all(
     fixtures_dir: Path, tmp_index_dir: Path
 ) -> None:
     """Regression / perf: arrow-key cursor movement must NOT call
-    SettingsList._render_all — that path rebuilds every row's Rich
+    SettingsList._render_all: that path rebuilds every row's Rich
     Text and was the dominant per-keystroke cost on long lists like
     Keybindings."""
     from fnd.index import build_index
@@ -671,7 +671,7 @@ async def test_cursor_move_does_not_call_render_all(
         assert counter["n"] == baseline, (
             f"watch_cursor_index called _render_all "
             f"{counter['n'] - baseline} times across 10 cursor moves; "
-            "should be zero — only -cursor class toggles, no row rerenders"
+            "should be zero: only -cursor class toggles, no row rerenders"
         )
 
 

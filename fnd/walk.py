@@ -1,20 +1,20 @@
-"""Filesystem walker — yield supported files under a collection's roots.
+"""Filesystem walker: yield supported files under a collection's roots.
 
 Includes/excludes precedence:
 
 1. A path is in scope only if it lives under one of ``roots``.
 2. If ``includes`` is set, the path must match at least one ``includes`` glob.
-3. If the path matches **any** ``excludes`` glob, it is dropped — even if it
+3. If the path matches **any** ``excludes`` glob, it is dropped, even if it
    matched an ``includes``.
 4. Hidden files (``.foo``) are excluded by default. Only an include glob that
    names a dot-prefixed component admits one, and only the paths that glob
    itself matches; ``**/*.md`` alongside it does not widen the exception.
 5. Symlinks are followed only if ``follow_symlinks = True``. This applies in
    two places:
-   - The collection root itself — if the user-supplied ``root`` is a symlink,
+   - The collection root itself, if the user-supplied ``root`` is a symlink,
      it is refused unless ``follow_symlinks=True``. This blocks a hostile
      config (or a typo) from pointing fnd at ``/etc`` via a symlinked root.
-   - Each file inside the tree — symlinked files are skipped when the flag is
+   - Each file inside the tree: symlinked files are skipped when the flag is
      off. Directory symlinks are not recursed into (we pass
      ``recurse_symlinks=False`` to ``Path.rglob`` rather than relying on the
      Python 3.13 default).
@@ -88,7 +88,7 @@ def walk(
 ) -> Iterator[Path]:
     """Yield supported files under ``roots`` in deterministic order.
 
-    ``skip_dirs`` is a set of directory basenames pruned at descent — any
+    ``skip_dirs`` is a set of directory basenames pruned at descent: any
     directory whose ``name`` is in the set is not entered. Default is
     :data:`fnd.config.DEFAULT_JUNK_DIRS` so callers that don't pass this
     parameter get the expected developer-junk prune. Pass ``frozenset()``
@@ -187,12 +187,12 @@ def _scandir_walk(
     """DFS via ``os.scandir`` so excluded directories aren't descended.
 
     Children are sorted by name within each directory so traversal order
-    is deterministic and stable across platforms — the legacy ``rglob``
+    is deterministic and stable across platforms: the legacy ``rglob``
     relied on the filesystem's ordering, which is good enough for the
     indexer but causes flaky tests when the order leaks into assertions.
     """
     # An index directory used directly as a scan root would otherwise have its
-    # internals (Tantivy meta.json, the schema sidecar, …) yielded — the
+    # internals (Tantivy meta.json, the schema sidecar, …) yielded: the
     # per-child guard below only catches index dirs *nested* under the root.
     # Ignore files apply from the source root downwards; see ancestor_stack.
     base = ancestor_stack(root, ignore_names)
@@ -246,7 +246,7 @@ def _scandir_walk(
                 if name in skip_dirs:
                     continue
                 # Never descend into an fnd index directory (identified by its
-                # schema-version sidecar) — otherwise the walker would index
+                # schema-version sidecar), otherwise the walker would index
                 # fnd's own internals (e.g. the Tantivy meta.json) when an
                 # index lives inside a scanned corpus.
                 if _is_index_dir(entry.path):
@@ -269,7 +269,7 @@ def _scandir_walk(
             if not follow_symlinks and is_symlink:
                 continue
             # Suffix check uses the basename string so we skip Path()
-            # allocation for files that can't be indexed anyway — a
+            # allocation for files that can't be indexed anyway: a
             # measurable win on trees with many out-of-scope files
             # (icons, lockfiles, …) sitting next to in-scope ones.
             dot = name.rfind(".")
@@ -281,8 +281,8 @@ def _scandir_walk(
                 rel = entry_path.relative_to(root)
             except ValueError:
                 continue
-            # ``as_posix`` (not ``str``) so include/exclude globs — which are
-            # always ``/``-delimited — match on Windows, where ``str(Path)``
+            # ``as_posix`` (not ``str``) so include/exclude globs, which are
+            # always ``/``-delimited: match on Windows, where ``str(Path)``
             # would yield backslash separators and never match.
             rel_str = rel.as_posix()
 

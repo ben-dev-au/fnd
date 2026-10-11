@@ -79,7 +79,7 @@ async def test_clear_filters_resets_every_filter(cfg: Config, idx: Path) -> None
 
 @pytest.mark.asyncio
 async def test_clear_filters_leaves_scope_untouched(cfg: Config, idx: Path) -> None:
-    """Collections/sources are scope, not filters — clear must not touch them."""
+    """Collections/sources are scope, not filters: clear must not touch them."""
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()

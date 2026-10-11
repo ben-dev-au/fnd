@@ -52,7 +52,7 @@ def test_default_keymap_includes_every_action_with_default_key() -> None:
     for a in REGISTRY:
         if a.default_key is not None:
             # ``default_key`` may list several keys (comma-separated); each must
-            # land in the keymap (see load_keymap — one action, multiple keys).
+            # land in the keymap (see load_keymap: one action, multiple keys).
             for key in (k.strip() for k in a.default_key.split(",")):
                 assert km.bindings.get(key) == a.id, f"action {a.id} default key {key!r} missing"
 
@@ -127,12 +127,12 @@ async def test_open_command_palette_pushes_settings_menu(built_index: Path) -> N
         app.action_open_command_palette()
         await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
-        # Reachable root — the menu's top level shows every section.
+        # Reachable root: the menu's top level shows every section.
         assert app.screen._breadcrumb == ()
         # Second press closes the stack.
         app.action_open_command_palette()
         # This press CLOSES the stack, so wait for it to go rather than for a
-        # list to populate — the same action toggles both ways.
+        # list to populate: the same action toggles both ways.
         await wait_until(
             pilot,
             lambda: not isinstance(app.screen, SettingsScreen),
@@ -181,7 +181,7 @@ async def test_root_menu_search_is_cross_section(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_show_help_pushes_keybindings_subscreen(built_index: Path) -> None:
-    """`?` pushes the Keybindings sub-screen directly — one Esc returns
+    """`?` pushes the Keybindings sub-screen directly: one Esc returns
     to the main app."""
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 

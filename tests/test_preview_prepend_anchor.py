@@ -1,15 +1,15 @@
 """Absorbing a prepend without painting the document at the wrong offset.
 
 Mounting chunks ABOVE the viewport pushes everything below them down. Correcting
-for that after a settled layout paints frames at the wrong offset first —
+for that after a settled layout paints frames at the wrong offset first:
 measured at 19 of 21 frames during a fill; correcting before it clamps against a
 virtual size that has not grown and lands short. The pane compensates as the
 layout lands instead.
 
 Anchored on a widget rather than counting the height change: only content
 ABOVE the anchor moves it, so a background fill appending BELOW is correctly
-ignored, and a prepend that arrives in instalments — built chunks resolve their
-heights over successive layouts — is absorbed in full. The claim is signed: a
+ignored, and a prepend that arrives in instalments, built chunks resolve their
+heights over successive layouts, is absorbed in full. The claim is signed: a
 prune removing chunks above the reader moves them by exactly the same rule.
 """
 
@@ -210,7 +210,7 @@ async def test_a_chunk_claim_absorbs_a_prepend_in_its_container() -> None:
         await pilot.pause()
 
         assert pane.scroll_y == 160, (
-            f"scroll_y {pane.scroll_y} — a 60-row prepend above the claimed chunk "
+            f"scroll_y {pane.scroll_y}: a 60-row prepend above the claimed chunk "
             f"was not absorbed, so the reader was pushed down by it"
         )
 
@@ -218,7 +218,7 @@ async def test_a_chunk_claim_absorbs_a_prepend_in_its_container() -> None:
 @pytest.mark.asyncio
 async def test_a_block_claim_cannot_see_that_prepend() -> None:
     """``virtual_region`` is measured against the immediate parent, so a claim on
-    a block inside the chunk is inert — the reason the swap does not use one."""
+    a block inside the chunk is inert: the reason the swap does not use one."""
     app = _NestedApp()
     async with app.run_test(size=(80, 24)) as pilot:
         pane, _chunk, block = await _nested(pilot, app)
@@ -229,7 +229,7 @@ async def test_a_block_claim_cannot_see_that_prepend() -> None:
         await pilot.pause()
 
         assert pane.scroll_y == 100, (
-            f"scroll_y {pane.scroll_y} — a block-level claim moved the pane, so the "
+            f"scroll_y {pane.scroll_y}: a block-level claim moved the pane, so the "
             f"coordinate space this test pins has changed"
         )
 
@@ -285,14 +285,14 @@ async def test_a_swap_leaves_the_claim_on_a_chunk_of_the_revealed_file(
         assert isinstance(container, PreviewContainer)
         assert claimed.parent is container, (
             f"claim sits on {type(claimed).__name__} whose parent is "
-            f"{type(claimed.parent).__name__} — only a direct child of the container "
+            f"{type(claimed.parent).__name__}: only a direct child of the container "
             f"moves when a prepend lands, so this claim is inert"
         )
 
 
 @pytest.mark.asyncio
 async def test_a_claim_on_content_that_left_the_layout_is_dropped_not_absorbed() -> None:
-    """``virtual_region`` reports ``Region()`` — y=0, no exception — for a widget
+    """``virtual_region`` reports ``Region()`` (y=0, no exception) for a widget
     whose ancestor is ``display: none``. Read as movement, that scrolls the pane
     backwards by the stored offset: measured 117-187 rows on a real swap."""
     app = _NestedApp()
@@ -312,7 +312,7 @@ async def test_a_claim_on_content_that_left_the_layout_is_dropped_not_absorbed()
 
         assert pane.absorb_anchor is None, "a claim on content out of the layout was kept"
         assert pane.scroll_y == before, (
-            f"scroll_y {pane.scroll_y} (was {before}) — the pane moved for content "
+            f"scroll_y {pane.scroll_y} (was {before}): the pane moved for content "
             f"that is no longer laid out"
         )
 
@@ -352,7 +352,7 @@ async def test_no_frame_paints_the_document_at_the_uncorrected_offset(
 
         assert painted, "no frame was painted, so this proves nothing"
         assert set(painted) == {settled}, (
-            f"the anchor painted at {sorted(set(painted))} — a 60-row prepend reached "
+            f"the anchor painted at {sorted(set(painted))}: a 60-row prepend reached "
             f"the screen before the scroll absorbing it, so the document moved under "
             f"the reader for a frame (it sits at {settled})"
         )
@@ -386,7 +386,7 @@ async def test_a_prepend_past_the_old_end_of_the_document_is_absorbed_in_full() 
         await pilot.pause()
 
         assert pane.scroll_y == before + 100, (
-            f"scroll_y {pane.scroll_y}, wanted {before + 100} — a 100-row prepend was "
+            f"scroll_y {pane.scroll_y}, wanted {before + 100}: a 100-row prepend was "
             f"clamped against the document size it was about to replace"
         )
 
@@ -396,7 +396,7 @@ async def test_a_claim_is_measured_against_its_container_not_the_pane() -> None:
     """``absorb_anchor`` is seeded from ``virtual_region.y``, which Textual
     measures against the immediate PARENT, so the row the absorb compares it
     against has to be parent-relative too. Measuring from the pane adds the
-    container's own offset to every delta — invisible while one container is
+    container's own offset to every delta: invisible while one container is
     mounted at y=0, and wrong for the whole staging window, which is the only
     time a second one exists.
     """
@@ -441,6 +441,6 @@ async def test_a_claim_is_measured_against_its_container_not_the_pane() -> None:
         await pilot.pause()
 
         assert pane.scroll_y == before + 20, (
-            f"scroll moved {pane.scroll_y - before} for a 20-row prepend — the "
+            f"scroll moved {pane.scroll_y - before} for a 20-row prepend: the "
             f"container's own offset ({incoming.virtual_region.y}) leaked into the delta"
         )

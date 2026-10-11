@@ -10,7 +10,7 @@ The line buffer collapses all of that to **one** widget. Its content
 is a list of pre-rendered :class:`rich.text.Text` objects (one per
 line), converted to :class:`textual.strip.Strip` once at build time
 and stored. ``render_line`` returns the cached strip for the current
-viewport row — Textual's line API only paints the visible viewport,
+viewport row: Textual's line API only paints the visible viewport,
 so the rendering cost is bounded by the terminal height (~50 rows),
 not the document size.
 
@@ -22,7 +22,7 @@ Design notes:
   line-precise positions so they're accurate for files with mixed
   chunk sizes (the old chunk-uniform mapping was off for any chunk
   bigger or smaller than average).
-* The widget is a thin ScrollView subclass — selection across lines
+* The widget is a thin ScrollView subclass: selection across lines
   becomes a single bounding-box operation (``ALLOW_SELECT = True``)
   so multi-line copy starts working too.
 * Building a FileView is independent of mounting the widget. The
@@ -88,7 +88,7 @@ class FileView:
     # top" when the sidebar resolves a section click.
     first_hit_line_in_chunk: dict[int, int] = field(default_factory=dict)
     # All line indices that contain at least one match. Drives the
-    # scrollbar marker map directly — every entry is a line position,
+    # scrollbar marker map directly: every entry is a line position,
     # so marker accuracy is bounded by terminal-cell resolution, not
     # chunk granularity.
     match_lines: set[int] = field(default_factory=set)
@@ -105,7 +105,7 @@ class FileView:
 
 
 # Match-spans are now styled tuples: ``(byte_start, byte_end, style)``.
-# The previous 2-tuple form (start, end) is still accepted — a missing
+# The previous 2-tuple form (start, end) is still accepted: a missing
 # style is taken to mean ``"bold"`` so legacy tests continue to pass.
 MatchSpan = tuple[int, int] | tuple[int, int, str]
 
@@ -140,7 +140,7 @@ def build_file_view(
         (e.g. ``"black on #ffd866"``). 2-tuples default to bold so
         existing callers / tests don't need to change.
 
-    Match highlights are **word-level only** — the lines themselves
+    Match highlights are **word-level only**: the lines themselves
     are not tinted. The widget's row-level overlays remain available
     via component classes for the focused-chunk band, but a row
     containing a match does NOT get a full-row background by default.
@@ -149,7 +149,7 @@ def build_file_view(
     chunks so the user can see where chunks split. The gap row belongs
     to the *following* chunk for offset-mapping purposes.
 
-    Pure function — no widget mounting, no Textual side-effects.
+    Pure function: no widget mounting, no Textual side-effects.
     """
     fv = FileView()
     for nth, (chunk_id, chunk_text, match_spans) in enumerate(chunks):
@@ -163,7 +163,7 @@ def build_file_view(
             cursor += len(raw_line) + 1  # +1 for the dropped \n
         chunk_first_match: int | None = None  # first FULL (qualifying) match line
         chunk_first_dim: int | None = None  # fallback: a dim-only proximity line
-        # Per-line list of (local_start, local_end, style) — preserves
+        # Per-line list of (local_start, local_end, style): preserves
         # styles per span so each matched word can render with its own
         # colour (e.g. fuzzy matches differ from exact matches).
         local_styled_offsets: list[list[tuple[int, int, str]]] = [[] for _ in line_offsets]
@@ -255,17 +255,17 @@ class LineBufferPreview(StripDocumentView):
 
     Public surface (the only methods the host app should call):
 
-    * :meth:`set_file_view` — install a fresh FileView. Recomputes the
+    * :meth:`set_file_view`, install a fresh FileView. Recomputes the
       virtual size and the cached Strips. Cheap to call when the query
       changes, since the cost is O(lines) and there's no DOM churn.
-    * :meth:`scroll_to_line` — jump to a specific line index, with an
+    * :meth:`scroll_to_line`, jump to a specific line index, with an
       optional ``center=True`` to put the line mid-viewport rather
       than at the top.
-    * :meth:`scroll_to_chunk` — convenience: scroll to a chunk by id,
+    * :meth:`scroll_to_chunk`, convenience: scroll to a chunk by id,
       optionally to the chunk's first matched line.
-    * :meth:`set_focused_chunk` — paint a stronger accent band over
+    * :meth:`set_focused_chunk`, paint a stronger accent band over
       the focused chunk's lines. Pass ``None`` to clear.
-    * :attr:`match_lines` — the sorted set of line indices the
+    * :attr:`match_lines`; the sorted set of line indices the
       scrollbar renderer maps for feature 6 accuracy.
     """
 
@@ -327,7 +327,7 @@ class LineBufferPreview(StripDocumentView):
             return False
         # Pass the width through. `_rebuild_strips` otherwise re-reads
         # `self.size`, which on the `on_resize` path is not guaranteed to hold
-        # the width the event just reported — so the guard would compare against
+        # the width the event just reported, so the guard would compare against
         # one value and the wrap be cut at another.
         self._rebuild_strips(width=width)
         return True
@@ -351,7 +351,7 @@ class LineBufferPreview(StripDocumentView):
         return self._fv.first_hit_line_in_chunk.get(chunk_id)
 
     def top_address(self) -> int | None:
-        """The logical (pre-wrap) line at the viewport top — exact across a
+        """The logical (pre-wrap) line at the viewport top: exact across a
         width reflow, which a visual row would not be."""
         if not self._visual_to_logical:
             return None
@@ -464,8 +464,8 @@ class LineBufferPreview(StripDocumentView):
     def set_wrap(self, enabled: bool) -> None:
         """Toggle viewport-width line wrapping. Rebuilds cached Strips
         when the mode changes so the next paint reflects the new layout
-        immediately (the alternative — wrapping lazily inside
-        ``render_line`` — would re-wrap on every keystroke)."""
+        immediately (the alternative: wrapping lazily inside
+        ``render_line``, would re-wrap on every keystroke)."""
         if self._wrap == enabled:
             return
         self._wrap = enabled
@@ -581,7 +581,7 @@ class LineBufferPreview(StripDocumentView):
 
         ``on_progress`` is called with the number of lines walked so far, every
         :data:`_PROGRESS_EVERY` lines. This is the only real unit of work the
-        flat path exposes — everything else about it is one opaque call — so
+        flat path exposes, everything else about it is one opaque call, so
         the progress line reads it rather than estimating a duration it cannot
         predict. Off by default and free when unset.
         """

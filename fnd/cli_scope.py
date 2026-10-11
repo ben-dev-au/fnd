@@ -9,7 +9,7 @@ print them all and exit.
 The rule that makes this safe: :meth:`FilterIssues.resolve` hands back the
 correction it would apply, and :func:`resolve_or_exit` only lets a command
 proceed when every recorded problem was correctable *and* confirmed. So a
-caller can use the returned values directly — by the time it runs, they're
+caller can use the returned values directly: by the time it runs, they're
 either the user's own or ones the user accepted.
 """
 
@@ -75,12 +75,12 @@ class FilterIssues:
         return err.correction or raw
 
     def add(self, err: UnknownFilterValueError) -> None:
-        """Record an issue the caller built itself — a scope that is missing
+        """Record an issue the caller built itself: a scope that is missing
         rather than misspelt, say. Reported and offered like any other."""
         self._issues.append(err)
 
     def check(self, vocab: Vocabulary, raw: str, *, flag: str | None = None) -> None:
-        """Record ``raw`` if it isn't legal, handing nothing back — for values
+        """Record ``raw`` if it isn't legal, handing nothing back: for values
         the CLI reports but has nothing to carry forward from."""
         if vocab.match(raw) is None:
             self._issues.append(vocab.unknown(raw, flag=flag))
@@ -102,7 +102,7 @@ class FilterIssues:
         if not known and not unknown:
             # Separator-only input ("," / ", ,") names nothing at all. Callers
             # read an empty list as "unscoped", so staying quiet here would
-            # widen the search to every collection — the exact failure this
+            # widen the search to every collection: the exact failure this
             # module exists to prevent.
             self._issues.append(vocab.unknown(raw, flag=flag))
         return list(dict.fromkeys(known))
@@ -120,8 +120,8 @@ def _collection_names(
     A config with no collections skips the *name* check: there's nothing to
     compare against, and an ad-hoc ``fnd index --collection`` name would be
     indistinguishable from a typo. It still has to name something, and it is
-    still comma-split — an unvalidated value is not an unparsed one. (The TUI
-    can't scope to such a name either way — see the note in
+    still comma-split: an unvalidated value is not an unparsed one. (The TUI
+    can't scope to such a name either way: see the note in
     ScopeController._valid_collection_names.)
     """
     if raw is None:
@@ -134,7 +134,7 @@ def _collection_names(
     if not names:
         # `-c ""` / `-c " "` (usually an unset shell variable) or `-c ","`.
         # Names nothing, so treating it as "no flag" would silently search
-        # everything — the failure this module exists to prevent.
+        # everything: the failure this module exists to prevent.
         issues.check(collection_vocabulary(config), raw, flag=flag)
     return names
 
@@ -158,7 +158,7 @@ def resolve_launch_collection(
     *,
     flag: str = "--collection",
 ) -> str | None:
-    """The same value as the TUI wants it — one string.
+    """The same value as the TUI wants it: one string.
 
     ``all`` passes through untouched: the sidebar expands it against the live
     config, and collapsing it to None here would read as "no flag given" and
@@ -184,7 +184,7 @@ def resolve_or_exit(issues: FilterIssues, *, is_tty: bool | None = None) -> None
     # A query token is reported but never rewritten: silently editing text the
     # user typed is more surprising than correcting a flag, and the message
     # already names the exact edit. One unfixable problem also cancels the
-    # offer for the rest — accepting would still leave a broken command.
+    # offer for the rest: accepting would still leave a broken command.
     fixable = [e for e in problems if e.flag is not None and e.correction is not None]
     all_fixable = len(fixable) == len(problems)
     if not all_fixable or not _interactive(is_tty):
@@ -226,5 +226,5 @@ def _describe(err: UnknownFilterValueError) -> str:
 def _interactive(is_tty: bool | None) -> bool:
     if is_tty is not None:
         return is_tty
-    # Allow tests to force the TTY path — same escape hatch as fnd.migrate.
+    # Allow tests to force the TTY path: same escape hatch as fnd.migrate.
     return True if os.environ.get("_FND_FORCE_TTY") == "1" else sys.stdin.isatty()

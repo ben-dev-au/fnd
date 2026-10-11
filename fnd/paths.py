@@ -1,18 +1,18 @@
-"""Filesystem locations — the single source of truth for every per-user
+"""Filesystem locations: the single source of truth for every per-user
 directory fnd reads or writes.
 
 All app state lives under two roots resolved by ``platformdirs``:
 
-* :func:`app_data_dir` — durable state (index, config, reindex-resume,
+* :func:`app_data_dir`, durable state (index, config, reindex-resume,
   keybindings, dismissed markers, calibration logs).
-* :func:`app_cache_dir` — recomputable caches (PDF structure, seen-log,
+* :func:`app_cache_dir`, recomputable caches (PDF structure, seen-log,
   worker stderr).
 
 Both pass ``appauthor=False`` so the two roots stay siblings on Windows
 (``%LOCALAPPDATA%\\fnd\\…``). Passing it inconsistently splits app data
 across ``…\\fnd\\`` and ``…\\fnd\\fnd\\``; on macOS/Linux ``appauthor`` is
 ignored, so the split only appears on Windows. Every helper below is a pure
-function — no directory is created here; callers create what they need
+function: no directory is created here; callers create what they need
 (often via :func:`fnd._perms.secure_mkdir`).
 """
 

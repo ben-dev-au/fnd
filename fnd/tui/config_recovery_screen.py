@@ -1,6 +1,6 @@
 """Config recovery flow.
 
-Shown when ``fnd.config.load()`` raises at TUI startup — i.e. when the
+Shown when ``fnd.config.load()`` raises at TUI startup: i.e. when the
 on-disk ``config.toml`` is unparseable or fails Pydantic validation. The
 user is offered three deliberate actions (open in editor, reset to
 defaults with a timestamped backup, exit) instead of seeing a crash.

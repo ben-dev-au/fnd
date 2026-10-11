@@ -1,4 +1,4 @@
-"""DetailStrip — 2-line description + metadata area at the bottom of
+"""DetailStrip: 2-line description + metadata area at the bottom of
 every settings screen.
 
 Empty by default. The parent screen calls ``set(description, metadata)``
@@ -31,7 +31,7 @@ class DetailStrip(Widget):
 
        Height is ``auto`` so the description wraps onto as many lines as
        it needs without truncating. ``max-height: 6`` bounds the panel
-       so a runaway-long description can't dominate the screen — keep
+       so a runaway-long description can't dominate the screen, keep
        descriptions concise enough to fit comfortably. */
     DetailStrip {
         height: auto;
@@ -72,7 +72,7 @@ class DetailStrip(Widget):
             pass
 
     def _render_lines(self) -> tuple[Content, Content]:
-        """Pure render — tested directly without mounting the widget."""
+        """Pure render: tested directly without mounting the widget."""
         description = self._description
         if not isinstance(description, Content):
             description = Content(display_block(description))

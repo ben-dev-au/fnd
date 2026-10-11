@@ -73,7 +73,7 @@ __all__ = [
 # of markdown-it tokens (headings, paragraphs, lists, blockquotes,
 # tables, fenced code, etc.). We subclass the block kinds whose inline
 # text should carry search-term highlights and overlay
-# ``Content.add_spans`` after the base build runs — match-only spans
+# ``Content.add_spans`` after the base build runs: match-only spans
 # layered on top of whatever style the base block produced. Code
 # fences (``MarkdownFence``) carry the overlay too (``FNDMarkdownFence``):
 # the match highlight reads over the lexer's syntax colours so a query
@@ -87,7 +87,7 @@ __all__ = [
 
 def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
     """Return a list of highlight spans covering every word in ``plain``
-    that matches ``spec`` under any of the cascade's pass semantics —
+    that matches ``spec`` under any of the cascade's pass semantics:
     exact-stem (literal / phrase / synonym) or fuzzy-AUTO.
 
     Char-level colour split: literal / synonym matches → one yellow
@@ -108,7 +108,7 @@ def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
 
 def _build_match_spans_multi(plains: Sequence[str], spec: MatchSpec) -> list[list[Span]]:
     """Per-segment highlight spans with the proximity window computed across the
-    WHOLE sequence — see :func:`fnd.render.match_word_spans_multi`. Segments are
+    WHOLE sequence: see :func:`fnd.render.match_word_spans_multi`. Segments are
     the consecutive blocks of one chunk."""
     if spec.is_empty:
         return [[] for _ in plains]
@@ -120,7 +120,7 @@ def _build_match_spans_multi(plains: Sequence[str], spec: MatchSpec) -> list[lis
             spans.append(Span(a, b, style))
             covered.update(range(a, b))
         # Phrase highlighting (quoted phrase, or a stopword between content words)
-        # fills only the GAPS between term spans — never overlaps them. Textual's
+        # fills only the GAPS between term spans: never overlaps them. Textual's
         # Content drops overlapping differently-styled spans, so an overlapping
         # phrase span in multi-colour mode would blank the whole word. Phrases stay
         # block-local: a quoted phrase is contiguous by definition.
@@ -131,7 +131,7 @@ def _build_match_spans_multi(plains: Sequence[str], spec: MatchSpec) -> list[lis
 
 
 def _spans_have_full_match(spans: list[Span]) -> bool:
-    """True if any span carries a non-dimmed match style — i.e. a real
+    """True if any span carries a non-dimmed match style: i.e. a real
     (in-window) proximity hit, phrase, or plain match, as opposed to a
     proximity-dimmed out-of-window stray."""
     return any(str(s.style) not in DIM_STYLES for s in spans)
@@ -170,7 +170,7 @@ def _record_first_match(block: MarkdownBlock, spans: list[Span]) -> None:
 
 def _apply_highlights_after_build(block: MarkdownBlock) -> None:
     """``build_from_token`` postlude for a block whose parent is NOT an
-    ``FNDMarkdown`` — the stock Markdown widget the help overlay uses. Blocks
+    ``FNDMarkdown``: the stock Markdown widget the help overlay uses. Blocks
     under an FNDMarkdown are highlighted chunk-wide instead, by
     :func:`apply_chunk_highlights`, so a proximity window can straddle them."""
     md = block._markdown
@@ -190,7 +190,7 @@ def _block_plain(block: MarkdownBlock) -> str:
     """A block's own rendered text. Fences carry theirs on ``_highlighted_code``
     (the syntax-coloured code, or the mermaid art we deliberately match against
     instead of the diagram source); every other block carries it on ``_content``.
-    Container blocks — lists, table wrappers — own no text of their own."""
+    Container blocks (lists, table wrappers) own no text of their own."""
     code = getattr(block, "_highlighted_code", None)
     if code is not None:
         return str(code.plain)
@@ -202,7 +202,7 @@ def _content_blocks(blocks: Iterable[MarkdownBlock]) -> Iterator[MarkdownBlock]:
 
     Walks ``_blocks`` rather than the DOM because a table's ``MarkdownTH`` /
     ``MarkdownTD`` cells are consumed into a DataTable by
-    ``FNDMarkdownTableDT.compose`` and are never mounted — a post-mount query
+    ``FNDMarkdownTableDT.compose`` and are never mounted: a post-mount query
     would miss exactly the cells where a cross-boundary window is most common.
     No block has both own text and children, so nothing is counted twice."""
     for block in blocks:
@@ -218,7 +218,7 @@ def _set_block_spans(block: MarkdownBlock, spans: list[Span]) -> None:
 
     The cache is what survives a fence's ``notify_style_update``: that rebuilds
     ``_highlighted_code`` from scratch and drops every span, so without it the
-    fence would silently fall back to recomputing block-locally — the very scope
+    fence would silently fall back to recomputing block-locally; the very scope
     this pass exists to widen."""
     block._fnd_match_spans = spans  # type: ignore[attr-defined]
     if not spans:
@@ -235,8 +235,8 @@ def _set_block_spans(block: MarkdownBlock, spans: list[Span]) -> None:
 def apply_chunk_highlights(md: FNDMarkdown, blocks: list[MarkdownBlock]) -> None:
     """Bake match highlights across a whole chunk in ONE two-tier decision.
 
-    A proximity window is scoped to the chunk — the unit the index matched the
-    slop-phrase in — not to a single block. Highlighting block-by-block made the
+    A proximity window is scoped to the chunk (the unit the index matched the
+    slop-phrase in) not to a single block. Highlighting block-by-block made the
     token positions restart at every paragraph and list item, so a genuine
     ``{N}`` co-occurrence split across two blocks could never qualify and both
     terms rendered dimmed at any slop.
@@ -263,7 +263,7 @@ def _apply_inline_code_highlights(block: MarkdownBlock) -> None:
     """Syntax-colour inline code (`` `x` ``) the same way fenced blocks are
     coloured. The base build marks inline code with the ``.code_inline``
     style; we tokenise each such run and overlay per-token colours on top
-    (foreground only — the inline-code background, if any, shows through).
+    (foreground only: the inline-code background, if any, shows through).
     Runs before the match overlay so search terms still read over it."""
     content = block._content
     syntax_spans: list[Span] = []
@@ -297,7 +297,7 @@ class _HeadingMarkerMixin:
     not a second style band.
 
     Must sit *inside* ``_HighlightingBlockMixin`` in the MRO so the
-    marker lands on the Content **before** highlight spans run — that
+    marker lands on the Content **before** highlight spans run: that
     way the highlight span offsets line up with the post-prefix plain.
     """
 
@@ -389,7 +389,7 @@ class FNDMarkdownFence(MarkdownFence):
     """Code fence that overlays search-term highlights on the syntax
     colouring. Stock ``MarkdownFence`` builds a syntax-highlighted
     ``Content`` in ``__init__`` and renders it via a single Label, with
-    no hook for match spans — so query terms inside a code block went
+    no hook for match spans, so query terms inside a code block went
     unhighlighted. We add the match overlay on top of the lexer colours
     (the highlight reads over them) right after the base build, and
     re-apply it when a theme change rebuilds the syntax colouring.
@@ -405,7 +405,7 @@ class FNDMarkdownFence(MarkdownFence):
     def highlight(cls, code: str, language: str, ansi: bool = False, dark: bool = False) -> Content:
         # Stock highlighting maps Pygments tokens through a sparse theme;
         # swap in the granular FND palette. Native-ANSI terminals keep the
-        # base ANSI themes (safety net — the app runs truecolor by default).
+        # base ANSI themes (safety net: the app runs truecolor by default).
         if ansi:
             return super().highlight(code, language, ansi=ansi, dark=dark)
         return highlight_fenced(code, language or None)
@@ -432,7 +432,7 @@ class FNDMarkdownFence(MarkdownFence):
         # matches overlay the *art*, not the fence source. The art is derived
         # from the source, so a term in a node label survives into it and
         # highlights like any other text; a term living only in mermaid syntax
-        # (arrows, node ids) does not, and must not register as a match stop —
+        # (arrows, node ids) does not, and must not register as a match stop:
         # n/b and the ▲/▼ counts would then point at a diagram with nothing
         # visibly highlighted.
         self._set_diagram_content(art)
@@ -447,7 +447,7 @@ class FNDMarkdownFence(MarkdownFence):
 
     def notify_style_update(self) -> None:
         # The base rebuilds ``_highlighted_code`` from scratch on a theme
-        # change, dropping our content — re-render the diagram if this is a
+        # change, dropping our content: re-render the diagram if this is a
         # mermaid fence, else re-apply the match overlay.
         super().notify_style_update()
         code = getattr(self, "_mermaid_code", None)
@@ -457,7 +457,7 @@ class FNDMarkdownFence(MarkdownFence):
                 self._set_diagram_content(art)
                 self._reapply_cached_highlights()
                 return
-            # Re-render failed — this is no longer a diagram: drop the
+            # Re-render failed: this is no longer a diagram: drop the
             # diagram-only styling (hscroll/no-wrap) before falling back. The
             # cached spans were computed against the ART, so they address text
             # that no longer exists; drop them rather than replay them onto the
@@ -473,7 +473,7 @@ class FNDMarkdownFence(MarkdownFence):
         ``notify_style_update`` rebuilds ``_highlighted_code`` from scratch on
         every theme change (and fires several times during the initial mount),
         dropping all spans. Recomputing here would use the fence's own text
-        alone, undoing the chunk-wide proximity scope — so replay the cache
+        alone, undoing the chunk-wide proximity scope, so replay the cache
         instead. The length check is a backstop against a stale cache; the one
         case that actually invalidates it (a failed mermaid re-render) clears
         the cache at source."""
@@ -495,20 +495,20 @@ class FNDMarkdownTableDT(MarkdownTable):
     ``_FND_NO_W3=1`` (an opt-OUT, set nowhere by default). The DataTable
     path mounts ~4x fewer widgets and reflows ~2x faster on a width change
     (e.g. toggling Reading View) than the stock grid. (The old
-    ``_FND_W3_DATATABLE`` opt-in flag is gone — it is read nowhere.)
+    ``_FND_W3_DATATABLE`` opt-in flag is gone: it is read nowhere.)
 
     Styling matches Textual's MarkdownTable as closely as DataTable
     allows: rounded outer border + zebra rows + primary-coloured bold
     header. The inter-cell keylines that grid-layout MarkdownTableContent
-    gets aren't reachable on DataTable — it renders cells as a single
+    gets aren't reachable on DataTable: it renders cells as a single
     render output, not as keyline-eligible child widgets.
     """
 
     DEFAULT_CSS = """
     FNDMarkdownTableDT {
         & > DataTable {
-            /* Textual's DataTable defaults to ``max-height: 100%`` — one
-               CONTAINER height — so a table with more rows than fit in the
+            /* Textual's DataTable defaults to ``max-height: 100%``, one
+               CONTAINER height, so a table with more rows than fit in the
                chunk becomes a nested scroll region with its own scrollbar:
                scrolling the document into it scrolls the table instead, until
                it bottoms out. No content is unreachable, but the table is a
@@ -564,7 +564,7 @@ class FNDMarkdownTableDT(MarkdownTable):
         self._dt = dt
         # Compute per-column widths from the pane's content size so wide
         # cells wrap rather than overflow. Without this, DataTable's
-        # auto_width measures each column at its longest single line —
+        # auto_width measures each column at its longest single line:
         # paragraph cells produce ~700-cell columns that get truncated
         # to the pane's 91 cells, with no wrap.
         avail = self._available_table_width()
@@ -581,7 +581,7 @@ class FNDMarkdownTableDT(MarkdownTable):
             dt.add_row(*row, height=None)
         md = self._markdown
         # Tiers come from the cells' cached chunk-scoped spans, so a window
-        # spanning two cells of a row counts as full — see
+        # spanning two cells of a row counts as full: see
         # ``_match_coords_from_blocks``. Falls back to the spec-derived scan for
         # a non-FNDMarkdown parent, which never ran the chunk pass.
         if isinstance(md, FNDMarkdown):
@@ -595,7 +595,7 @@ class FNDMarkdownTableDT(MarkdownTable):
         if matches:
             match_coord, is_full = matches[0]
             dt._fnd_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
-            # Register self as parent's match block — TH/TD widgets are
+            # Register self as parent's match block: TH/TD widgets are
             # bypassed so _record_first_match never fires. The table is one
             # stop in match_blocks; nav expands it to its matching cells via
             # _fnd_match_coords.
@@ -623,7 +623,7 @@ class FNDMarkdownTableDT(MarkdownTable):
         return avail
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Recompute column widths when the block's width changes — e.g.
+        """Recompute column widths when the block's width changes: e.g.
         toggling Reading View hides the sidebar and widens the pane. The
         DataTable's columns are sized once at ``compose``; without this they
         stay at the old width and the table reads compressed in the wider
@@ -714,7 +714,7 @@ def _compute_table_col_widths(
         return [max(m, mn) for m, mn in zip(maxs, mins, strict=True)]
     total_min = sum(mins)
     if total_min >= inner_avail:
-        # Mins alone exceed budget — scale every column down proportionally
+        # Mins alone exceed budget: scale every column down proportionally
         # (loses some content, but the only alternative is overflow).
         scale = inner_avail / total_min
         return [max(1, int(m * scale)) for m in mins]
@@ -737,12 +737,12 @@ def _find_match_coords_in_table(
 ) -> list[tuple[tuple[int, int], bool]]:
     """Every matching cell as ``((row, col), is_full)``, full matches first.
 
-    A cell matches iff ``text_has_any_match`` does — a word match OR a
-    quoted-phrase span, the same gate the highlight overlay applies — so each
+    A cell matches iff ``text_has_any_match`` does: a word match OR a
+    quoted-phrase span, the same gate the highlight overlay applies, so each
     coordinate points at a cell that is actually highlighted (quoted phrases
     included).
     (Checking the Content's ``spans`` instead is wrong: that set also
-    carries the markdown styling spans — inline code, emphasis, links —
+    carries the markdown styling spans (inline code, emphasis, links)
     so a merely *styled* cell would slip in over a *matched* one.)
     ``text_has_any_match`` short-circuits on the first matching word and
     skips the per-char alignment / Span allocation that building the full
@@ -783,7 +783,7 @@ def _merge_cell_tiers(
 
     Header hits and a first-data-row hit both map to ``(0, col)`` (the header has
     no cursor coordinate of its own), so a match in both would emit the
-    coordinate twice — inflating the count and making n/b land on it twice.
+    coordinate twice: inflating the count and making n/b land on it twice.
     Merge by coordinate, keeping the strongest tier (full beats dim-only) and
     first-seen order (headers before rows)."""
     tier_by_coord: dict[tuple[int, int], bool] = {}
@@ -813,7 +813,7 @@ def _match_coords_from_blocks(table: Any) -> list[tuple[tuple[int, int], bool]]:
 
     The spec-derived :func:`_find_match_coords_in_table` re-tests each cell's
     text on its own, which reinstates the per-block window the chunk pass exists
-    to widen — a ``{N}`` co-occurrence split across two cells of one row would
+    to widen; a ``{N}`` co-occurrence split across two cells of one row would
     sort as dim-only. Reading the cached spans keeps the tier consistent with
     what was actually painted."""
     from textual.widgets._markdown import MarkdownTD, MarkdownTH, MarkdownTR
@@ -831,7 +831,7 @@ def _match_coords_from_blocks(table: Any) -> list[tuple[tuple[int, int], bool]]:
             header_tiers.append(_tier(block))
         elif isinstance(block, MarkdownTR):
             row_tiers.append([])
-        # A TD before any TR means a table with no header row — not reachable
+        # A TD before any TR means a table with no header row, not reachable
         # through GFM, which requires the delimiter row, but an unguarded
         # ``row_tiers[-1]`` here would take the whole preview down.
         elif isinstance(block, MarkdownTD) and row_tiers:
@@ -879,7 +879,7 @@ class FNDMarkdown(Markdown):
     stashed on the instance so each block subclass can read them
     during ``build_from_token``. ``first_match_block`` resolves to the
     earliest block in document order whose Content gained at least
-    one highlight span — the preview pane scrolls to it so the user
+    one highlight span: the preview pane scrolls to it so the user
     sees the match without manual scrolling.
     """
 
@@ -900,14 +900,14 @@ class FNDMarkdown(Markdown):
     FNDMarkdown FNDMarkdownH4 { color: $accent; text-style: underline; }
     FNDMarkdown FNDMarkdownH5 { color: $accent; text-style: none; }
     FNDMarkdown FNDMarkdownH6 { color: $accent 70%; text-style: none; }
-    /* Inline emphasis colour-shifts too — text-style alone is too
+    /* Inline emphasis colour-shifts too, text-style alone is too
        subtle to read at terminal weight on most fonts. ``$primary``
        contrasts with ``$accent`` (headings) so bold inside a heading
        is still visible. */
     FNDMarkdown MarkdownBlock > .strong { color: $primary; text-style: bold; }
     FNDMarkdown MarkdownBlock > .em { color: $secondary; text-style: italic; }
     /* Callouts: typed left bar plus a 12% tint of the same colour. ``outer``
-       is a half-block glyph — the only border style that tiles solid in every
+       is a half-block glyph: the only border style that tiles solid in every
        terminal font we tested, SF Mono included. */
     FNDMarkdown .callout { border-left: outer $primary; background: $primary 12%; }
     FNDMarkdown .callout > .callout-title { color: $primary; text-style: bold; }
@@ -1014,18 +1014,18 @@ class FNDMarkdown(Markdown):
 
     @property
     def match_blocks(self) -> list[MarkdownBlock]:
-        """Match stops of this chunk for intra-file nav, in REGISTRATION order —
+        """Match stops of this chunk for intra-file nav, in REGISTRATION order,
         which is document order only until a table joins (it registers at mount).
         Order by painted row with :func:`~fnd.tui.preview.match_row.chunk_stop_rows`."""
         return self._match_blocks or self._dim_match_blocks
 
     def update(self, markdown):  # type: ignore[no-untyped-def, override]
         # Textual's dispatcher walks the MRO and invokes every class's
-        # _on_mount — overriding _on_mount and calling super() ran
+        # _on_mount: overriding _on_mount and calling super() ran
         # Markdown._on_mount twice; the second pass saw _initial_markdown
         # already consumed and called update("") which removed all
         # blocks. Hook into update() instead: AwaitComplete's future
-        # fires when parse+mount completes — set build_done from there.
+        # fires when parse+mount completes, set build_done from there.
         #
         # Reset document-scoped match state before the rebuild: a re-update
         # must not let a build_done waiter return on the prior render, and
@@ -1051,7 +1051,7 @@ class FNDMarkdown(Markdown):
         rewrite_callouts(tokens)
         # Materialise the block tree before yielding any of it: the two-tier
         # proximity decision needs the whole chunk's text at once, and right here
-        # every block — including the TH/TD cells the table later composes away —
+        # every block, including the TH/TD cells the table later composes away,
         # is still reachable and unmounted, so applying spans costs no layout.
         blocks = list(super()._parse_markdown(tokens))
         apply_chunk_highlights(self, blocks)
@@ -1063,7 +1063,7 @@ def _legacy_blocks_to_md(blocks: list[Any]) -> str:
     Block list. Used as a defensive fallback for chunks with empty
     ``body_md`` (e.g. an old index that slipped through the schema
     check). Never produces structurally-correct markdown for tables /
-    nested lists / fenced code — those round-tripping properly is
+    nested lists / fenced code: those round-tripping properly is
     exactly what the schema bump and extractor rewrite are for. Just
     enough to keep a stale-index preview from rendering empty.
     """

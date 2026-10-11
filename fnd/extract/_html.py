@@ -1,6 +1,6 @@
 """XHTML/HTML → structure walker, shared by the epub and web extractors.
 
-Parses with ``lxml.html`` (libxml2's forgiving HTML parser — it lowercases
+Parses with ``lxml.html`` (libxml2's forgiving HTML parser: it lowercases
 tags and ignores XML namespaces, so EPUB XHTML and loose web HTML both come
 through as clean lowercase tags), then walks the document in reading order and
 feeds a :class:`~fnd.extract._sectioner.HeadingSectioner` so headings, lists,

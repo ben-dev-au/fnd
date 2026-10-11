@@ -1,7 +1,7 @@
 """A collection Rebuild is a LITERAL wipe: it deletes each file's saved
 texturing (cache entry + seen-marker) and re-extracts from scratch, so
 the cache holds no stale variants and the counts report every file as
-newly indexed — genuine state, not an accumulated 'already' label.
+newly indexed: genuine state, not an accumulated 'already' label.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Persistent UI state — active scope, panel collapse, etc.
+"""Persistent UI state: active scope, panel collapse, etc.
 
 Stored in ``<app_data_dir>/state/scope.toml`` so it survives app
 restarts. Atomic writes (temp file + rename) so a crash mid-write
@@ -40,7 +40,7 @@ class UiState:
     # ``"any"`` = "any date". Anything else is treated as a literal token
     # for the DSL pre-pass (kind:pdf, mtime:week, …).
     #
-    # Fuzzy/synonym/etc. are NOT filters — they're cascade passes that
+    # Fuzzy/synonym/etc. are NOT filters: they're cascade passes that
     # broaden a sparse-result query automatically. The filters
     # panel only carries scope-narrowing knobs.
     filter_kinds: list[str] = field(default_factory=list)
@@ -51,7 +51,7 @@ class UiState:
     tag_include: dict[str, list[str]] = field(default_factory=dict)
     tag_exclude: dict[str, list[str]] = field(default_factory=dict)
     tag_match_all: bool = True
-    # True only when an on-disk state file was actually read. Not persisted —
+    # True only when an on-disk state file was actually read. Not persisted:
     # it distinguishes "this profile has never saved a scope" from "the user
     # deliberately saved an empty one", which look identical in the fields
     # above but mean opposite things when seeding a first-launch scope.
@@ -62,7 +62,7 @@ class UiState:
 
 def load(path: Path | None = None) -> UiState:
     """Read the on-disk state. Missing / unreadable files return an
-    empty :class:`UiState` rather than raising — first launch is a
+    empty :class:`UiState` rather than raising, first launch is a
     valid state."""
     p = path if path is not None else _state_path()
     if not p.exists():

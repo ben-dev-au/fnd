@@ -223,7 +223,7 @@ def _span_styles_at(spans: list[Span], offset: int) -> set[str]:
 
 
 def test_live_markdown_baker_dims_lone_occurrence():
-    # The stock FNDMarkdown widget bakes highlights via _build_match_spans —
+    # The stock FNDMarkdown widget bakes highlights via _build_match_spans:
     # this is the path the live preview actually uses, NOT apply_match_highlights.
     from fnd.render import DIM_MATCH_STYLES, MATCH_STYLES
     from fnd.tui.widgets.markdown import _build_match_spans
@@ -240,7 +240,7 @@ def test_live_markdown_baker_dims_lone_occurrence():
 
 
 # --- Auto-scroll target: prefer the co-occurrence, not a dimmed stray --------
-# The structural (FNDMarkdown) preview path — used for MD/DOCX/PPTX — picks the
+# The structural (FNDMarkdown) preview path, used for MD/DOCX/PPTX, picks the
 # scroll target via _record_first_match (blocks) and _find_first_match_coord_in_table
 # (tables). #77 fixed the equivalent target in the flat (PDF/TXT) line_buffer path
 # but not these, so a proximity query landed on the first dimmed lone-term hit.
@@ -357,7 +357,7 @@ def test_plain_query_multi_is_per_segment_unchanged():
 
 def _painted(text: str, spec: MatchSpec) -> dict[str, bool]:
     """``{covered word: is_full}`` for ``text``. Keyed by the whole doc word, so a
-    wildcard hit split into literal/fill runs collapses back to one entry —
+    wildcard hit split into literal/fill runs collapses back to one entry,
     letting a test name the term it cares about instead of trusting that "some
     run was full" refers to the right one."""
     from fnd.matching import DOC_WORD_RE
@@ -374,7 +374,7 @@ def test_wildcard_member_can_qualify_a_window():
     # DOC_WORD_RE dropped the glob in BOTH sinks: ``respons*`` reduced to the
     # stem ``respon`` (which no document token carries, so the window never
     # qualified) and left spec.wildcards empty (so the group's own term went
-    # unpainted). Assert on the wildcard term by name — asserting only that
+    # unpainted). Assert on the wildcard term by name: asserting only that
     # "some run is full" would pass on the sibling ``mobile`` alone.
     spec = MatchSpec.from_query("{6}respons* mobile", auto_fuzzy=False)
     assert spec.proximity_groups == ((("respons*", "mobil"), 6),)
@@ -597,7 +597,7 @@ def test_unconstrained_wildcard_member_never_dims():
 
 
 def test_unconstrained_member_still_qualifies_its_window():
-    """Exemption removes a token from the dimmable set, not from the window —
+    """Exemption removes a token from the dimmable set, not from the window:
     the group's other member must still be able to reach full through it."""
     spec = MatchSpec.from_query("{5}data replication OR replication", auto_fuzzy=False)
     assert _painted("Some data replication here.", spec) == {"data": True, "replication": True}
@@ -605,7 +605,7 @@ def test_unconstrained_member_still_qualifies_its_window():
 
 def test_many_arms_each_exempt_independently():
     """The exemption is per term, not a single flag: across four groups only the
-    members that are also a free arm stay full. Every key carries signal — each
+    members that are also a free arm stay full. Every key carries signal: each
     word here is a group member, so a blanket exemption or none both fail."""
     pairs = [("alpha", "bravo"), ("charlie", "delta"), ("echo", "foxtrot"), ("golf", "hotel")]
     freed = [a for a, _ in pairs]
@@ -638,7 +638,7 @@ def test_several_groups_exempt_only_their_own_free_members():
 
 def test_quoted_word_inside_the_operator_is_not_a_free_arm():
     """``_RUN_TOKEN`` admits a quote inside a ``{N}`` run, so ``{5}"a" "b"`` is
-    the operator's own terms — not two free arms that would exempt the group."""
+    the operator's own terms, not two free arms that would exempt the group."""
     spec = MatchSpec.from_query('{5}"data" "replication"', auto_fuzzy=False)
     assert spec.proximity_groups == ((("data", "replic"), 5),)
     assert spec.unconstrained_terms == frozenset()
@@ -655,7 +655,7 @@ def test_quoted_free_arm_still_exempts():
 
 
 def test_single_word_slop_phrase_still_reaches_the_loose_terms():
-    """``"x"~N`` is one word, so it is no group — it must survive the group-span
+    """``"x"~N`` is one word, so it is no group: it must survive the group-span
     blanking and still highlight."""
     spec = MatchSpec.from_query('"replication"~5', auto_fuzzy=False)
     assert spec.proximity_groups == ()
@@ -699,7 +699,7 @@ def test_only_the_typed_free_arm_escapes_the_window():
 
 
 def test_a_groups_own_synonyms_do_not_exempt_it():
-    """Only the FREE run is synonym-expanded into the exemption set — expanding
+    """Only the FREE run is synonym-expanded into the exemption set: expanding
     the whole query would let every group exempt itself."""
     from fnd.synonyms import SynonymTable
 

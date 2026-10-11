@@ -1,6 +1,6 @@
 """Per-chunk cache of captured previews, harvested from the mount pipeline.
 
-Freezing already happens on every file the user reads — the backfill sweep
+Freezing already happens on every file the user reads: the backfill sweep
 captures each chunk outside the visible window and drops its widget tree. Those
 captures used to be thrown away with the container, so a jump back to a match
 cost exactly as much as reaching it the first time. Keeping them turns a revisit
@@ -12,7 +12,7 @@ mounted as its own widget, so nothing here does row arithmetic and a gap in the
 set costs nothing.
 
 Captures are width-locked, so the key carries the width the strips were rendered
-at — the width a chunk actually lays out at, which is the pane's scrollable
+at: the width a chunk actually lays out at, which is the pane's scrollable
 content width and therefore moves when a scrollbar appears. A capture cut for one
 width can never be served at another, so a width change is a miss by design; the
 resize sweep drops what it can, and see `invalidate_captures_on_resize` for the
@@ -37,8 +37,8 @@ BYTES_PER_ROW = 1670
 _PLAIN = "\x00plain"
 
 # Share of system memory the preview cache may hold. A document viewer is
-# expected to spend memory on the document — PDF readers and editors of this
-# kind sit in the hundreds of MB routinely — so this is not trying to be frugal,
+# expected to spend memory on the document: PDF readers and editors of this
+# kind sit in the hundreds of MB routinely, so this is not trying to be frugal,
 # only to leave the machine usable.
 CACHE_FRACTION = 0.05
 
@@ -59,7 +59,7 @@ def _total_system_bytes() -> int | None:
     """Physical RAM, or ``None`` when it cannot be determined.
 
     Cached: the answer cannot change while the process runs, and it is read
-    once per stored capture — two syscalls per chunk on the sweep's hot loop.
+    once per stored capture, two syscalls per chunk on the sweep's hot loop.
     """
     import os
     import sys
@@ -122,7 +122,7 @@ class ChunkCaptureStore:
     """Captures held per chunk, so a mount can serve one instead of building it.
 
     Deliberately sparse rather than a contiguous run. A run stacks chunks into a
-    single row space and so must be contiguous — a gap silently shifts every
+    single row space and so must be contiguous: a gap silently shifts every
     position after it. This holds a sparse SET, because what coverage captures is
     the matches scattered through a file, and nothing here does row arithmetic:
     each capture is looked up by its own chunk_seq and mounted as its own widget.
@@ -134,7 +134,7 @@ class ChunkCaptureStore:
     the query that cut it.
 
     Bounded in rows against the same machine-scaled budget, evicting whole files
-    oldest-first — never the file just written to, which is the one on screen.
+    oldest-first: never the file just written to, which is the one on screen.
     """
 
     def __init__(self) -> None:
@@ -150,7 +150,7 @@ class ChunkCaptureStore:
         if capture is not None:
             # Promote on READ, not only on write. Without this the order is
             # purely write order, and coverage writes the current file FIRST and
-            # its neighbours after — making the file on screen the OLDEST entry
+            # its neighbours after, making the file on screen the OLDEST entry
             # and so the first one evicted. A cache that drops what you are
             # reading in order to hold what you have not opened is worse than no
             # cache; this makes "least recently used" mean what it says.
@@ -162,7 +162,7 @@ class ChunkCaptureStore:
 
         Probing readiness is not using a capture. The results list asks this
         for every file twice a second to paint the warmth arrows, and answering
-        through :meth:`get` re-ordered the whole store on results-list order —
+        through :meth:`get` re-ordered the whole store on results-list order,
         neutralising the read-promotion above and leaving the file on screen,
         usually the top result, as the first eviction victim.
         """
@@ -222,8 +222,8 @@ class ChunkCaptureStore:
     def drop_other_widths(self, width: int) -> int:
         """Forget captures cut for a different width; return how many files went.
 
-        They can never be served — the key carries the width, so a lookup at the
-        current width simply misses them — but they would sit here holding
+        They can never be served: the key carries the width, so a lookup at the
+        current width simply misses them, but they would sit here holding
         strips and evicting captures that ARE usable.
         """
         stale = [k for k in self._files if k[2] != width]
@@ -232,6 +232,6 @@ class ChunkCaptureStore:
         return len(stale)
 
     def drop_file(self, parent_id: str) -> None:
-        """Forget one file — its content or its highlighting changed."""
+        """Forget one file: its content or its highlighting changed."""
         for key in [k for k in self._files if k[0] == parent_id]:
             self._rows -= sum(c.outer_height for c in self._files.pop(key).values())

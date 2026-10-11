@@ -55,7 +55,7 @@ def test_detection_is_independent_of_location(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An evicted file under ~/Documents is as dataless as one in the
-    iCloud Drive folder — Desktop & Documents sync keeps ordinary paths."""
+    iCloud Drive folder: Desktop & Documents sync keeps ordinary paths."""
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "darwin")
     monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat(st_flags=0x40000000))
     for where in (
@@ -84,7 +84,7 @@ def test_windows_placeholder_attributes(
 
 
 def test_linux_reports_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """No common marker on Linux — say so rather than guessing, and treat
+    """No common marker on Linux: say so rather than guessing, and treat
     it as local so nothing is skipped for a condition we can't detect."""
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "linux")
     monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat())

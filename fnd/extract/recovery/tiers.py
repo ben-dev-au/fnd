@@ -165,8 +165,8 @@ class DoclingTableTier:
     The invisible-text lever recovers a table's text but flattens it to
     prose (the grid is gone and it emits no picture marker, so the
     born-digital splice can't fire). When a recovered page carries a
-    table caption, route it through docling — whose layout model rebuilds
-    the grid — and splice the grid in at the caption, preserving the
+    table caption, route it through docling, whose layout model rebuilds
+    the grid, and splice the grid in at the caption, preserving the
     recovered prose. Only acts on texture-recovered pages; born-digital
     pages keep the existing marker-based inline splice."""
 
@@ -220,7 +220,7 @@ class FlatFallbackTier:
     keeps pull-quotes and captions but omits whole body-text blocks it
     can't place in reading order (and the non-layout path emits nothing),
     so ``body_md`` is far less complete than the flat ``get_text`` layer the
-    index searches — a hit on the dropped prose can't be shown in preview.
+    index searches: a hit on the dropped prose can't be shown in preview.
 
     Every page is checked block-by-block: any flat block the structured
     Markdown missed (token overlap below ``block_present_ratio``) is appended
@@ -228,7 +228,7 @@ class FlatFallbackTier:
     a block already represented is never re-appended.
 
     There is deliberately no page-level coverage floor. A floor let a page
-    that was, say, 92% covered keep the other 8% searchable-but-unrenderable —
+    that was, say, 92% covered keep the other 8% searchable-but-unrenderable:
     measured at 5.7% of PDF tokens corpus-wide, with individual pages losing
     over 30%. Complete coverage is the only exact short-circuit: when every
     flat token is already in the Markdown, no block can be missing, so the
@@ -290,7 +290,7 @@ NativeOcr = Callable[[Any], str]
 class LegibilityReprocessTier:
     """Reprocess a page whose recovered prose reads as garbled OCR.
 
-    DEFERRED — built and unit-tested but not composed into the pipeline:
+    DEFERRED: built and unit-tested but not composed into the pipeline:
     the measured corpus has uniformly legible baked OCR, so no real page
     exercises it. Kept ready for a poorer-scan corpus. When prose
     legibility falls below the gate (with enough prose to judge), it tries

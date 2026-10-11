@@ -29,7 +29,7 @@ from tests._pilot_wait import safe_pause
 @pytest.fixture
 def built_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     # A small MARKDOWN corpus so results render on the structural (per-chunk
-    # widget) path the detached-container guards protect — the flat PDF/TXT path
+    # widget) path the detached-container guards protect: the flat PDF/TXT path
     # has no widget cache and no fast path.
     root = tmp_path / "corpus"
     root.mkdir()
@@ -46,7 +46,7 @@ def built_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 def _structural_group(app: FNDApp) -> tuple[FileGroup, list[FileChunk]]:
     """First result whose chunks render on the STRUCTURAL (per-chunk widget)
-    path — the flat PDF/TXT path has no widget cache and no fast path, so the
+    path: the flat PDF/TXT path has no widget cache and no fast path, so the
     detached-container guards under test don't apply there."""
     assert app._search.searcher is not None
     for g in app._search.groups:
@@ -64,13 +64,13 @@ async def test_dispatch_purges_a_detached_cache_entry(built_index: Path) -> None
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
         preview = app._preview
         g, chunks = _structural_group(app)
         query_sig = app._search.query_signature()
 
-        # Poison the cache with a DETACHED container for this file+query — the
-        # exact divergence the eviction/sweep race produces — and make the
+        # Poison the cache with a DETACHED container for this file+query: the
+        # exact divergence the eviction/sweep race produces, and make the
         # dispatch take the cache-resolution path (no same-file active shortcut).
         ghost = PreviewContainer(
             parent_doc_id=g.parent_id,
@@ -80,14 +80,14 @@ async def test_dispatch_purges_a_detached_cache_entry(built_index: Path) -> None
         preview.active = None
         preview.chunk_cache[g.parent_id] = chunks
         preview.preview_cache.put(ghost)
-        assert ghost.parent is None, "setup — the cached container is detached"
+        assert ghost.parent is None, "setup: the cached container is detached"
         assert preview.preview_cache.get(g.parent_id, query_sig) is ghost
 
         preview.dispatch_mount(g.parent_id, chunks[0].chunk_seq, chunks)
 
         # Synchronous guard effect: the detached entry is gone and was never made
         # the active preview. (A fresh, attached container is built asynchronously
-        # in its place — see the harness runs for the end-to-end no-blank proof.)
+        # in its place: see the harness runs for the end-to-end no-blank proof.)
         assert preview.preview_cache.get(g.parent_id, query_sig) is not ghost, (
             "the detached cache entry must be purged, not served as a hit"
         )
@@ -108,7 +108,7 @@ async def test_dispatch_skips_the_already_active_fast_path_when_active_is_detach
 ) -> None:
     """The 'same file already active' fast path scrolls ``self.active`` in place.
     If a race detached that active container, taking the fast path would scroll a
-    zero-region ghost and strand a blank pane — so dispatch must NOT enter it.
+    zero-region ghost and strand a blank pane, so dispatch must NOT enter it.
     A spy on the instant-scroll entry point proves the fast path is skipped."""
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
@@ -118,7 +118,7 @@ async def test_dispatch_skips_the_already_active_fast_path_when_active_is_detach
         query_sig = app._search.query_signature()
 
         # A "complete" active container for this file so the fast path's own
-        # gate (is_complete) would pass — then detach it out from under active.
+        # gate (is_complete) would pass, then detach it out from under active.
         detached = PreviewContainer(
             parent_doc_id=g.parent_id,
             query_signature=query_sig,
@@ -127,8 +127,8 @@ async def test_dispatch_skips_the_already_active_fast_path_when_active_is_detach
         detached.mounted_indices = set(range(len(chunks)))  # is_complete == True
         preview.active = detached
         preview.chunk_cache[g.parent_id] = chunks
-        assert detached.parent is None, "setup — active container is detached"
-        assert detached.is_complete, "setup — active container would pass the fast-path gate"
+        assert detached.parent is None, "setup: active container is detached"
+        assert detached.is_complete, "setup: active container would pass the fast-path gate"
 
         scrolled: list[object] = []
         orig = preview._settled_instant_scroll
@@ -142,7 +142,7 @@ async def test_dispatch_skips_the_already_active_fast_path_when_active_is_detach
         preview.dispatch_mount(g.parent_id, chunks[0].chunk_seq, chunks)
 
         assert detached not in scrolled, (
-            "a detached active container must not be scrolled in place — the "
+            "a detached active container must not be scrolled in place: the "
             "already-active fast path must fall through to a fresh rebuild"
         )
         assert preview.active is not detached, "the detached container must be dropped as active"

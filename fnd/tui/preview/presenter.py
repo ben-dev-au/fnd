@@ -65,7 +65,7 @@ class _CoveragePass:
     plan: list[str]
     width: int
     width_now: Callable[[], int]
-    #: The plan as it stands NOW — what the cursor has moved to since.
+    #: The plan as it stands NOW, what the cursor has moved to since.
     live_plan: Callable[[], list[str]]
 
 
@@ -74,8 +74,8 @@ def target_from_node_data(data: Any) -> tuple[str, int] | None:
     the preview should be showing for it, or None if it isn't a result row.
 
     The single definition of that mapping. It used to be written out three
-    times — here, in :meth:`PreviewPresenter.rerender_current`, and in
-    ``FNDApp._load_result_node`` — with the loader deciding what to mount
+    times: here, in :meth:`PreviewPresenter.rerender_current`, and in
+    ``FNDApp._load_result_node``, with the loader deciding what to mount
     through one copy and the settle-time paint check deciding what *should* be
     mounted through another. A divergence between the copies (a new node
     ``kind``, a different fallback for an empty ``hits`` list) would have them
@@ -100,7 +100,7 @@ async def decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
     """Run ``fn`` off the loop on a thread the process may exit without.
 
     ``asyncio.to_thread`` uses the loop's default executor, and the loop drains
-    that executor before the process can exit — so quitting while a neighbour's
+    that executor before the process can exit, so quitting while a neighbour's
     chunks are being decoded means waiting for a decode whose result is about to
     be thrown away. Measured on a real corpus: 0.46s to quit with no neighbour
     covering against 0.77s with it.
@@ -122,7 +122,7 @@ async def decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
         """Hand the result back, or drop it if the loop has gone.
 
         The thread is deliberately not joined so a quit need not wait for a
-        decode — but that is exactly the case where the loop is closed before
+        decode, but that is exactly the case where the loop is closed before
         the decode finishes, and an unguarded `call_soon_threadsafe` then raises
         on a thread with no handler, so `threading.excepthook` prints a
         traceback onto the terminal Textual has just restored. Nothing is lost
@@ -187,7 +187,7 @@ class PreviewPresenter:
         # cannot express. See fnd/tui/preview/coverage.py.
         self.capture_store = ChunkCaptureStore()
         self._warm_host = WarmHost(app)
-        # Convenience aliases that point into the active container —
+        # Convenience aliases that point into the active container:
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
         # Widgets here may be either per-line ``Static``s (PDF / TXT
@@ -205,14 +205,14 @@ class PreviewPresenter:
         self.mount_task: object | None = None
         # The in-flight chunk-decode worker, if any. A cold load cancels the
         # mount task and the debounce timer before handing off to this worker,
-        # so without tracking it the pipeline looks idle for the whole decode —
+        # so without tracking it the pipeline looks idle for the whole decode:
         # precisely while the pane is still (deliberately) showing the previous
         # file. See pipeline_busy.
         self.decode_worker: object | None = None
         # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
-        # Cleared on query change — highlight spans are baked in at build time.
+        # Cleared on query change: highlight spans are baked in at build time.
         self.prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
-        # Debounced preview load — latest target + Timer.
+        # Debounced preview load: latest target + Timer.
         from typing import Any as _Any
 
         self.load_timer: _Any | None = None
@@ -224,7 +224,7 @@ class PreviewPresenter:
         self.pending_heading: int = -1
         # True while the cursor is moving via Option/Alt + arrow ("scan" mode):
         # schedule_load skips its leading fire so fast browsing doesn't mount
-        # every row — the preview only loads once the sweep settles (trailing).
+        # every row: the preview only loads once the sweep settles (trailing).
         # Set by the app's alt-arrow handler, cleared on a load or a plain move.
         self._scan_move: bool = False
         # The (parent_id, focus_chunk_seq) of the render currently in
@@ -238,7 +238,7 @@ class PreviewPresenter:
         # Bumped on every full preview reset (new query / scope clear / highlight
         # rerender). A mount task captures it at start; if it has moved by the
         # time the task's `finally` runs, that reset cleared the caches + DOM
-        # under it — so the task must NOT resurrect its now-stale container
+        # under it, so the task must NOT resurrect its now-stale container
         # (re-cache it / leave it mounted). cancel_mount_task only *requests*
         # cancellation; the finally runs a tick later and would otherwise race
         # the reset and re-pollute it ("stuck mid-mount after a new query").
@@ -291,7 +291,7 @@ class PreviewPresenter:
         and carrying displayed content."""
         # A pane showing neither a container nor a flat buffer is genuinely
         # unpainted; anything else here would rebuild a preview that is on
-        # screen and correct — measured at 19 spurious rebuilds in a
+        # screen and correct: measured at 19 spurious rebuilds in a
         # 14-navigation run, each one clearing the cache and re-dispatching.
         buf = self._app._flat.active_buffer
         if buf is not None:
@@ -314,16 +314,16 @@ class PreviewPresenter:
 
     def pipeline_busy(self) -> bool:
         """True while a decode / load / mount / finalise for the preview is
-        still in flight — i.e. the pane not yet showing the cursor's file is
+        still in flight: i.e. the pane not yet showing the cursor's file is
         expected right now, not a strand."""
         if self.load_timer is not None:
             return True
         # The decode is the easiest one to miss: a cold load cancels the mount
         # task and the debounce timer BEFORE handing the file to this worker, so
-        # all the other signals read idle for its whole duration — while the pane
+        # all the other signals read idle for its whole duration, while the pane
         # is still deliberately showing the previous file. Left untracked, the
         # check would call that a strand and spend its one repair, and the repair
-        # re-enters render_full_doc, whose worker group is exclusive — restarting
+        # re-enters render_full_doc, whose worker group is exclusive: restarting
         # the very decode that was about to finish.
         worker = self.decode_worker
         if worker is not None:
@@ -345,7 +345,7 @@ class PreviewPresenter:
 
     def cursor_target(self) -> tuple[str, int] | None:
         """The (parent_id, focus_chunk_seq) the results cursor currently points
-        at — the file the preview is supposed to be showing."""
+        at: the file the preview is supposed to be showing."""
         try:
             tree = self._app.query_one("#results_pane", Tree)
         except Exception:
@@ -385,14 +385,14 @@ class PreviewPresenter:
         exists to catch. The question is always the same one the user is asking:
         *is the pane showing the file I have selected?*"""
         self._paint_check = None
-        # Option/Alt scan mode moves the cursor WITHOUT loading, by design —
+        # Option/Alt scan mode moves the cursor WITHOUT loading, by design:
         # a divergence here is the feature working, not a strand.
         if self._scan_move:
             return
         target = self.cursor_target()
         if target is None:
-            return  # no selection (empty results, non-result node) — nothing owed
-        # Still legitimately working (a big file can mount for a while) — look
+            return  # no selection (empty results, non-result node): nothing owed
+        # Still legitimately working (a big file can mount for a while): look
         # again rather than pre-empting a healthy navigation. Bounded, so a
         # wedged pipeline still gets its one repair.
         if self.pipeline_busy() and self._paint_check_rearms < tuning.PAINT_CHECK_MAX_REARMS:
@@ -445,7 +445,7 @@ class PreviewPresenter:
         return -1
 
     def _drop_stale_landing_intent(self, parent_id: str, focus_chunk_seq: int) -> None:
-        """Forget a request the reader has navigated away from — the end of the
+        """Forget a request the reader has navigated away from: the end of the
         navigation it was set for, and the only thing that clears it. An outline
         jump never outlives the next load that did not ask for it."""
         pending = self.pending_landing_intent
@@ -477,7 +477,7 @@ class PreviewPresenter:
             self.pending_heading = heading
         if self._scan_move:
             # Option/Alt+arrow scan: browse the results without mounting anything.
-            # Record where the cursor is but DON'T load and DON'T arm a timer — so
+            # Record where the cursor is but DON'T load and DON'T arm a timer, so
             # even pausing mid-sweep never mounts. The preview loads only when the
             # user presses a normal key (the app clears _scan_move, and the next
             # schedule_load takes the leading-edge path below). Release detection
@@ -501,7 +501,7 @@ class PreviewPresenter:
             self._app._lazy.cancel()
             # The cancelled mount will never reach settle to clear the in-flight
             # coalescing latch. If that latched target differs from where the
-            # cursor is now heading, drop it — otherwise returning to it later
+            # cursor is now heading, drop it, otherwise returning to it later
             # (an overshoot-and-correct sweep) hits the dedup guard as "already
             # in flight" and the remount is suppressed, stranding the preview
             # mid-mount until an unrelated nav resets the latch.
@@ -521,7 +521,7 @@ class PreviewPresenter:
             self.fire_pending_load()
             return
         if self.load_timer is None:
-            # Leading edge: the cursor was settled, so load NOW — a deliberate
+            # Leading edge: the cursor was settled, so load NOW; a deliberate
             # single jump shouldn't wait out the window (that wait was ~150ms of
             # every nav's perceived lag). Then open a coalescing window so a rapid
             # arrow-sweep that follows only loads its FINAL row (the trailing
@@ -553,7 +553,7 @@ class PreviewPresenter:
         # With the debounce pinned to 0 these don't merge; the 2nd+ then
         # warm-resume and cancel the 1st's still-building mount, orphaning
         # the focus chunk's build_done and losing the match scroll. If the
-        # exact same render is already in flight, skip — it will land it.
+        # exact same render is already in flight, skip: it will land it.
         if self.inflight_target == (parent_id, focus_chunk_seq):
             return
         self.inflight_target = (parent_id, focus_chunk_seq)
@@ -604,7 +604,7 @@ class PreviewPresenter:
         Hybrid load:
 
         1. Look up the cached :class:`PreviewContainer` for this file +
-           query. If complete, activate (O(1) class flip) and scroll —
+           query. If complete, activate (O(1) class flip) and scroll:
            done.
         2. If partial (resume case), activate, scroll, dispatch a task
            that mounts only the un-mounted indices.
@@ -619,7 +619,7 @@ class PreviewPresenter:
 
         _perf.mark("click_to_display_start", parent_id=parent_id, focus_seq=focus_chunk_seq)
 
-        # Any pending debounce timer is now moot — we're committing to
+        # Any pending debounce timer is now moot: we're committing to
         # a load. Cancel so a late-firing timer can't race the current
         # dispatch and clobber it with a stale target.
         self.cancel_pending_load()
@@ -632,7 +632,7 @@ class PreviewPresenter:
         # own scroll, so call order can no longer change where the preview lands.
         # Glide smoothly only when the target match is ALREADY mounted (the
         # content between is on screen, so the scroll is over real rows). A
-        # fresh file — or a same-file match outside the mounted window — is
+        # fresh file, or a same-file match outside the mounted window, is
         # revealed via an atomic swap (cut) instead: animating over an unmounted
         # gap would be lumpy, and prepending an out-of-window window above the
         # current match slides the view (reflow). Consistent rule: glide when
@@ -654,19 +654,19 @@ class PreviewPresenter:
             )
         )
         # One progress session spans the whole navigation, opened here because
-        # arming is the single event every navigation passes through — so the
+        # arming is the single event every navigation passes through, so the
         # line is up before any of the work below starts. The tracker samples
         # this pipeline and closes the session once the match has landed; no
         # stage below has to remember to hide anything.
         # Suppressed: the line is cosmetic, and this sits between arming the
         # scroll anchor and arming the paint check. A raise here would strand
-        # the preview with an armed anchor and no repair timer — a decorative
+        # the preview with an armed anchor and no repair timer: a decorative
         # subsystem must never be able to do that.
         with contextlib.suppress(Exception):
             self._app._nav_progress.begin(parent_id)
         # Re-plan what to capture ahead around the NEW cursor position. Driven
         # from here rather than from the mount because most navigations never
-        # reach a mount — a target already on screen returns early — and those
+        # reach a mount (a target already on screen returns early) and those
         # are precisely the moments with time to spare for capturing ahead.
         # Suppressed for the same reason as the progress session above: this
         # sits between arming the scroll anchor and arming the paint check, and
@@ -676,26 +676,26 @@ class PreviewPresenter:
             self.start_coverage(parent_id, focus_chunk_seq)
         except Exception as exc:
             # Suppressed but SAID. A raise here would leave the preview with an
-            # armed anchor and no repair timer, so it cannot propagate — but a
+            # armed anchor and no repair timer, so it cannot propagate, but a
             # genuine bug in coverage would then disable warming for the
             # session with nothing recorded. Same policy as WarmHost.ensure.
             self.diag_log(f"coverage failed to start: {exc!r}")
         # Every navigation is checked once it should have settled (see
-        # _arm_paint_check) — the single place that verifies the OUTCOME rather
+        # _arm_paint_check): the single place that verifies the OUTCOME rather
         # than one mechanism, so no seam can strand the pane indefinitely.
         self._arm_paint_check()
         # Refresh the preview's border indicator for the NEW target. Arming is
         # the one event common to every navigation; the indicator was otherwise
         # driven only by a document mount (``refresh_match_scrollbar`` →
         # ``MatchNavigator.rebuild``) and by scroll events, so stepping between
-        # section rows of the SAME file refreshed nothing — and a row whose
+        # section rows of the SAME file refreshed nothing, and a row whose
         # chunk has no match doesn't even scroll, so the border kept displaying
         # the previous row's state.
         self._app.call_after_refresh(self._app._refresh_preview_match_indicator)
 
         chunks = self.chunk_cache.get(parent_id)
         if chunks is not None:
-            # We have decoded data — go to the mount path. If the
+            # We have decoded data: go to the mount path. If the
             # prefetch worker (or an earlier load) has already built
             # the flat-path bundle for this (file, query) pair, pass
             # it through so the dispatcher skips the main-thread
@@ -738,7 +738,7 @@ class PreviewPresenter:
         # paint) ``_rebuild_after_layout`` will catch it.
         try:
             pane_widget = self._app.query_one("#preview_pane", VerticalScroll)
-            # Floor of 20 — see prefetch _prefetch_top_results for the
+            # Floor of 20: see prefetch _prefetch_top_results for the
             # PDF-single-column rationale.
             measured = pane_widget.content_size.width - 1
             estimated_wrap_width = max(20, measured) if measured > 0 else 0
@@ -756,9 +756,9 @@ class PreviewPresenter:
             except Exception as e:
                 app.call_from_thread(app._preview.on_load_failed, e, decode_token)
                 return
-            # For the flat-buffer path (PDF / TXT) the FileView build —
+            # For the flat-buffer path (PDF / TXT) the FileView build,
             # which computes per-chunk match spans and stitches the
-            # global line buffer — and the per-line ``rich.Console.render``
+            # global line buffer, and the per-line ``rich.Console.render``
             # pass are pure-Python data work that easily dominate the
             # main-thread cost on large documents. Do both here in the
             # worker so the UI stays responsive during the decode +
@@ -771,7 +771,7 @@ class PreviewPresenter:
                     wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
                     # Report the render as it goes. This is the only countable
                     # work the flat path exposes, and its duration varies by
-                    # more than 10x with nothing observable predicting it — so
+                    # more than 10x with nothing observable predicting it, so
                     # the progress line is told rather than left to guess.
                     decode_progress.begin(decode_token, len(fv.lines))
                     prebuilt = build_rendered_document(
@@ -805,7 +805,7 @@ class PreviewPresenter:
 
         Must run on EVERY navigation, not only cross-file ones. The same-file
         out-of-window path builds a fresh container and returns early, and used
-        to rely on "the old container is swept on the next navigation" — which
+        to rely on "the old container is swept on the next navigation", which
         never happened while the user stayed inside one file, the common case in
         a large document. Measured over 30 in-file navigations: 23 containers,
         270 mounted chunks and 14,551 widgets left in the pane, with navigation
@@ -820,7 +820,7 @@ class PreviewPresenter:
             # ``outgoing`` is the previous file, deliberately held on screen so
             # the incoming one can build behind it and swap in without a blank
             # frame. It is neither active nor cached, so it looks exactly like a
-            # strand — removing it mid-swap would blank the pane for the whole
+            # strand: removing it mid-swap would blank the pane for the whole
             # build.
             if (
                 stranded in cached
@@ -874,7 +874,7 @@ class PreviewPresenter:
             if i >= len(chunks):
                 # Unreachable today: mounted_indices is built from THIS
                 # _chunk_cache list, each file decodes once per query, and a
-                # query change clears the chunk AND preview caches together — so
+                # query change clears the chunk AND preview caches together, so
                 # a cached container always matches its chunks. Cheap crash-guard
                 # only, in case that coupling is ever broken; there is no live
                 # stale state here to normalise.
@@ -887,7 +887,7 @@ class PreviewPresenter:
                 vr = w.virtual_region  # type: ignore[attr-defined]
                 ranges.append((i, w, float(vr.y), float(vr.y + vr.height)))
             except Exception:
-                return 0.0  # geometry not ready — skip rather than risk a bad scroll
+                return 0.0  # geometry not ready: skip rather than risk a bad scroll
         visible = [i for (i, _w, y0, y1) in ranges if y1 > vtop and y0 < vbot]
         if not visible:
             return 0.0
@@ -903,7 +903,7 @@ class PreviewPresenter:
         if not to_remove:
             return 0.0
         # Removal is DEFERRED by Textual, so compensating here scrolls against a
-        # virtual size that still counts the chunks — measured 439-680 rows out.
+        # virtual size that still counts the chunks: measured 439-680 rows out.
         # The anchor is the reader's own content: absorbing its movement needs no
         # prediction, and prices the frozen stand-ins for free. The topmost
         # VISIBLE chunk: a claim above the fold prices nothing below itself.
@@ -928,8 +928,8 @@ class PreviewPresenter:
                 # Freeze rather than discard where we can. Removing the chunk
                 # frees its widgets but throws away the render, so scrolling back
                 # to it rebuilds from markdown; a frozen stand-in keeps what it
-                # painted for one widget instead of ~42, and — because it is
-                # given the exact height the tree occupied — swapping it in moves
+                # painted for one widget instead of ~42, and, because it is
+                # given the exact height the tree occupied: swapping it in moves
                 # nothing on screen, so it needs none of the scroll compensation
                 # below.
                 captured = freeze(w, seq) if freeze_on_prune else None
@@ -948,7 +948,7 @@ class PreviewPresenter:
                         container.match_targets.pop(seq, None)
                         frozen_count += 1
                 # display:none leaves the arrange immediately; remove() then frees
-                # it. (Keeping ~1000s of display:none widgets alive is worse — they
+                # it. (Keeping ~1000s of display:none widgets alive is worse; they
                 # still get walked by settle and inflate the next mount.)
                 with contextlib.suppress(Exception):
                     w.display = False
@@ -997,7 +997,7 @@ class PreviewPresenter:
         query_sig = self._app._search.query_signature()
 
         # Same file + same query already active. Two sub-cases:
-        #   (a) target chunk widget exists — just scroll, no remount.
+        #   (a) target chunk widget exists: just scroll, no remount.
         #   (b) target chunk not yet mounted (still loading the file
         #       and the user clicked a result above the load front):
         #       cancel the in-flight task and resume the SAME container
@@ -1022,7 +1022,7 @@ class PreviewPresenter:
                 )
                 return
             # Same-file, target match OUTSIDE the mounted window. Resuming the
-            # SAME container would mount the new window in document order —
+            # SAME container would mount the new window in document order,
             # which, for an upward jump, prepends above the current match and
             # slides the visible content (the "flash wrong content, then land"
             # reflow). Instead build a FRESH container at the new focus and
@@ -1035,7 +1035,7 @@ class PreviewPresenter:
             self.hide_progress_bar()
             # Sweep and prune BEFORE building the replacement. This branch used
             # to do neither, on the assumption that the old container would be
-            # "swept on the next navigation" — but the sweep lives on the
+            # "swept on the next navigation", but the sweep lives on the
             # cross-file path below, which this early return never reaches. Stay
             # inside one file (the common case in a large document) and nothing
             # ever reclaimed anything: 30 navigations left 23 containers, 270
@@ -1062,7 +1062,7 @@ class PreviewPresenter:
         self.cancel_mount_task()
         # Option C hardening: the outgoing file may be FULL-mounted (~1000s of
         # widgets). It stays on screen while the incoming file builds, and
-        # Textual's arrange scales with total DOM — so a big outgoing container
+        # Textual's arrange scales with total DOM, so a big outgoing container
         # inflates the new file's mount several-fold. Prune it to its visible
         # window now (flash-free) so the incoming mount is cheap.
         self.prune_active_to_window()
@@ -1073,12 +1073,12 @@ class PreviewPresenter:
         # ``remove()`` is deferred (the widget keeps a parent and stays in
         # ``query()`` until its Prune is processed) the adopt happily picked up
         # a container the sweep had just condemned. The mount then saw a parent,
-        # skipped its ``pane.mount()``, built into it and activated it — and the
+        # skipped its ``pane.mount()``, built into it and activated it, and the
         # queued Prune detached it: ``active`` left pointing outside the tree,
         # pane blank, nothing to heal it. Choosing first, then sweeping
         # everything except the choice, makes that self-condemnation impossible.
         cached = self.preview_cache.get(parent_id, query_sig)
-        # A cache entry that is no longer LIVE is not a valid hit — that covers
+        # A cache entry that is no longer LIVE is not a valid hit: that covers
         # both an already-detached widget and one whose removal is merely queued
         # (see fnd/tui/preview/liveness.py). Purge it and rebuild fresh.
         if cached is not None and not is_live(cached):
@@ -1087,7 +1087,7 @@ class PreviewPresenter:
                 del self.preview_cache._cache[key]
             cached_containers.discard(cached)
             # Don't leave self.active dangling on the purged container through
-            # the async rebuild — a fresh one is coming.
+            # the async rebuild: a fresh one is coming.
             if self.active is cached:
                 self.active = None
             self.diag_log(f"cache hit not live parent={parent_id[:8]}, rebuilding fresh")
@@ -1098,7 +1098,7 @@ class PreviewPresenter:
                 # ``_prefetch_task``, live or done). Prefetch re-anchors on the
                 # cursor and continually mounts/evicts/removes its own containers
                 # for the hot file; adopting one for a user mount races that
-                # removal — the adopted widget is detached mid-mount and the
+                # removal: the adopted widget is detached mid-mount and the
                 # finalise reveals a zero-region ghost (blank pane). Build a
                 # fresh, user-owned container instead, which prefetch won't touch
                 # (and eviction can't drop while it is the protected active one).
@@ -1211,13 +1211,13 @@ class PreviewPresenter:
     ) -> None:
         """Flat-buffer mount: resolve doc (cache > prebuilt > main-thread
         build), install into the shared widget, activate."""
-        # Stop the structural pipeline we are replacing — the symmetric step the
+        # Stop the structural pipeline we are replacing: the symmetric step the
         # structural branch of dispatch_mount does for itself. Without it an
         # in-flight structural mount kept building and, on completion,
         # ``activate_container`` hid every LineBufferPreview and showed its own
         # container: the preview displayed the file the user had just navigated
-        # away from. ``schedule_load``'s navigate-away cancel doesn't cover this
-        # — it compares against ``self.active``, which the flat path sets to
+        # away from. ``schedule_load``'s navigate-away cancel doesn't cover this:
+        # it compares against ``self.active``, which the flat path sets to
         # None, so with a flat preview on screen there is nothing to compare.
         self.cancel_mount_task()
         self._app._lazy.cancel()
@@ -1247,7 +1247,7 @@ class PreviewPresenter:
         # matched but carries no highlightable span (e.g. a tree-rebuild
         # cursor echo lands on chunk 0). Scrolling there parks the view at
         # the chunk's top with nothing highlighted, and a second racing
-        # dispatch then clobbers the correct match scroll — last writer
+        # dispatch then clobbers the correct match scroll: last writer
         # wins, non-deterministically. Resolve to the file's first matching
         # chunk so every dispatch for this (file, query) lands on the same
         # match regardless of arrival order. Genuine match chunks (real
@@ -1276,7 +1276,7 @@ class PreviewPresenter:
             self._app._flat.installed_key = cache_key
         self._app._flat.activate(buf)
         # Route the flat match scroll through the controller: arm with the
-        # resolved focus chunk and reconcile (idempotent — re-applies the
+        # resolved focus chunk and reconcile (idempotent: re-applies the
         # install's scroll; for intra-file nav it IS the scroll). The 25%
         # context margin matches the structural path.
         self._app._preview_scroll.arm(
@@ -1309,7 +1309,7 @@ class PreviewPresenter:
         These three methods no longer drive the progress line. A navigation's
         session is opened once by :meth:`render_full_doc` and advanced by
         :class:`fnd.tui.progress.operations.PreviewProgressTracker`, which reads
-        this pipeline's own signals — so a stage that forgets to call these can
+        this pipeline's own signals, so a stage that forgets to call these can
         no longer strand the line, and a stale one can no longer retire a
         successor's. The arguments are kept because the sixteen call sites are
         deliberately left as they are; they describe work the tracker measures
@@ -1331,7 +1331,7 @@ class PreviewPresenter:
 
     def update_progress_bar(self, progress: int) -> None:
         """No-op. The tracker reads ``mounted_indices`` itself, and against the
-        mount window rather than the file's chunk count — the old denominator
+        mount window rather than the file's chunk count: the old denominator
         that left the line reading ~1% on a thousand-chunk PDF."""
         del progress
 
@@ -1376,7 +1376,7 @@ class PreviewPresenter:
     ) -> None:
         """Make ``container`` the only visible preview. With
         ``pre_reveal=True`` the container is laid out but invisible
-        (opacity:0) until the scroll lands — no flash to file-top before
+        (opacity:0) until the scroll lands; no flash to file-top before
         the jump-to-match. With ``keep_outgoing=True`` the previously-active
         container stays visible (so the pane never blanks) until the atomic
         reveal swaps to ``container`` (see :meth:`_swap_reveal_target`)."""
@@ -1386,7 +1386,7 @@ class PreviewPresenter:
         # Hold the outgoing preview on screen while the incoming one builds
         # invisibly; the reveal swap hides it and shows the new one in one tick.
         # Only keep a genuinely-visible prior container (not one left invisible
-        # by a superseded mount) — otherwise the pane would blank anyway.
+        # by a superseded mount), otherwise the pane would blank anyway.
         prior = self.active
         outgoing = (
             prior
@@ -1456,7 +1456,7 @@ class PreviewPresenter:
         if container is not self.active or is_live(container):
             return
         if is_condemned(container):
-            # Its message loop is already closing — ``pane.mount()`` cannot
+            # Its message loop is already closing: ``pane.mount()`` cannot
             # revive it, and the queued Prune would tear it out again. Drop the
             # active reference instead so the reveal no-ops and the settle-time
             # paint check (:meth:`_verify_painted`) rebuilds from scratch.
@@ -1526,8 +1526,8 @@ class PreviewPresenter:
     def invalidate_captures_on_resize(self) -> None:
         """Drop captures that no longer match the width chunks lay out at.
 
-        Captured strips cannot be re-wrapped — re-deriving them means rebuilding
-        the markdown tree, which is the cost capturing avoids — so a width change
+        Captured strips cannot be re-wrapped: re-deriving them means rebuilding
+        the markdown tree, which is the cost capturing avoids, so a width change
         invalidates them.
 
         Height-only changes must NOT invalidate: a vertical resize leaves every
@@ -1536,7 +1536,7 @@ class PreviewPresenter:
 
         Written to be idempotent and timing-independent rather than to fire once
         on the "right" tick. ``call_after_refresh`` can still read the PRE-layout
-        width — measured, it does — so a one-shot "has the width changed since
+        width (measured, it does) so a one-shot "has the width changed since
         last time?" guard latches the old value and then never fires again.
         Dropping everything that does not match the width measured right now is
         correct whenever it runs, and harmless to run repeatedly.
@@ -1554,13 +1554,13 @@ class PreviewPresenter:
         # It runs on a terminal resize and on the Reading View toggle. A scrollbar
         # appearing inside the pane changes the width too and does not fire this,
         # so captures taken before the bar appeared are left unreachable until
-        # the next real resize. They are a miss rather than a fault — the wrong
-        # width can never be served — but they do hold row budget.
+        # the next real resize. They are a miss rather than a fault (the wrong
+        # width can never be served) but they do hold row budget.
         self.capture_store.drop_other_widths(width)
         # The MOUNTED captures are repaired elsewhere, and deliberately: this
         # runs from `call_after_refresh`, which fires before the re-layout, so
         # nothing looks stale from here. Each `FrozenChunkView` reports its own
-        # staleness once it has been laid out — see `on_stale_strips`.
+        # staleness once it has been laid out: see `on_stale_strips`.
 
     def on_stale_strips(self) -> None:
         """A frozen chunk is painting strips cut for a width it no longer has.
@@ -1612,7 +1612,7 @@ class PreviewPresenter:
         #
         # `virtual_region`, never `region`: region is relative to the SCREEN and
         # is NULL_REGION for anything the compositor has culled, so every
-        # off-screen chunk reads as y=0 — which sorted culled chunks ahead of
+        # off-screen chunk reads as y=0, which sorted culled chunks ahead of
         # visible ones and made the drift predicate count nine chunks BELOW the
         # fold as above it, scrolling the pane 18 rows for nothing.
         # `prune_active_to_window` uses virtual_region for the same reason.
@@ -1629,7 +1629,7 @@ class PreviewPresenter:
         # Bound the pass to the window. Re-capturing the whole mounted set cost
         # 349 captures and 13.8s for one twelve-column drag; pruning first and
         # repairing what survives costs 25 and 0.76s. Lazy mount refills the
-        # rest at the current width when the user scrolls there — the same path
+        # rest at the current width when the user scrolls there: the same path
         # that already serves never-mounted chunks. `prune_active_to_window` is
         # scroll-compensated and flash-free, and a no-op on small files.
         if len(stale) > tuning.VISIBLE_FIRST_ABOVE + tuning.VISIBLE_FIRST_BELOW:
@@ -1637,7 +1637,7 @@ class PreviewPresenter:
             with contextlib.suppress(Exception):
                 pruned = self.prune_active_to_window()
             # `is_live`, not `is_mounted`: Textual defers removal, so a widget
-            # the prune just dropped still reports itself mounted — measured,
+            # the prune just dropped still reports itself mounted: measured,
             # 46 of 46 pruned widgets passed `is_mounted`, so this filter
             # removed nothing and the pass re-captured the whole stale set,
             # which is the cost the prune exists to avoid.
@@ -1646,8 +1646,8 @@ class PreviewPresenter:
             ]
             # And move the viewport sample with what the prune removed above
             # the fold: the chunk positions below read post-removal, so leaving
-            # the sample where it was classifies chunks at the fold as above it
-            # — measured, the drift correction came out as the growth of the
+            # the sample where it was classifies chunks at the fold as above it,
+            # measured, the drift correction came out as the growth of the
             # whole document, 126 rows applied where 9 was right.
             viewport_top = max(0, pane.scroll_offset.y - int(pruned))
 
@@ -1659,12 +1659,12 @@ class PreviewPresenter:
             held = None
         # `reconciling` is NOT held across the loop. It gates lazy mount's
         # release of the scroll anchor and the match-nav burst reset, so holding
-        # it for a pass — measured at 2.8s, and 6s on heavy content — means a
+        # it for a pass (measured at 2.8s, and 6s on heavy content) means a
         # genuine user scroll does neither. That is the shape of the lazy-load
         # dead-end an uncleared gate produced before. The adopts do not scroll;
         # only the correction below does.
         for seq, view in stale:
-            # Abandon the moment anything the pass assumed stops holding — the
+            # Abandon the moment anything the pass assumed stops holding: the
             # width moved again mid-drag, the user navigated, the query changed.
             if (
                 self.active is not container
@@ -1681,7 +1681,7 @@ class PreviewPresenter:
                 capture = await self._warm_host.capture(chunk, width, match_spec=spec)
                 if capture is None:
                     # Clear the latch. A view reports once per width, so leaving
-                    # it set means this chunk never asks again — measured with
+                    # it set means this chunk never asks again: measured with
                     # injected failures, 55 chunks stayed cropped and a round
                     # trip to another width and back did not clear them. `freeze`
                     # refuses on purpose (unlaid DataTable, nested scroll), so
@@ -1691,7 +1691,7 @@ class PreviewPresenter:
                 self.capture_store.put(parent_id, query_sig, capture.width, capture)
             before = view.frozen.outer_height
             # A chunk above the viewport moves what the reader is looking at;
-            # accumulate and correct once, less what the claim absorbs — it
+            # accumulate and correct once, less what the claim absorbs: it
             # prices what moves ITS anchor, so that much would land twice.
             bottom = view.virtual_region.y + before
             absorbed_above = None if held is None else held.virtual_region.y
@@ -1713,9 +1713,9 @@ class PreviewPresenter:
         if repaired:
             self.diag_log(f"stale strips repaired={repaired} width={width} drift={drift}")
         # Re-arm explicitly. Reports arriving while a pass runs are dropped and a
-        # view reports once per width, so without this a pass that abandoned —
+        # view reports once per width, so without this a pass that abandoned,
         # including one that abandoned BEFORE its first success, which is why
-        # this is not gated on `repaired` — would leave the tail cropped until
+        # this is not gated on `repaired`: would leave the tail cropped until
         # the next width change or navigation.
         #
         # Termination comes from the attempt bound rather than from progress: a
@@ -1737,19 +1737,19 @@ class PreviewPresenter:
         self, target: Widget, margin: int, anchor_region: Region | None = None
     ) -> bool:
         """Atomic preview swap: hide the outgoing container, position the
-        incoming one so ``target`` sits ``margin`` rows down, and reveal it —
+        incoming one so ``target`` sits ``margin`` rows down, and reveal it:
         all in one tick. Returns True when a swap happened, False when there is
         no outgoing container (the caller then scrolls + reveals normally).
 
         The outgoing container stayed on screen through the whole build, so the
         first frame the user sees after this is the new preview already at its
-        match — no blank, no scroll-into-place. The anchor's offset is taken
+        match: no blank, no scroll-into-place. The anchor's offset is taken
         relative to the incoming container's top, which is scroll-independent
         and so survives the outgoing container leaving the layout.
 
         ``anchor_region`` (screen space) overrides ``target.region`` when given:
         a match inside a table renders as one full-height DataTable, so the
-        matched cell is not its own widget — the caller resolves the cell's
+        matched cell is not its own widget; the caller resolves the cell's
         region and passes it here so the swap lands on the matched row, not the
         table top."""
         outgoing = self.outgoing
@@ -1765,13 +1765,13 @@ class PreviewPresenter:
         # Replace the claim, which is usually held on a chunk of the OUTGOING
         # container: once that container leaves the layout its widgets report
         # ``virtual_region`` y=0, and the pane absorbs the difference as real
-        # movement — measured 117-187 rows backwards.
+        # movement, measured 117-187 rows backwards.
         anchor = self._app._preview_scroll.anchor
         self._reseat_absorb_claim(new, anchor.focus_chunk_seq if anchor else None)
         self.diag_log(f"scroll site=swap y={target_y}")
         set_preview_visibility(new, pre_reveal=False)
         new.has_painted = True
-        # Same event as reveal()'s, on the atomic-swap path — see the note there.
+        # Same event as reveal()'s, on the atomic-swap path: see the note there.
         self.diag_log(f"first_paint parent={new.parent_doc_id[:8]} path=swap")
         self.outgoing = None
         return True
@@ -1791,12 +1791,12 @@ class PreviewPresenter:
     def reveal(self, container: PreviewContainer) -> None:
         """Reveal ``container`` and drop any still-held outgoing preview.
         Fallback for paths where :meth:`swap_reveal_target` did not run (no
-        match resolved, or no outgoing) — a no-op for the class already lifted
+        match resolved, or no outgoing); a no-op for the class already lifted
         by the swap.
 
         Guard: a finalise/reveal callback is queued via ``call_after_refresh``
         and runs a tick later. If a newer navigation superseded this mount in
-        the meantime, ``container`` is no longer ``_active_preview`` — revealing
+        the meantime, ``container`` is no longer ``_active_preview``: revealing
         it would surface the wrong file and clobber the new nav's outgoing
         reference. Detached finalise tasks aren't cancelled, so this staleness
         check (not task cancellation) is the single point that makes a
@@ -1810,14 +1810,14 @@ class PreviewPresenter:
         set_preview_visibility(container, pre_reveal=False)
         container.has_painted = True
         # The moment the new result becomes visible. Logged because it is the
-        # only exact answer to "when did the user first see this?" — inferring
+        # only exact answer to "when did the user first see this?": inferring
         # it by diffing captured frames measures how MUCH of the pane changed,
         # not when it changed, and mis-ranks any design that paints early and
         # fills in behind it.
         self.diag_log(f"first_paint parent={container.parent_doc_id[:8]}")
-        # Revealed — the bounded-time backstop is no longer needed.
+        # Revealed: the bounded-time backstop is no longer needed.
         self._cancel_reveal_watchdog()
-        # The new result is now positioned — re-measure the ▲/▼ view markers.
+        # The new result is now positioned: re-measure the ▲/▼ view markers.
         # This is the authoritative switch event: it fires even when the reveal
         # scroll doesn't move (which the scroll-watcher trigger would miss,
         # leaving the previous result's markers stale).
@@ -1828,7 +1828,7 @@ class PreviewPresenter:
         """Invariant backstop: the active container must not stay ``-pre-reveal``
         (invisible) once its navigation has settled. Reveal is normally driven by
         one specific finalise task, but rapid navigation can cut that task short
-        before it reveals — and the scroll-only resume path
+        before it reveals, and the scroll-only resume path
         (:meth:`_settled_instant_scroll`) never reveals at all. Either leaves the
         active container built-but-invisible: the "preview blank until I select a
         different result and come back" strand. Calling this whenever a
@@ -1874,7 +1874,7 @@ class PreviewPresenter:
         The body reveals by scheduling ``reconcile`` at its very end; if rapid
         navigation CANCELS this task at any earlier await (build/settle wait), it
         never gets there and the still-active container would stay ``-pre-reveal``
-        (invisible) — the strand. The ``finally`` backstop reveals the active
+        (invisible): the strand. The ``finally`` backstop reveals the active
         container in that cut-short case so it can't stay hidden. On the normal
         path the body returns having scheduled the reveal, so the backstop is a
         no-op (and never reveals early, preserving the no-flash-at-top scroll)."""
@@ -1946,7 +1946,7 @@ class PreviewPresenter:
         # ``display=False`` widgets take no part in the arrange, so they cannot
         # move the match and there is nothing to wait for. Skipping them is also
         # load-bearing for ``await_match_settled``, which requires every watched
-        # height to be > 0 — a hidden widget measures 0 forever and would hold
+        # height to be > 0: a hidden widget measures 0 forever and would hold
         # the settle to its round limit.
         above_widgets: list[FNDMarkdown] = [
             w
@@ -1966,7 +1966,7 @@ class PreviewPresenter:
         # says the markdown rendered; the compositor's arrange (which fixes every
         # chunk's region AND the pane's scroll extent) runs over several more
         # refreshes. The old region.height>0 poll only checked the focus chunk
-        # and raced the chunks above it still flowing — so a deep match scrolled
+        # and raced the chunks above it still flowing, so a deep match scrolled
         # against a half-settled layout and clamped off-screen. _await_preview_settled
         # is Textual's own message-drain signal (what Pilot waits on): it returns
         # only once every widget has processed its pending layout, so the geometry
@@ -1979,7 +1979,7 @@ class PreviewPresenter:
         )
         import os as _os
 
-        # Option B: scoped settle is the default — wait only on the geometry the
+        # Option B: scoped settle is the default, wait only on the geometry the
         # scroll reads (focus + above-window heights), not a full-pane drain.
         # _FND_FULL_SETTLE=1 restores the old behaviour as an escape hatch.
         if _os.environ.get("_FND_FULL_SETTLE") == "1":
@@ -2003,10 +2003,10 @@ class PreviewPresenter:
         # instead of a zero-region ghost (blank pane).
         await self._reattach_active_if_detached(container)
         # Scroll while the container is still invisible (opacity:0), then reveal
-        # once it lands — so the match never flashes at the file top first. The
+        # once it lands, so the match never flashes at the file top first. The
         # layout is settled, so this is a single deterministic scroll.
         self._app._preview_scroll.reconcile(_reveal_when_landed)
-        # This render has settled — release the in-flight coalescing
+        # This render has settled: release the in-flight coalescing
         # latch so a later genuine re-render of the same target can run.
         self.inflight_target = None
         self._app._diag_log(
@@ -2057,7 +2057,7 @@ class PreviewPresenter:
                 f"compose_done={compose_done}"
             )
 
-        # Wait for the screen to fully settle, THEN scroll once + reveal — same
+        # Wait for the screen to fully settle, THEN scroll once + reveal: same
         # deterministic settle the cold path uses (see _finalise_via_lock). The
         # warm reveal is sync, so run the await in a task.
         import asyncio as _asyncio
@@ -2069,7 +2069,7 @@ class PreviewPresenter:
             await self._reattach_active_if_detached(container)
             self._app._preview_scroll.reconcile(_reveal_when_landed)
 
-        # Cancel a prior settle-await on this container before replacing it — a
+        # Cancel a prior settle-await on this container before replacing it: a
         # rapid re-nav would otherwise leave it running, burning a full DOM-drain
         # and a redundant (generation-guarded) reconcile. Safe to cancel: this
         # task does no cleanup, so CancelledError just unwinds the await. Held on
@@ -2085,7 +2085,7 @@ class PreviewPresenter:
 
         Drain = Textual's own settle mechanism (what ``Pilot.pause`` /
         ``_wait_for_screen`` use): schedule a callback on every widget via
-        ``call_later`` and wait for them all to fire — i.e. every widget has
+        ``call_later`` and wait for them all to fire, i.e. every widget has
         processed the messages queued now. One drain settles the current wave;
         the reflow it triggers posts a follow-up wave, so loop until the screen
         reports no pending layout/repaint/recompose (its ``_on_idle`` condition),
@@ -2108,14 +2108,14 @@ class PreviewPresenter:
                     reason = "no_screen"
                     return
                 # Drain only what bears on the preview's geometry: the app + screen
-                # (which run the arrange) and the preview pane's own subtree — NOT the
+                # (which run the arrange) and the preview pane's own subtree, NOT the
                 # whole screen (results tree, sidebars), which is irrelevant here and
                 # makes the per-round callback count scale with the unrelated DOM.
                 try:
                     pane = self._app.query_one("#preview_pane", VerticalScroll)
                     children = [self._app, screen, *pane.walk_children(with_self=True)]
                 except Exception:
-                    # No pane yet — fall back to the screen-wide drain.
+                    # No pane yet: fall back to the screen-wide drain.
                     children = [self._app, *screen.walk_children(with_self=True)]
                 count = 0
                 done = asyncio.Event()
@@ -2138,7 +2138,7 @@ class PreviewPresenter:
                     except TimeoutError:
                         reason = "timeout"
                         return
-                # Stop once the screen has no pending layout work — the geometry is
+                # Stop once the screen has no pending layout work: the geometry is
                 # now final. (These are the flags Screen._on_idle itself checks.)
                 if not (
                     getattr(screen, "_layout_required", False)
@@ -2163,11 +2163,11 @@ class PreviewPresenter:
         above_widgets: list[FNDMarkdown],
         max_rounds: int = 12,
     ) -> None:
-        """Option B — targeted settle. The full-pane drain waits for the WHOLE
+        """Option B: targeted settle. The full-pane drain waits for the WHOLE
         screen to stop reflowing; but the only geometry the scroll reads is the
         focus chunk's virtual_y, which is fixed once the above-window chunk
         heights stop changing. So drain only [app, screen, focus, above] and
-        exit when those heights are stable for two consecutive rounds — far
+        exit when those heights are stable for two consecutive rounds: far
         fewer callbacks/round than walking every block in the pane, and an
         earlier exit than the screen-global flags allow. Stability is judged on
         the SPECIFIC heights that move the match, not a generic region poll, so
@@ -2180,7 +2180,7 @@ class PreviewPresenter:
 
         _t0 = _time.perf_counter()
         watch: list[Widget] = [w for w in [header, *above_widgets] if w is not None]
-        # Nothing to track (no focus/above widgets, or no resolvable match) —
+        # Nothing to track (no focus/above widgets, or no resolvable match):
         # fall back to the full-pane drain rather than scroll against unknown
         # geometry. The scoped path only buys us anything when there ARE heights
         # to watch settle.
@@ -2190,7 +2190,7 @@ class PreviewPresenter:
         try:
             screen = self._app.screen
         except Exception:
-            return  # no screen (teardown / transition) — nothing to settle
+            return  # no screen (teardown / transition): nothing to settle
         targets = [self._app, screen, *watch]  # App + Screen + widgets all have call_later
 
         def _sig() -> tuple[int, ...]:
@@ -2252,7 +2252,7 @@ class PreviewPresenter:
         self, container: PreviewContainer, parent_id: str, focus_chunk_seq: int
     ) -> None:
         """Option C: the target chunk is already mounted, so scroll straight to
-        it — but settle the focus + nearest-above heights first (cheap, ~2 rounds
+        it, but settle the focus + nearest-above heights first (cheap, ~2 rounds
         when the file is idle) so heavy table/fence geometry is final and the
         match lands on-screen instead of clamping off."""
         from fnd.tui import _perf
@@ -2265,14 +2265,14 @@ class PreviewPresenter:
         await self.await_match_settled(header, above)
         _perf.mark("click_to_display_end", parent_id=parent_id, path="already_active_scroll_only")
         # Reveal-on-settle: this resume path is taken for an already-mounted
-        # target, which is USUALLY already visible — but if a prior rapid-nav
+        # target, which is USUALLY already visible, but if a prior rapid-nav
         # cancel left it ``-pre-reveal`` (invisible), scrolling alone would strand
         # it. ``reveal_active`` lifts it once the scroll lands (no-op otherwise).
         self._app._preview_scroll.reconcile(self.reveal_active)
         # Re-freeze whatever this navigation left live outside the new window.
         # The sweep after the initial fill is not enough on its own: lazy mount
         # and each subsequent navigation mount more chunks live, so DOM creeps
-        # back over a reading session — measured 402 widgets after the fill,
+        # back over a reading session, measured 402 widgets after the fill,
         # 805 after twenty navigations. Freezing has to recur for the same
         # reason the fill does.
         await self._refreeze_around(container, focus_chunk_seq)
@@ -2289,7 +2289,7 @@ class PreviewPresenter:
         # was the first cut and it buys nothing: both policies settle at the same
         # DOM (263 widgets on a 99-chunk file), because each navigation re-freezes
         # whatever the last one left behind. Freezing the window as well simply
-        # gets there sooner — 401 widgets after the initial fill against 688.
+        # gets there sooner: 401 widgets after the initial fill against 688.
         win_start = focus_idx
         win_end = focus_idx + 1
         await self._freeze_chunks_outside_window(container, chunks, win_start, win_end)
@@ -2297,7 +2297,7 @@ class PreviewPresenter:
         # run on cross-file dispatch and the same-file rebuild alone, so a
         # container stranded by an earlier navigation survived indefinitely while
         # the user stayed in one file: measured twelve in-window navigations
-        # later, one strand still held 6 live chunks and 169 widgets — more DOM
+        # later, one strand still held 6 live chunks and 169 widgets, more DOM
         # than the 92 frozen chunks of the file actually being read.
         self.sweep_stranded_containers()
 
@@ -2306,7 +2306,7 @@ class PreviewPresenter:
         preview caches + DOM (new query, scope clear, highlight rerender): the
         cancelled mount's deferred `finally` sees the changed generation and
         drops its now-stale container instead of re-caching it. Navigation /
-        resume paths that cancel a mount but keep the cache must NOT call this —
+        resume paths that cancel a mount but keep the cache must NOT call this:
         their partial container is still wanted for a later resume."""
         self.reset_generation += 1
         self._supersede_decode()
@@ -2317,7 +2317,7 @@ class PreviewPresenter:
         self.pending_landing_intent = None
         # Stop warming immediately rather than at the next batch boundary. Its
         # captures carry the OLD query's highlighting, so every chunk it builds
-        # from here is work whose result can never be served — the store key
+        # from here is work whose result can never be served: the store key
         # carries the query signature, so it would be stored and never read.
         # Captures for a superseded query can never be served; holding them
         # only spends the row budget that the new query's captures need. The
@@ -2332,7 +2332,7 @@ class PreviewPresenter:
         # cancelling a warm the user cannot see.
         self._full_warm_target = None
         self._retire_full_warm_session(completed=False)
-        # And any unconsumed prepend claim — the container it was made against
+        # And any unconsumed prepend claim: the container it was made against
         # is about to be replaced, and the next document's mount would be
         # absorbed as though it were content added above the reader.
         with contextlib.suppress(Exception):
@@ -2399,7 +2399,7 @@ class PreviewPresenter:
             # rendering. Same key as ``_flat_buffer_cache``.
             self.prebuilt_cache[(parent_id, self._app._search.query_signature())] = prebuilt
         if not chunks:
-            # Empty file — hide bar, leave pane blank.
+            # Empty file: hide bar, leave pane blank.
             self.hide_progress_bar()
             self.parent_id = parent_id
             self._app._refresh_status()
@@ -2419,8 +2419,8 @@ class PreviewPresenter:
         """A mount that has not yet put anything on screen.
 
         Narrower than ``user_mount_in_flight`` on purpose. A mount task stays
-        alive well past the reveal — it still has the background fill and the
-        freeze sweep to do — and treating that whole tail as "a mount is
+        alive well past the reveal (it still has the background fill and the
+        freeze sweep to do) and treating that whole tail as "a mount is
         happening" is what walls scroll-driven lazy mount off for seconds at a
         time, so scrolling up through a file mounts nothing until the
         housekeeping finishes. Slicing the sweep lengthened that tail and made
@@ -2447,7 +2447,7 @@ class PreviewPresenter:
 
         Counted in ROWS, not chunks. Everything mounted above the focus has to
         finish building before the match can be revealed, so this is the part of
-        the mount the user waits on — and a fixed chunk count prices it wrongly
+        the mount the user waits on, and a fixed chunk count prices it wrongly
         for every format at once. A PDF chunk is a page (30-60 rows), so seven of
         them is several screens of content nobody asked for; a markdown chunk is
         one heading's section (often 2-3 rows), so seven of them is less than the
@@ -2455,7 +2455,7 @@ class PreviewPresenter:
 
         So: walk up until roughly a screenful of content is covered, bounded by
         ``VISIBLE_FIRST_ABOVE`` chunks either way. Estimated from the source line
-        count rather than measured geometry — nothing is laid out yet, and the
+        count rather than measured geometry: nothing is laid out yet, and the
         estimate only has to be good enough to stop one chunk early or late.
         """
         rows_wanted = max(1, int(viewport_h * tuning.VISIBLE_FIRST_ABOVE_SCREENS))
@@ -2492,7 +2492,7 @@ class PreviewPresenter:
         ``freeze`` rightly refuses it. Attempting it inline failed on all 72
         chunks of a real file.
 
-        The visible window is left live — those chunks are being read, and the
+        The visible window is left live: those chunks are being read, and the
         focused one is what the scroll resolves against.
 
         On by default; ``_FND_NO_FREEZE=1`` opts out. Measured on a real
@@ -2523,7 +2523,7 @@ class PreviewPresenter:
         # Never capture from a container that is not being PAINTED. The incoming
         # container builds invisibly (`-pre-reveal`, opacity 0) and is revealed
         # only once its scroll lands, so a sweep that runs before the reveal
-        # captures correctly-sized, completely BLANK strips — and nothing
+        # captures correctly-sized, completely BLANK strips, and nothing
         # downstream can tell, because the geometry is right. That is the
         # end-of-file blank: the tail is captured pre-reveal, then served empty.
         # Wait for the reveal; a later landing re-freezes via _refreeze_around.
@@ -2554,7 +2554,7 @@ class PreviewPresenter:
                     break
                 slice_start = time.perf_counter()
             # Only the VISIBLE window stays live. Skipping everything before
-            # win_end — as the first cut did — left every chunk ABOVE the focus
+            # win_end, as the first cut did, left every chunk ABOVE the focus
             # live too, which is most of them on a file the user has read down
             # through: 11 live chunks holding 329 widgets against 72 frozen
             # holding 72.
@@ -2574,11 +2574,11 @@ class PreviewPresenter:
                 continue
             # Keep it. This capture used to die with the container, so a jump
             # outside the mounted window rebuilt chunks that had already been
-            # built and captured moments earlier — which is why revisiting a
+            # built and captured moments earlier, which is why revisiting a
             # match cost exactly as much as visiting it the first time.
             #
             # Keyed on the width chunks lay out at, which is what these strips
-            # were cut at — they come off an on-screen widget. The 63-against-64
+            # were cut at: they come off an on-screen widget. The 63-against-64
             # gap this comment used to blame on container padding was the
             # scrollbar: PreviewContainer has no padding, and `capture_width`
             # accounts for the bar.
@@ -2647,7 +2647,7 @@ class PreviewPresenter:
         """Cancel everything this presenter runs in the background.
 
         Called on app exit. Without it, coverage keeps capturing while Textual
-        is trying to shut down — and since a capture holds the event loop for
+        is trying to shut down, and since a capture holds the event loop for
         the whole of its build, the quit has to wait its turn. Measured on a
         real corpus: 0.49s to quit with coverage off against 1.09s with it on,
         of which pacing the captures recovered about half and this the rest.
@@ -2660,7 +2660,7 @@ class PreviewPresenter:
         """The targets Down/Up actually walk, in order.
 
         Neighbours used to be taken from ``_search.groups``, which is the
-        RANKING order — but the user moves through the results TREE, where a
+        RANKING order, but the user moves through the results TREE, where a
         file's hits are expanded inline and collapsed nodes are skipped. The two
         orders diverge, so coverage warmed files the cursor never reached:
         measured, the store held four files while every lookup asked for a
@@ -2709,12 +2709,12 @@ class PreviewPresenter:
         with a debounce and then waits out the landing, so arrows arriving every
         few hundred milliseconds killed each attempt before it captured
         anything. Measured over a full navigation session, `mount served=0
-        built=53` — the capture path was dead exactly when it was needed.
+        built=53`: the capture path was dead exactly when it was needed.
 
         So a navigation only moves the ANCHOR. The runner finishes the pass it
         is on, then picks up wherever the cursor has got to, and keeps going
         until the anchor stops moving. Cancellation is reserved for the case
-        where the work is genuinely worthless — a new query, handled by
+        where the work is genuinely worthless: a new query, handled by
         ``bump_reset_generation``.
         """
         import os as _os
@@ -2726,8 +2726,8 @@ class PreviewPresenter:
         # `cancelling()` as well as `done()`: cancel() only REQUESTS
         # cancellation and the task does not settle until a later loop
         # iteration, so a caller that cancels and restarts in the same
-        # synchronous block — `rerender_current` does exactly that via
-        # `bump_reset_generation` — saw a task that was neither done nor
+        # synchronous block: `rerender_current` does exactly that via
+        # `bump_reset_generation`, saw a task that was neither done nor
         # replaced, and coverage stayed dead until the next navigation. That is
         # the moment the cache most needs refilling, because the same call just
         # emptied it.
@@ -2750,7 +2750,7 @@ class PreviewPresenter:
     async def full_warm_estimate(self, parent_id: str) -> tuple[int, int]:
         """Chunks a whole-file warm would capture, and their character total.
 
-        Zero means the off-screen builder can take nothing here — a wholly
+        Zero means the off-screen builder can take nothing here: a wholly
         flat-path file, which the capture store never serves.
         """
         chunks = await self._coverage_chunks(parent_id)
@@ -2763,7 +2763,7 @@ class PreviewPresenter:
         Named rather than global: the key toggles, and an unnamed cancel meant
         pressing it on a second file stopped the first and warmed neither.
 
-        Clearing the target is the whole abort — every capture is preceded by
+        Clearing the target is the whole abort: every capture is preceded by
         the test that reads it, so the walk returns through its ordinary path
         within one capture.
         """
@@ -2820,8 +2820,8 @@ class PreviewPresenter:
         """Capture what navigation will reach for next, in priority order.
 
         Captures land in ``capture_store``, never in the pane: the mounted set
-        has to stay CONTIGUOUS — lazy mount only fills at its edges, so a hole
-        in the middle would be a stretch of the document silently missing —
+        has to stay CONTIGUOUS, lazy mount only fills at its edges, so a hole
+        in the middle would be a stretch of the document silently missing,
         while what navigation needs covered is the matches, scattered right
         through the file and across its neighbours. A capture costs 44.5 KB and
         no arrange time, which is what lets the cache hold a set the DOM cannot.
@@ -2834,7 +2834,7 @@ class PreviewPresenter:
             return
         # Settle first. Coverage is armed at the START of a navigation and
         # re-planned on every one, so a held-down arrow key would otherwise
-        # spawn a plan per keypress — each decoding neighbouring files off the
+        # spawn a plan per keypress: each decoding neighbouring files off the
         # loop before being cancelled by the next. Sleeping first means a
         # superseded plan does NO work at all: the cancel lands here.
         await asyncio.sleep(tuning.PREVIEW_WARM_DELAY)
@@ -2848,7 +2848,7 @@ class PreviewPresenter:
             return
         # WAIT for a measurable width rather than giving up on one. Coverage is
         # armed at the START of a navigation, which on a cold start is before
-        # the pane has been laid out — and since nothing re-triggers it until
+        # the pane has been laid out, and since nothing re-triggers it until
         # the cursor moves again, returning here meant the first file of a
         # session was never covered at all.
         width = 0
@@ -2914,7 +2914,7 @@ class PreviewPresenter:
             if here >= 0:
                 plan += neighbour_order(ids, here, tuning.COVERAGE_NEIGHBOUR_FILES)
             # Then the head of the result list, where the opening moves of a
-            # search are — appended, so it never delays the files beside the
+            # search are: appended, so it never delays the files beside the
             # cursor.
             plan += ids[: tuning.COVERAGE_SEED_FILES]
             seen_plan: set[str] = set()
@@ -2929,7 +2929,7 @@ class PreviewPresenter:
                 live_plan=current_plan,
             )
             # Landings everywhere, then the file the user asked for whole,
-            # then context — see fnd/tui/preview/coverage.py for why, and for
+            # then context: see fnd/tui/preview/coverage.py for why, and for
             # what taking them in any other order cost.
             captured += await self._cover_plan(ctx, margin=0)
             if (wanted := self._full_warm_target) is not None:
@@ -2963,7 +2963,7 @@ class PreviewPresenter:
         query signature and the pane width once amortises what would otherwise
         be two lookups per row.
 
-        Answered from the results list and the store, with no decode — a hit
+        Answered from the results list and the store, with no decode: a hit
         carries its chunk_seq, which is exactly the store's key. Same property
         that lets `_file_needs_coverage` re-plan on every cursor move.
         """
@@ -2975,7 +2975,7 @@ class PreviewPresenter:
         if width <= 0:
             # Before first layout there is no width, so every store lookup
             # would miss. None means "cannot answer", which is NOT the same as
-            # an empty map meaning "no files" — conflating them let a caller
+            # an empty map meaning "no files": conflating them let a caller
             # treat unavailable as authoritative.
             return None
         groups = getattr(self._app._search, "groups", None) or []
@@ -3045,7 +3045,7 @@ class PreviewPresenter:
 
         The distinction matters: an empty list means "listed, nothing to jump
         to", which is READY. None means the question does not apply, and
-        collapsing the two reported READY — the cheapest possible plan — for
+        collapsing the two reported READY (the cheapest possible plan) for
         any file the results do not contain.
 
         The same set ``_file_needs_coverage`` asks about and the same one the
@@ -3085,7 +3085,7 @@ class PreviewPresenter:
         return False
 
     def _landing_index(self, parent_id: str, chunks: list[FileChunk]) -> int:
-        """Where a jump INTO this file would land — its first hit AS LISTED.
+        """Where a jump INTO this file would land: its first hit AS LISTED.
 
         As listed, not the earliest in the document. The results tree adds a
         file's hits in ``group.hits`` order, which is by score, so arriving at a
@@ -3093,7 +3093,7 @@ class PreviewPresenter:
         document order, and taking its first element pointed coverage at the top
         of the file: measured on a 1018-chunk PDF, the store held thirteen
         captures at the right width and query while every lookup asked for chunk
-        679 and missed. Neighbour warming captured real chunks the whole time —
+        679 and missed. Neighbour warming captured real chunks the whole time:
         just never the ones navigation would ask for.
         """
         groups = getattr(self._app._search, "groups", None) or []
@@ -3126,7 +3126,7 @@ class PreviewPresenter:
 
         A neighbour has usually never been opened, so its chunks are not in the
         cache. Decoding a large file's chunks is not something to do on the
-        event loop — that is what froze the indexer portal.
+        event loop: that is what froze the indexer portal.
         """
         cached = self.chunk_cache.get(parent_id)
         if cached:
@@ -3142,7 +3142,7 @@ class PreviewPresenter:
         # Keep it, in the same cache the mount path reads. A neighbour decoded
         # here would otherwise be decoded AGAIN on every later coverage run, and
         # a THIRD time when the user actually navigates to it. Caching makes it
-        # once per file per query — which is also what stops an in-flight decode
+        # once per file per query, which is also what stops an in-flight decode
         # sitting between the user and a quit: measured 0.80s to quit against a
         # 0.49s baseline while decodes were still being repeated.
         if chunks:
@@ -3217,7 +3217,7 @@ class PreviewPresenter:
                 continue
 
             # Ordered around the neighbour's own first hit, where a jump into
-            # it lands — so only leaving the plan makes it pointless. Treating
+            # it lands, so only leaving the plan makes it pointless. Treating
             # it like tier 1 lost 54 of 61 neighbour passes to cursor moves.
             def still_wanted(pid: str = pid) -> bool:
                 return pid in ctx.live_plan() and not (margin and self._context_yields(ctx))
@@ -3239,7 +3239,7 @@ class PreviewPresenter:
         """Every field the coverage scheduler owns, in one place.
 
         Called from ``__init__``, and by any harness that drives coverage
-        against a presenter it did not fully construct — this state grows, and
+        against a presenter it did not fully construct: this state grows, and
         a caller mirroring it by hand goes stale silently.
         """
         # What coverage is capturing right now, for the stall watch to name
@@ -3255,14 +3255,14 @@ class PreviewPresenter:
         self._coverage_task: asyncio.Task[None] | None = None
         # Per file, the HIT chunks the off-screen builder cannot take: a
         # plain-layout kind, or one over the renderer's size cap. Per hit, not
-        # per file — a 37-hit PDF with 36 captured reported cold forever over
+        # per file: a 37-hit PDF with 36 captured reported cold forever over
         # one 46,266-character chunk against the 40,000 cap.
         self._unservable: dict[str, set[int]] = {}
         # Per file, how many chunks the off-screen builder can capture. Same
         # lifetime as the store: a new query re-establishes it.
         self._capturable_total: dict[str, int] = {}
         # The file the user asked to warm whole, if any, and whether that walk
-        # is the one running — the duty cycle differs for work being watched.
+        # is the one running: the duty cycle differs for work being watched.
         self._full_warm_target: str | None = None
         self._full_warm_active = False
         self._full_warm_session: ProgressSession | None = None
@@ -3274,7 +3274,7 @@ class PreviewPresenter:
 
         Deliberately not bounded by ``COVERAGE_CHUNK_BUDGET``: a half-warmed
         file delivers none of what was asked for. Stopping is a flag rather
-        than a cancellation — ``_capture_file_targets`` tests before every
+        than a cancellation: ``_capture_file_targets`` tests before every
         capture, so an abort lands within one and unwinds through the ordinary
         return path.
         """
@@ -3296,7 +3296,7 @@ class PreviewPresenter:
         # for calibration to learn from.
         #
         # Counted in CAPTURES against the file's capturable chunks. Counting
-        # targets walked instead mixed two units — a file whose chunks are half
+        # targets walked instead mixed two units: a file whose chunks are half
         # flat-path reached 100% halfway through and then sat motionless.
         total = max(1, self._capturable_total.get(parent_id, len(targets)))
         held = self.capture_store.count(parent_id, ctx.query_sig, width)
@@ -3335,7 +3335,7 @@ class PreviewPresenter:
         finally:
             self._full_warm_active = False
             self.coverage_parent = None
-        # Outside the finally so it runs only on the path that finished — a
+        # Outside the finally so it runs only on the path that finished: a
         # `finally` also fires on the cancelled and failed ones, where mounting
         # a half-warmed file is wrong.
         #
@@ -3353,8 +3353,8 @@ class PreviewPresenter:
         The facility holds a single AMBIENT slot and ``begin`` retires whatever
         is in it, so opening one unconditionally killed a running index's line.
         This yields: no line while the index owns the slot, and one taken when
-        it is free. The reverse is not prevented — an index begun mid-warm does
-        evict the warm — so the session is re-read per report and dropped once
+        it is free. The reverse is not prevented (an index begun mid-warm does
+        evict the warm) so the session is re-read per report and dropped once
         retired, rather than reported into for the rest of the run.
         """
         from fnd.tui.progress.operations import WARM_WHOLE_FILE
@@ -3373,7 +3373,7 @@ class PreviewPresenter:
 
         Capturing every chunk is only half of what a warmed file promises: the
         windowed mount still fills three chunks at a time, and only when a
-        scroll event fires the debounced check — so at the top of the mounted
+        scroll event fires the debounced check, so at the top of the mounted
         region the user has to scroll DOWN to get more content ABOVE.
 
         Bounded, because a mounted frozen chunk costs arrange time whether or
@@ -3432,7 +3432,7 @@ class PreviewPresenter:
         """Whether margin work should stand down right now.
 
         Margins are context. They yield to a landing the cursor has moved
-        towards, and to a whole-file warm the user has asked for — the two
+        towards, and to a whole-file warm the user has asked for: the two
         things somebody is actually waiting on.
         """
         return self._full_warm_target is not None or self._unplanned_landings(ctx)
@@ -3446,8 +3446,8 @@ class PreviewPresenter:
 
         Scoped to files OUTSIDE this pass's plan, which is what makes yielding
         progress rather than spin: a planned file has already had its hits
-        attempted this pass, so yielding for one still uncaptured — a failed
-        decode, a capture the host refused — would starve margins entirely. It
+        attempted this pass, so yielding for one still uncaptured (a failed
+        decode, a capture the host refused) would starve margins entirely. It
         also means this can only fire once the cursor has moved, since a plan
         built from an unchanged anchor is the plan being walked.
         """
@@ -3463,13 +3463,13 @@ class PreviewPresenter:
     ) -> int:
         """Tier 1: capture the current file's hits, re-planning as the cursor moves.
 
-        A move inside the file changes only the ORDER — nearest-first is taken
-        around the cursor — so the plan is rebuilt around the new position and
+        A move inside the file changes only the ORDER, nearest-first is taken
+        around the cursor, so the plan is rebuilt around the new position and
         the same file carries on. Returning instead put the file the user is
         reading behind every neighbour in the plan, which is the one ordering
         the design rules out.
 
-        Ends when the cursor stops moving inside the file, or leaves it — which
+        Ends when the cursor stops moving inside the file, or leaves it, which
         IS a reason to stand down, because the pass planned around the file it
         went to supersedes this one.
 
@@ -3524,7 +3524,7 @@ class PreviewPresenter:
         """Capture ``targets`` of one file, standing down for anything on screen."""
         # Held for the WHOLE file, not per capture. This is what the results
         # arrows read as "being warmed right now", and a capture is ~60 ms with
-        # a yield of at least as long after it — so an attribute set only
+        # a yield of at least as long after it, so an attribute set only
         # around the capture call was unset more often than set, and a poll
         # twice a second almost never caught it. Files went cold straight to
         # ready with the warming marker never appearing. It means "the file
@@ -3552,7 +3552,7 @@ class PreviewPresenter:
         for processed, index in enumerate(targets, 1):
             # The plan was ordered around where the cursor WAS. A pass can run
             # for hundreds of chunks, so without this it keeps warming the part
-            # of the file the user has already left — measured, it captured
+            # of the file the user has already left: measured, it captured
             # chunks 4-15 of a 1018-chunk PDF while every lookup asked for 679,
             # which is why the store was full and nothing was ever served.
             if not still_wanted():
@@ -3597,14 +3597,14 @@ class PreviewPresenter:
                 self.coverage_activity = None
             if capture is not None:
                 # Filed under the capture's OWN width, not the width requested.
-                # They should be equal — that is the point of the jig above —
+                # They should be equal (that is the point of the jig above)
                 # but a capture cut at one width and filed under another is
                 # exactly the defect this branch set out to remove, and reading
                 # it off the capture makes the two impossible to diverge.
                 self.capture_store.put(parent_id, query_sig, capture.width, capture)
                 captured += 1
             # Hand the loop back for longer than we just held it. Without this
-            # coverage ran flat out — measured at 84% of the event loop — and a
+            # coverage ran flat out, measured at 84% of the event loop, and a
             # UI that only gets a sixth of its own loop is a UI that freezes.
             if on_capture is not None:
                 on_capture(processed, captured)
@@ -3626,7 +3626,7 @@ class PreviewPresenter:
 
         Stage 1 (sync, fast): mount the focused chunk plus
         :data:`tuning.VISIBLE_FIRST_ABOVE` chunks above and
-        :data:`tuning.VISIBLE_FIRST_BELOW` below — a window roughly matching
+        :data:`tuning.VISIBLE_FIRST_BELOW` below; a window roughly matching
         the typical viewport. The user sees the relevant content
         instantly.
 
@@ -3662,7 +3662,7 @@ class PreviewPresenter:
         # A container whose Prune is queued is dead: ``on_prune`` closes its
         # message loop, so re-mounting it does not bring it back. Dispatch
         # resolves reuse candidates through ``is_live`` precisely so we never
-        # get here with one — this is the backstop that keeps a future caller
+        # get here with one: this is the backstop that keeps a future caller
         # from silently building a preview into a widget that is on its way out.
         if is_condemned(container):
             self.diag_log(
@@ -3683,7 +3683,7 @@ class PreviewPresenter:
         # The try MUST cover the early awaits below (container mount,
         # cancel_task_on): they run BEFORE the detached finalise task is
         # spawned, and a cancellation here would otherwise skip the finally
-        # entirely — stranding the progress bar with no task left to hide it.
+        # entirely, stranding the progress bar with no task left to hide it.
         try:
             if not is_live(container):
                 await pane.remove_children("#placeholder")
@@ -3718,7 +3718,7 @@ class PreviewPresenter:
             # The progress line needs the size of THIS window as its mount
             # denominator. It is chosen by rows, so a tall-chunk format (a PDF
             # page is 30-60 rows) can select two chunks where the tunables
-            # would suggest fifteen — and a denominator of fifteen means the
+            # would suggest fifteen, and a denominator of fifteen means the
             # mount phase can never read as finished.
             container.mount_window = max(0, win_end - win_start)
 
@@ -3745,7 +3745,7 @@ class PreviewPresenter:
                 # the task mid-await (RUF006). Cleared once it completes.
                 # The above-window chunks stage 1b will mount. finalise must
                 # wait for THESE to exist + build, not just whatever is in
-                # chunk_widgets when it first looks — a prefetched focus chunk
+                # chunk_widgets when it first looks: a prefetched focus chunk
                 # has build_done already set, so finalise would otherwise run
                 # before stage 1b mounts the window and scroll to a stale
                 # (focus-at-top) position, then settle-scroll once they land.
@@ -3766,16 +3766,16 @@ class PreviewPresenter:
             # Stage 1b: mount the visible window, ABOVE the focus first and
             # closest-to-focus first within each side.
             #
-            # The finalise waits only on the chunks ABOVE the focus — they are
-            # what decides where the match lands — so mounting those first lets
+            # The finalise waits only on the chunks ABOVE the focus (they are
+            # what decides where the match lands) so mounting those first lets
             # the reveal stop waiting sooner. The ones below can arrive whenever;
             # interleaving the two sides made the reveal wait on roughly twice
             # the work it needed.
             #
             # Mounted in ONE pass. Awaiting each chunk's build before mounting
-            # the next looks attractive — Textual pumps a Markdown's blocks
+            # the next looks attractive: Textual pumps a Markdown's blocks
             # through the message loop, so builds started together interleave
-            # and each reports ~755ms where one alone takes ~22-30ms — but it is
+            # and each reports ~755ms where one alone takes ~22-30ms, but it is
             # a trap under real use. Serialising means a navigation's mount must
             # finish before the next one can get going, and over a sustained
             # Down sweep on a 1018-chunk PDF that took the finalise's build wait
@@ -3822,11 +3822,11 @@ class PreviewPresenter:
                         w.display = False
                         hidden_widgets.append(w)
                 self.update_progress_bar(progress=len(container.mounted_indices))
-                # Wall-clock yield — see prefetch loop.
+                # Wall-clock yield: see prefetch loop.
                 await asyncio.sleep(0.002)
 
             # Reveal + anchor in one synchronous block so Textual
-            # folds both layout changes into a single paint — no
+            # folds both layout changes into a single paint: no
             # visible "shift down then scroll back up" sequence.
             if hidden_widgets:
                 for w in hidden_widgets:
@@ -3835,7 +3835,7 @@ class PreviewPresenter:
                 if not skip_internal_scrolls and focus_chunk_seq in container.chunk_widgets:
                     # Revealing the above-window chunks shifted the layout, so
                     # the focus chunk must be re-anchored. Scroll to the MATCH
-                    # (first_match_block), not the chunk's top edge — anchoring
+                    # (first_match_block), not the chunk's top edge: anchoring
                     # to the top pushes a match deep inside the chunk off-screen
                     # the moment the background fill completes (the cold-load
                     # "wrong position until expanded" symptom).
@@ -3852,7 +3852,7 @@ class PreviewPresenter:
             # bails the instant the user navigates away.
             self.mount_phase = "await-first-paint"
             # Wait for finalise to actually reveal (first paint) before adding
-            # any DOM — otherwise this fill runs on the same coroutine and
+            # any DOM, otherwise this fill runs on the same coroutine and
             # starves the finalise task, delaying first paint several-fold.
             _ft = getattr(container, "_finalise_task", None)
             if _ft is not None:
@@ -3863,7 +3863,7 @@ class PreviewPresenter:
             if len(chunks) <= tuning.FULLMOUNT_CHUNK_BUDGET:
                 batch_size = 6
                 # Fill BELOW only: appending in document order grows content
-                # DOWNWARD, so the match the user is reading never moves — no
+                # DOWNWARD, so the match the user is reading never moves: no
                 # flicker. Downward match-jumps land on a mounted chunk (instant).
                 # We deliberately DON'T pre-fill ABOVE: inserting content above the
                 # viewport shoves it down, and the scroll can only re-pin a frame
@@ -3878,7 +3878,7 @@ class PreviewPresenter:
                 # replace this.
                 # Empty-guard (degenerate mount); and bail the moment the user
                 # takes scroll control (a user scroll clears is_armed) so upward
-                # lazy-mount isn't walled behind this background below-fill —
+                # lazy-mount isn't walled behind this background below-fill:
                 # once we stop, _preview_mount_task completes and lazy-mount
                 # handles both directions on demand.
                 i = (
@@ -3898,7 +3898,7 @@ class PreviewPresenter:
                     if i % batch_size == 0:
                         await asyncio.sleep(0.006)
             # Freeze AFTER the fill, not during it. A just-mounted chunk has
-            # not been laid out — size.height is 0 — and a capture of an
+            # not been laid out, size.height is 0, and a capture of an
             # unlaid-out widget is correctly refused, which is what made a
             # per-chunk attempt here fail every single time (72 of 72).
             self.mount_phase = "4-freeze-sweep"
@@ -3922,7 +3922,7 @@ class PreviewPresenter:
                 # DOM while this mount was in flight, then cancelled us. Re-
                 # caching or leaving this container mounted would re-pollute the
                 # just-cleared pane with the previous query's half-built widget
-                # tree — the "stuck mid-mount after a new query" bug. Drop it.
+                # tree: the "stuck mid-mount after a new query" bug. Drop it.
                 self.diag_log(
                     f"mount superseded gen={my_generation}->{self.reset_generation} "
                     f"parent={container.parent_doc_id[:8]}, dropping stale container"
@@ -3948,7 +3948,7 @@ class PreviewPresenter:
                 # DOM while this (now-cancelled) mount was in flight. Same-query
                 # nav doesn't bump reset_generation, so the ``superseded`` branch
                 # above doesn't catch it. Caching a dead container hands the next
-                # visit a cache-HIT on a widget that isn't in the tree — the warm
+                # visit a cache-HIT on a widget that isn't in the tree: the warm
                 # path then activates + scrolls a zero-region ghost and reveals a
                 # blank pane ("blank until I select another result and come
                 # back"). ``is_live`` also rejects a container whose removal is
@@ -3987,19 +3987,19 @@ class PreviewPresenter:
                 and (self.mount_task is None or self.mount_task is asyncio.current_task())
                 and self.inflight_target in (None, (parent_id, focus_chunk_seq))
             ):
-                # Ended in the early-await phase — before the detached finalise
+                # Ended in the early-await phase: before the detached finalise
                 # task (the ONLY thing that hides the bar + releases the in-flight
-                # latch on success) was spawned — and no successor took over the
+                # latch on success) was spawned, and no successor took over the
                 # loading state. Three ownership checks, all required:
                 #   * ``_finalise_task is None``: no detached finalise will clear it.
                 #   * ``mount_task is None`` (cancel_mount_task nulled it) OR
                 #     ``is current_task()`` (exception / other-path end, where it
-                #     still points at this now-dead task) — a successor MOUNT would
+                #     still points at this now-dead task): a successor MOUNT would
                 #     have overwritten it.
                 #   * ``inflight_target`` is still THIS target (or already clear):
                 #     the uncached decode path cancels us and opens a NEW
                 #     "decoding…" session WITHOUT assigning mount_task, so the
-                #     latch already points at the successor — don't hide its bar.
+                #     latch already points at the successor, don't hide its bar.
                 # Otherwise the bar stays "loading" until an unrelated navigation
                 # dispatches a fresh load. Hide + release so a cancelled (or
                 # failed) cold mount can't strand the preview.
@@ -4027,8 +4027,8 @@ class PreviewPresenter:
         implied by its index. Updates the container's
         ``mounted_indices`` / ``chunk_widgets`` / ``match_targets``
         bookkeeping."""
-        # Find the smallest already-mounted index greater than this one
-        # — we mount BEFORE that widget so chunks stay in document
+        # Find the smallest already-mounted index greater than this one:
+        # we mount BEFORE that widget so chunks stay in document
         # order regardless of which phase mounts them.
         before_widget: Widget | None = None
         next_mounted = min(
@@ -4041,7 +4041,7 @@ class PreviewPresenter:
 
         # A capture, if coverage has one. This is where covering pays: mounting a
         # capture is one widget and no build, against parsing markdown and
-        # waiting on Textual to pump a block tree through the message loop —
+        # waiting on Textual to pump a block tree through the message loop:
         # measured at 400-1274ms for the focus chunk alone. Every mount path
         # comes through here, so a cold mount, a rebuild and a lazy-mount batch
         # all serve captures without knowing about them.
@@ -4064,7 +4064,7 @@ class PreviewPresenter:
         """The width a chunk lays out at, which is what a capture must be cut to.
 
         ``scrollable_content_region`` is the only one of the pane's widths that
-        the scrollbar moves, and it is the one children are laid out against —
+        the scrollbar moves, and it is the one children are laid out against:
         `size` and `content_size` are the same value as each other and neither
         shrinks by the bar. Building a capture at anything else produces strips
         wrapped for a width they are never displayed at: measured on an 80-column
@@ -4074,7 +4074,7 @@ class PreviewPresenter:
 
         Filing key and render width are deliberately the SAME number. They were
         briefly separated on the theory that a scrollbar-stable key would stop
-        captures being orphaned when the bar appears — but a capture cut for a
+        captures being orphaned when the bar appears, but a capture cut for a
         width it cannot be displayed at is not worth finding, and one key
         covering two real widths is worse than a miss.
         """
@@ -4136,7 +4136,7 @@ class PreviewPresenter:
 
     @property
     def scrollbar_markers_enabled(self) -> bool:
-        """In-development scrollbar match highlighting — off unless the
+        """In-development scrollbar match highlighting: off unless the
         user opts in via ``[defaults] scrollbar_match_highlight``."""
         return bool(self._app._config and self._app._config.defaults.scrollbar_match_highlight)
 
@@ -4145,7 +4145,7 @@ class PreviewPresenter:
         scrollbar so markers sit where the matches actually render.
 
         Earlier this fed a bool-per-chunk map placed by chunk ordinal,
-        which ignored chunk size — a match in a short chunk after a long
+        which ignored chunk size: a match in a short chunk after a long
         one landed near the top instead of far down. ``structural_match_
         lines`` weights by each chunk's line count instead. On large
         markdown the lazy-mounted track spans only part of the file, so
@@ -4168,7 +4168,7 @@ class PreviewPresenter:
             return
         # structural_match_lines scans every source line; a no/sparse-match
         # query on a large doc was measured in seconds (multi-minute worst
-        # case). Run it off the event loop and apply when ready — stale
+        # case). Run it off the event loop and apply when ready: stale
         # results (a newer nav bumped the generation) are dropped.
         token = self._markers_seq
         spec = self._app._effective_match_spec
@@ -4228,18 +4228,18 @@ class PreviewPresenter:
         before: Widget | None = None,
     ) -> None:
         """Per-line layout for non-markdown chunks. Each body line becomes
-        its own Static so ``scroll_to_widget`` can target the first matched
-        line, and the match-row gets a subtle accent overlay.
+                its own Static so ``scroll_to_widget`` can target the first matched
+                line, and the match-row gets a subtle accent overlay.
 
-        We deliberately don't mount the locator header (``p. 351 · ...``)
-        — that information lives on the sidebar result row; repeating it
-        per-chunk in the preview is just visual clutter. The first body
-        widget of each chunk gets a ``chunk-first`` class so a small top
-        gap still marks the chunk boundary.
+                We deliberately don't mount the locator header (``p. 351 · ...``):
+        that information lives on the sidebar result row; repeating it
+                per-chunk in the preview is just visual clutter. The first body
+                widget of each chunk gets a ``chunk-first`` class so a small top
+                gap still marks the chunk boundary.
 
-        ``before`` (if supplied) makes every widget mount immediately
-        before that anchor — used by background-fill prepending so
-        chunks land in document order even when mounted out of sequence.
+                ``before`` (if supplied) makes every widget mount immediately
+                before that anchor: used by background-fill prepending so
+                chunks land in document order even when mounted out of sequence.
         """
         _, pieces = render_chunk_pieces(
             c, query=self._app._search.current_query, match_spec=self._app._effective_match_spec
@@ -4248,7 +4248,7 @@ class PreviewPresenter:
         first_match: Static | None = None
         for line_text, has_match in pieces:
             line_w = PlainStatic(line_text, classes="chunk-line")
-            # Store the PLAIN string (not the rich Text) — the match-count /
+            # Store the PLAIN string (not the rich Text): the match-count /
             # stop-region scans regex over ``fnd_text`` and re needs a str.
             line_w.fnd_text = line_text.plain  # type: ignore[attr-defined]
             if has_match:
@@ -4282,7 +4282,7 @@ class PreviewPresenter:
         """Structural markdown rendering for formats whose extractor
         populated ``body_md`` (md / docx / pptx).
 
-        Mounts a single :class:`FNDMarkdown` widget per chunk —
+        Mounts a single :class:`FNDMarkdown` widget per chunk,
         Textual builds out the per-block widget tree (headings,
         paragraphs, tables, fenced code, lists, blockquotes) and our
         highlight-aware subclasses overlay match-only spans on the

@@ -54,7 +54,7 @@ def test_meta_filter_narrows_to_matching_md(filter_corpus: Path) -> None:
 
 
 def test_meta_filter_empty_string_is_invalid(filter_corpus: Path) -> None:
-    """Defensive: an empty filter string must NOT compile — callers should
+    """Defensive: an empty filter string must NOT compile, callers should
     pass None for "no filter". An empty string is a bug on the caller side
     and we want a clear error."""
     s = Searcher(index_dir=filter_corpus)
@@ -116,7 +116,7 @@ def test_meta_filter_oversample_still_returns_limit_when_filter_strict(
         collection="notes",
         metadata_filter="Project == 'Website'",
     )
-    # 5 of the 50 match the filter; we asked for limit=5 — must get all 5.
+    # 5 of the 50 match the filter; we asked for limit=5: must get all 5.
     assert len(hits) == 5
     for h in hits:
         # Sanity: every returned hit's path corresponds to a 0/10/20/30/40 file.

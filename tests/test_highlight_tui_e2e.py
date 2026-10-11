@@ -1,5 +1,5 @@
 """End-to-end: a wildcard query, driven through the real TUI, must colour the
-matched word in the preview as literal-prefix-yellow + wildcard-fill-orange —
+matched word in the preview as literal-prefix-yellow + wildcard-fill-orange,
 not the all-orange regression. Exercises the live query → MatchSpec → highlight
 path (the unit tests build the spec directly; this proves the app does too).
 """

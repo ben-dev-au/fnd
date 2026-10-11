@@ -5,7 +5,7 @@ heading-section of a DOCX/MD, one fixed window of a TXT). Every chunk shares a
 ``parent_id`` so the query layer can group hits back into per-file results.
 
 :class:`ExtractError` is the single failure type that propagates out of
-``extract``. It wraps both *rejections* (we refused to parse — encrypted,
+``extract``. It wraps both *rejections* (we refused to parse: encrypted,
 decompression-bomb threshold tripped) and *crashes* (the parser raised
 something unhelpful). The indexer catches it and continues to the next
 file, so a single hostile or corrupt document can't deny indexing of
@@ -98,7 +98,7 @@ class Chunk:
     # serialised-to-markdown content (set by the relevant extractor).
     # Empty string for formats without a structural renderer (pdf, txt).
     body_md: str = ""
-    # ``page`` is the *PDF page index* (1-based, sequential from cover) —
+    # ``page`` is the *PDF page index* (1-based, sequential from cover):
     # used by the opener to deep-link via Skim. ``page_label`` is the
     # *printed* page label as set in the PDF (e.g. "292" or "iv"); empty
     # when the PDF has no labels. The two diverge for any book with

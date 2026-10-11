@@ -1,7 +1,7 @@
 """Open-PDF-in-Preview targets the correct document + page.
 
 Guards the regression where the page-jump matched the front document by
-substring and sent "go to page" keystrokes to whatever was frontmost — so
+substring and sent "go to page" keystrokes to whatever was frontmost, so
 opening a PDF behind an already-open one paged the wrong document.
 """
 
@@ -24,7 +24,7 @@ def test_preview_script_uses_exact_path_match() -> None:
 def test_preview_script_gates_keystrokes_on_front_document() -> None:
     """`matched` must be set from confirming the front document IS our target
     (defends against window-name collisions + open/window timing), and the
-    keystrokes must be gated by it — never page a doc we can't confirm front."""
+    keystrokes must be gated by it: never page a doc we can't confirm front."""
     s = apps._PREVIEW_PAGE_JUMP_SCRIPT
     assert "path of front document" in s
     # The front-document confirmation drives `matched`, which gates keystrokes.

@@ -52,7 +52,7 @@ async def test_explain_overlay_captures_trace_and_toggles(cfg: Config, small_ind
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_search(pilot, app, "mitochondrion")
-        # Trace captured on the app — regime depends on corpus IDF, but
+        # Trace captured on the app: regime depends on corpus IDF, but
         # the trace itself must always be populated when groups exist.
         assert app._search.latest_trace is not None
         assert app._search.latest_trace.query == "mitochondrion"

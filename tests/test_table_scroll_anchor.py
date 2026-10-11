@@ -3,7 +3,7 @@
 The W3 table renders every row as one full-height ``DataTable`` (no per-cell
 widgets, no internal scroll), so the matched cell is not its own scrollable
 widget. ``StructuralScrollStrategy._anchor_region`` resolves the cell's screen
-region as the scroll anchor — and returns ``None`` (a retry signal) while the
+region as the scroll anchor, and returns ``None`` (a retry signal) while the
 table's rows are still mounting, so the controller retries instead of
 committing a scroll to the table top. That cold-mount race is what repeatedly
 stranded deep-table matches at the top; these lock the contract that prevents

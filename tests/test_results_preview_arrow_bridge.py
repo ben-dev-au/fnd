@@ -33,7 +33,7 @@ async def test_right_on_results_leaf_focuses_preview(built_index: Path) -> None:
         assert top_file.is_expanded
         assert top_file.children
         # The default cursor placement after a query lands on the first
-        # hit child — a leaf.
+        # hit child: a leaf.
         assert tree.cursor_node is top_file.children[0]
         await pilot.press("right")
         await pilot.pause()

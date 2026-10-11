@@ -1,6 +1,6 @@
 """Dynamic height allocation for the stacked sidebar panels.
 
-The left column holds three panels — Results, Collections, Filters — sharing a
+The left column holds three panels (Results, Collections, Filters) sharing a
 fixed height. A static CSS split can't be both content-tight (no empty space
 when a panel is short) and priority-aware (Results dominates when long): CSS
 can express "size to content" or "take the leftover", never "content when
@@ -24,7 +24,7 @@ content, so what it shows can never resize its neighbours. Expanded, it is
 pinned before the flex split, clamped so Results keeps about half the room and
 every other expanded panel its floor.
 
-The function is pure — it takes measured demands and returns cell heights — so
+The function is pure (it takes measured demands and returns cell heights) so
 the policy is tested without a running app.
 """
 
@@ -170,7 +170,7 @@ def _split_by_demand(secondaries: list[Panel], room: int, demand: dict[str, int]
     while active and remaining > 0:
         share = remaining // len(active)
         if share == 0:
-            # A handful of rows left over — hand them to the hungriest panels.
+            # A handful of rows left over: hand them to the hungriest panels.
             for s in sorted(active, key=lambda s: demand[s.key] - heights[s.key], reverse=True):
                 if remaining <= 0:
                     break
@@ -192,7 +192,7 @@ def _proportional(secondaries: list[Panel], room: int, demand: dict[str, int]) -
     """Fallback when ``room`` can't cover even the per-panel floors: apportion
     what little there is by demand (largest-remainder), so the total is exactly
     ``room``. When there are more panels than rows the smallest-demand panels
-    get nothing — a 3-row sidebar can't show three panels — rather than the
+    get nothing (a 3-row sidebar can't show three panels) rather than the
     column being over-allocated (a floor of 1 each would sum past ``room``)."""
     if room <= 0:
         return {s.key: 0 for s in secondaries}

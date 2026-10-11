@@ -20,7 +20,7 @@ from fnd.extract.docx import extract
 @pytest.fixture
 def docx_path(tmp_path: Path) -> Path:
     """Build a docx fixture covering bold/italic runs, bulleted list,
-    numbered list, and a 2x2 table — all under one Heading 1."""
+    numbered list, and a 2x2 table: all under one Heading 1."""
     doc = Document()
     doc.add_heading("Top Section", level=1)
     p = doc.add_paragraph()
@@ -73,7 +73,7 @@ def test_body_md_starts_with_heading(docx_path: Path) -> None:
 
 
 def test_body_struct_remains_plain_text(docx_path: Path) -> None:
-    """Snippet pipeline reads body_struct — markdown markers in body_md
+    """Snippet pipeline reads body_struct: markdown markers in body_md
     must not leak into block.text."""
     chunk = next(extract(docx_path))
     for block in chunk.body_struct:
@@ -82,7 +82,7 @@ def test_body_struct_remains_plain_text(docx_path: Path) -> None:
 
 
 def test_table_cells_are_indexed(docx_path: Path) -> None:
-    """Cell text should be searchable — landed in chunk.body so F_BODY
+    """Cell text should be searchable: landed in chunk.body so F_BODY
     sees it."""
     chunk = next(extract(docx_path))
     assert "beanstalk" in chunk.body, chunk.body

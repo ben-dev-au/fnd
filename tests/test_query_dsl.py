@@ -80,7 +80,7 @@ def test_slide_less_or_equal() -> None:
 
 
 def test_page_range_passthrough() -> None:
-    """Bracket form is Tantivy-native — leave it alone."""
+    """Bracket form is Tantivy-native: leave it alone."""
     assert query_dsl.preprocess("page:[10 TO 50]") == "page:[10 TO 50]"
 
 
@@ -154,9 +154,9 @@ def test_check_proximity_rejects_malformed(bad: str) -> None:
 @pytest.mark.parametrize(
     "ok",
     [
-        '"foo bar"~5',  # expanded proximity — no residual brace
+        '"foo bar"~5',  # expanded proximity: no residual brace
         "page:[10 TO 50]",
-        "page:{10 TO 50}",  # Tantivy exclusive range — not a proximity attempt
+        "page:{10 TO 50}",  # Tantivy exclusive range, not a proximity attempt
         "plain words only",
     ],
 )

@@ -29,8 +29,8 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
     Also owns "scan mode": Option/Alt + ↑/↓ move the cursor WITHOUT loading the
     preview (browse fast with no mount per row); a normal ↑/↓ ends scan mode so
     the preview loads where you land, and Enter loads the highlighted row
-    (wired in the app). Handling this in the tree's own actions — rather than a
-    bubbled ``app.on_key`` — is reliable: the focused tree always runs them,
+    (wired in the app). Handling this in the tree's own actions, rather than a
+    bubbled ``app.on_key``, is reliable: the focused tree always runs them,
     where a key the tree consumes may never reach the app.
 
     Earlier the rule was enforced after-the-fact by ``_on_tree_highlight``
@@ -38,7 +38,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
     for a frame and then bounce. With a slow preview load on top, the
     bounce became visible and felt like a glitchy jump.
 
-    Validating in :meth:`validate_cursor_line` is atomic — the cursor
+    Validating in :meth:`validate_cursor_line` is atomic; the cursor
     never lands on an expanded parent in the first place. Pressing ↓
     from the row above an expanded parent moves directly to the parent's
     first child; pressing ↑ from a child moves directly to the row above
@@ -53,7 +53,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
 
     class ReopenRequested(Message):
         """Posted when the pane is clicked while collapsed-to-header. The app
-        reopens the panel (and expands the clicked node) — a toggle the user
+        reopens the panel (and expands the clicked node): a toggle the user
         can't see is useless, so the click should surface content instead."""
 
         def __init__(self, tree: ResultsTree, node: TreeNode[Any] | None) -> None:
@@ -91,7 +91,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
         # otherwise strand the cursor: Textual keeps the cursor *line index*
         # across the rebuild, so it lands on whatever row slides up into that
         # line (the section below the one just collapsed). Follow the cursor up
-        # onto the node being collapsed instead — that's the row the user is
+        # onto the node being collapsed instead: that's the row the user is
         # acting on. Captured before the collapse so the check is reliable.
         follow = (
             node.is_expanded
@@ -118,7 +118,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
         # a click to EVERY ``_on_click`` found while walking the MRO by naming
         # convention (message_pump._get_dispatch_methods), so the base
         # ``Tree._on_click`` already runs for us. Calling super as well runs it
-        # a second time — one physical click then toggles a node twice
+        # a second time: one physical click then toggles a node twice
         # (expand+collapse = nothing happens, e.g. clicking an expand arrow) or
         # posts ``NodeSelected`` twice (a leaf toggles on then off). Overriding
         # to ADD behaviour is fine; just never re-invoke the base handler.
@@ -138,7 +138,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
 
     def _set_scan(self, scanning: bool) -> None:
         # Scan mode drives the PREVIEW, so only the results pane owns it.
-        # ResultsTree is also used for the Filters panel (app.py) — Option+arrow
+        # ResultsTree is also used for the Filters panel (app.py): Option+arrow
         # there must not flip the preview's scan flag and suppress a later load.
         if self.id != "results_pane":
             return
@@ -147,15 +147,15 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
             preview._scan_move = scanning
 
     def on_key(self, event: events.Key) -> None:
-        # Any non-scan key ends scan mode — not just ↑/↓ but home/end/pageup/
-        # pagedown/typing too — so a later move always loads instead of being
+        # Any non-scan key ends scan mode, not just ↑/↓ but home/end/pageup/
+        # pagedown/typing too, so a later move always loads instead of being
         # silently suppressed. on_key runs before the key's binding, so the
         # cursor move that follows isn't treated as a scan.
         if event.key not in ("alt+up", "alt+down"):
             self._set_scan(False)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
-        # Clicking a result is a deliberate selection, never a silent scan —
+        # Clicking a result is a deliberate selection, never a silent scan,
         # otherwise mouse users could get stuck with the preview not updating.
         self._set_scan(False)
 
@@ -191,13 +191,13 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
 
         Default False: results file rows are dead when open, so the cursor
         skips past them rather than parking where Enter does nothing. The
-        filters pane is the opposite — every row there *does* something on
+        filters pane is the opposite: every row there *does* something on
         Enter/click, so all its parent kinds stay selectable while expanded:
         ``filter_category`` section headers (Enter/click collapses them),
         ``kind_category`` file-type rows (toggle the whole category) and
         ``filter_value`` tag rows (toggle the tag). Keeping headers selectable
         also stops a click on an *expanded* header from drifting the cursor
-        down onto — and toggling — its first child.
+        down onto, and toggling, its first child.
         """
         data = node.data if isinstance(node.data, dict) else None
         return bool(data) and data.get("kind") in (
@@ -234,7 +234,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
                 return target
             next_target = target + direction
             if next_target < 0 or next_target > last:
-                # Boundary — don't shove the cursor off the edge; keep
+                # Boundary: don't shove the cursor off the edge; keep
                 # it where it was so the press feels like a no-op
                 # instead of a jump.
                 return current
@@ -247,21 +247,21 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
     # Navigation cost is bimodal: a jump into a file whose hits are captured
     # is a blit, one into a file that still has to be built can be seconds
     # (see fnd/tui/preview/coverage.py). The arrow says which you are about
-    # to get, on the two cells the tree already spends on it — so this costs
+    # to get, on the two cells the tree already spends on it, so this costs
     # no label width, which matters in a pane whose name budget is already
     # `width - 2 - 7`.
     #
-    # Shape carries the fact that changes a decision — hollow means a jump
+    # Shape carries the fact that changes a decision: hollow means a jump
     # here will build, filled means it will not. Colour carries the rest:
     # blue for cold (the score column's own accent blue, so it reads as part
     # of the same palette), the theme accent for both warm states. Cold and
-    # warm are therefore a change of HUE, not of brightness — a muted-vs-
+    # warm are therefore a change of HUE, not of brightness: a muted-vs-
     # accent version of the same glyph was tried on paper and rejected,
     # because at one cell the two are hard to tell apart.
     #
     # Not on match rows. Coverage warms a file's hits nearest-first, so they
     # are all ready within moments of landing, and those rows already carry a
-    # glyph for matches the preview cannot highlight — two unrelated marker
+    # glyph for matches the preview cannot highlight: two unrelated marker
     # systems on one row cost more than they tell you.
     ICON_WARM = "▶ "
     ICON_WARM_EXPANDED = "▼ "
@@ -284,7 +284,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
     }
 
     DEFAULT_CSS = """
-    /* Cold takes the accent blue the score column uses for its middle tier —
+    /* Cold takes the accent blue the score column uses for its middle tier:
        a file that has to build is not a problem, so it wears an ordinary
        colour. Warm takes the theme accent. The two therefore differ in HUE,
        not in brightness: at one cell a muted-versus-bright version of the
@@ -318,11 +318,11 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
             icon = self.ICON_BUILDING if building else self.ICON_WARM
         # Inherit the stock icon's style rather than rebuilding it. It carries
         # the meta that makes clicking the arrow expand the node, and that meta
-        # lives in a private Textual module — importing it would let a minor
+        # lives in a private Textual module: importing it would let a minor
         # upgrade turn a decoration into an ImportError at app start.
         icon_style: Any = stock.spans[0].style if stock.spans else base_style
         # Colour EVERY state, not just cold. Inheriting the stock style for the
-        # warm ones left them in the plain foreground — the filled arrow came
+        # warm ones left them in the plain foreground: the filled arrow came
         # out white and nothing ever turned accent, which is the whole signal.
         # Taken from a component class rather than a constant so it follows the
         # theme, like the progress line's own fill does.
@@ -358,7 +358,7 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
     def apply_warm_states(self, states: dict[str, WarmState]) -> bool:
         """Adopt ``states`` and repaint only the rows that changed.
 
-        Repainting the whole tree on every capture would strobe the list —
+        Repainting the whole tree on every capture would strobe the list:
         captures land at roughly ten a second. Diffing means a row is touched
         only when its state actually moves, which for a given file happens
         at most three times: into WARMING, into READY, then into FULL.

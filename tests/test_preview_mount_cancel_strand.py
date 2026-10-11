@@ -1,11 +1,11 @@
-"""Regression: a cold preview mount cancelled in its early-await phase —
-before the detached finalise task is spawned — must not strand the in-flight
+"""Regression: a cold preview mount cancelled in its early-await phase,
+before the detached finalise task is spawned, must not strand the in-flight
 latch.
 
 The original symptom was "the loading bar gets stuck until I navigate to a
 different file and back": cancel_mount_task cancels the mount but hid
 nothing, the finally only hid on is_complete, and no finalise task existed
-yet — so the bar stayed up forever AND the inflight latch kept a same-file
+yet, so the bar stayed up forever AND the inflight latch kept a same-file
 re-load from re-dispatching.
 
 The bar half of that is now structurally impossible: the progress line is
@@ -41,7 +41,7 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
@@ -67,7 +67,7 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         )
 
         # Mirror the real pre-mount state: pane scroll-locked, latch set, mount
-        # task running — then drive the structural cold mount directly so
+        # task running, then drive the structural cold mount directly so
         # routing (flat vs structural, warm-cache) can't change the path.
         preview.show_progress_bar(total=len(chunks), phase="mounting…")
         preview.inflight_target = (g.parent_id, seq)
@@ -81,16 +81,16 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         # Let the task reach and park on the blocked early await.
         await safe_pause(pilot)
         assert getattr(container, "_finalise_task", None) is None, (
-            "setup — mount must be parked BEFORE the finalise task is spawned"
+            "setup: mount must be parked BEFORE the finalise task is spawned"
         )
 
-        # Cancel the mount while parked pre-finalise — the strand condition.
+        # Cancel the mount while parked pre-finalise: the strand condition.
         preview.cancel_mount_task()
         await safe_pause(pilot)
         await safe_pause(pilot)
 
         assert preview.inflight_target is None, (
-            "inflight latch not released on cancel — a same-file re-load would "
+            "inflight latch not released on cancel: a same-file re-load would "
             "dedup out and never re-mount"
         )
 
@@ -102,7 +102,7 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
     built_index: Path,
 ) -> None:
     """A mount that FAILS (not cancelled) in its early-await phase must also
-    clean up. cancel_mount_task nulls mount_task; an exception does not — so
+    clean up. cancel_mount_task nulls mount_task; an exception does not, so
     the finally checks `mount_task is current_task()` too, else the bar would
     strand on any non-cancellation failure (e.g. a MountError)."""
     import contextlib
@@ -110,7 +110,7 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
@@ -136,7 +136,7 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
                 g.parent_id, seq, chunks, container, reset_generation=preview.reset_generation
             )
         )
-        preview.mount_task = task  # NOT nulled — the mount fails, it isn't cancelled
+        preview.mount_task = task  # NOT nulled: the mount fails, it isn't cancelled
 
         # Drain the task (it raises); the finally must still run.
         with contextlib.suppress(RuntimeError):
@@ -152,13 +152,13 @@ async def test_early_cancel_does_not_clobber_successor_latch(
 ) -> None:
     """A mount cancelled in its early-await window must NOT clear a SUCCESSOR's
     latch. The uncached decode path cancels the old mount (nulling mount_task)
-    without reassigning it — so mount_task being None is NOT enough to prove
+    without reassigning it, so mount_task being None is NOT enough to prove
     ownership; the cleanup also checks the inflight latch still points at this
     target."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
@@ -187,10 +187,10 @@ async def test_early_cancel_does_not_clobber_successor_latch(
         )
         preview.mount_task = task
         await safe_pause(pilot)
-        assert getattr(container, "_finalise_task", None) is None, "setup — must be pre-finalise"
+        assert getattr(container, "_finalise_task", None) is None, "setup: must be pre-finalise"
 
         # A successor (uncached) decode now owns the loading state: a DIFFERENT
-        # inflight target, and mount_task nulled — exactly what the decode path
+        # inflight target, and mount_task nulled: exactly what the decode path
         # leaves behind (cancel_mount_task + show_progress_bar, no mount_task).
         successor_target = ("successor-parent-id", 7)
         preview.inflight_target = successor_target

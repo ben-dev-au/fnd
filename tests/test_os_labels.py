@@ -74,7 +74,7 @@ def test_is_macos_only_true_on_darwin(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_alt_modifier_is_the_option_glyph_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
-    """macOS keyboards label the key ⌥, not 'Alt' — the keybindings page and
+    """macOS keyboards label the key ⌥, not 'Alt': the keybindings page and
     the footer both render it, so the vocabulary lives in one place."""
     _as(monkeypatch, "Darwin")
     assert os_labels.modifier_label("alt") == "⌥"
@@ -93,7 +93,7 @@ def test_alt_word_is_option_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_shared_modifiers_are_stable_across_platforms(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ctrl and Shift are spelled the same everywhere — only ⌥/⌘ differ, so a
+    """Ctrl and Shift are spelled the same everywhere: only ⌥/⌘ differ, so a
     platform switch must not churn the rest of the key column."""
     for system in ("Darwin", "Windows", "Linux"):
         _as(monkeypatch, system)
@@ -119,7 +119,7 @@ def test_modifier_label_returns_none_for_non_modifiers() -> None:
 def test_no_caching_so_the_platform_seam_stays_patchable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unlike ``launcher.get_launcher``, these are uncached pure functions —
+    """Unlike ``launcher.get_launcher``, these are uncached pure functions:
     a test (or a same-process platform patch) sees the change with no
     cache_clear() bookkeeping."""
     _as(monkeypatch, "Darwin")

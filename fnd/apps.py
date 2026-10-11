@@ -1,13 +1,13 @@
-"""Apps registry — resolves a (kind, source) hit to an app and dispatches.
+"""Apps registry: resolves a (kind, source) hit to an app and dispatches.
 
 Three layers:
 
-* ``BUILTIN_APPS`` — frozen registry of ship-default apps (``system``,
+* ``BUILTIN_APPS``: frozen registry of ship-default apps (``system``,
   ``preview``, ``skim``, ``pdf_expert``, ``obsidian``, ``vscode``). Each
   entry has its own ``handler`` closure that constructs an argv or URL,
   validates inputs, and dispatches through :mod:`fnd.launcher` (never a
   shell; output discarded, never raising).
-* :func:`load_user_apps` — turns ``[apps.<id>]`` TOML tables into ``App``
+* :func:`load_user_apps`, turns ``[apps.<id>]`` TOML tables into ``App``
   records whose handlers do pure :py:meth:`str.format` substitution into
   the user's argv or URL template. Mutually-exclusive ``argv``/``url`` is
   enforced; ids and ``handles`` are constrained to safe character sets.
@@ -70,7 +70,7 @@ class App:
     positional: bool
     notes: str = ""
     # False for entries that act on the file without opening it (``reveal``).
-    # They belong in the Open-with picker but not in the default-app pickers —
+    # They belong in the Open-with picker but not in the default-app pickers:
     # choosing one as a kind's default would stop Open opening that kind at all.
     selectable_default: bool = True
 
@@ -200,7 +200,7 @@ def _reset_ax_cache() -> None:  # pyright: ignore[reportUnusedFunction]
 
 
 def _probe_ax_trusted() -> bool:
-    """Real AX probe — runs a no-op System Events osascript. Treats a
+    """Real AX probe: runs a no-op System Events osascript. Treats a
     non-zero exit code as "not trusted". Slow (~150-300 ms), so the result
     is cached for the lifetime of the process via :func:`ax_trusted`.
 
@@ -241,7 +241,7 @@ def set_notice_sink(sink: Callable[[str], None] | None) -> None:
 
 
 def _emit_notice(message: str) -> None:
-    """One-shot user-facing notice — dedup'd by message text so the same
+    """One-shot user-facing notice: dedup'd by message text so the same
     fallback warning never spams the log. Routed through
     :func:`set_notice_sink` when a TUI sink is registered."""
     if message in _notice_seen:
@@ -345,23 +345,23 @@ def _handle_skim(req: OpenRequest) -> int:
 
 # Embedded AppleScript that page-jumps an ALREADY-OPEN Preview document.
 #
-# It does NOT open the file — _handle_preview opens it first via
+# It does NOT open the file: _handle_preview opens it first via
 # ``open -a Preview`` (LaunchServices). Opening from osascript
 # (``open POSIX file``) is attributed to the parent terminal's TCC identity
 # and gets denied for files carrying ``com.apple.macl`` on Desktop/Documents
 # ("you don't have permission to view it"); LaunchServices opens under
 # Preview's own identity and isn't. So this script only drives the open
-# document — it never touches the filesystem.
+# document: it never touches the filesystem.
 #
 # Correctness invariants (a regression here paged the WRONG document):
-#   1. Confirm by EXACT POSIX path, not substring — `front document` must
+#   1. Confirm by EXACT POSIX path, not substring: `front document` must
 #      equal pdfPath ("report.pdf" must not match "old_report.pdf").
 #   2. `open -a Preview` already opens AND fronts the target, so we just wait
 #      for the front document to BE the target rather than re-fronting a
 #      window by name (which is ambiguous when two open PDFs share a filename,
 #      e.g. the same paper on the Desktop and under Documents).
 #   3. Fail safe: if the target isn't confirmed front within the retry budget,
-#      send NO keystrokes — the pdf still opened on page 1.
+#      send NO keystrokes; the pdf still opened on page 1.
 _PREVIEW_PAGE_JUMP_SCRIPT: Final[str] = r"""
 on run argv
     set pdfPath to item 1 of argv
@@ -384,7 +384,7 @@ on run argv
         set tries to tries + 1
     end repeat
     -- Fail-safe: only page when our document is confirmed front. Otherwise
-    -- the PDF still opened (on page 1) — better than paging the wrong one.
+    -- the PDF still opened (on page 1): better than paging the wrong one.
     if matched then
         tell application "Preview" to activate
         delay 0.15
@@ -418,7 +418,7 @@ def _handle_preview(req: OpenRequest) -> int:
     ``open POSIX file`` from osascript is attributed to the parent terminal
     and gets denied for files on Desktop/Documents, whereas LaunchServices
     opens under Preview's own identity. With a page locator AND Accessibility
-    granted, a second osascript call then page-jumps the now-open document —
+    granted, a second osascript call then page-jumps the now-open document:
     it never touches the filesystem. Without AX (or no page), the PDF is left
     on page 1 and a one-shot Accessibility notice is emitted.
 
@@ -445,7 +445,7 @@ def _handle_preview(req: OpenRequest) -> int:
 def _handle_pdf_expert(req: OpenRequest) -> int:
     """Open the PDF in PDF Expert.
 
-    Earlier I tried a ``pdf-expert-7://`` URL — that scheme isn't
+    Earlier I tried a ``pdf-expert-7://`` URL; that scheme isn't
     registered (the bundle's Info.plist exposes ``pdfexpert://`` only)
     and any URL it does accept isn't publicly documented in a stable
     form. ``open -a "PDF Expert" <path>`` is the reliable invocation
@@ -464,7 +464,7 @@ def _heading_path_to_anchor(heading_path: str) -> str:
     nested-heading anchor format ("A#B#C").
 
     Obsidian's wiki-link syntax uses ``#`` between successive heading
-    levels — ``[[Note#A#B#C]]`` navigates to the C heading inside B
+    levels: ``[[Note#A#B#C]]`` navigates to the C heading inside B
     inside A. The chained form is more specific than the leaf alone:
     if the file has multiple headings literally named "C", only the one
     nested under A→B will match.
@@ -481,7 +481,7 @@ def _advanced_uri_available(source_path: Path | None) -> bool:
     contains ``source_path``.
 
     Walks up from ``source_path`` looking for a ``.obsidian/plugins/<id>``
-    directory — the same detection pattern :func:`detect_obsidian_vault`
+    directory: the same detection pattern :func:`detect_obsidian_vault`
     uses for the vault root, just one level deeper. Returns ``False``
     when ``source_path`` is unset, isn't under any vault, or the plugin
     folder is missing. Cheap (~one ``stat`` per parent walked).
@@ -515,13 +515,13 @@ def _resolve_match_line(
     Used by deep-link handlers that support line jumps (Obsidian
     Advanced URI, VS Code) so the user lands on the matched word
     rather than the chunk's heading. The chunk's ``line`` is the
-    heading line — a long section can drop the user 50+ lines above
+    heading line: a long section can drop the user 50+ lines above
     their match without this resolution step.
 
     Conservative on fuzzy: only literal whole-word query tokens are
     matched, so a query like ``template~2`` matching the file's
     ``templating`` falls back to the chunk start. That's
-    intentional — the goal is to *improve precision when we can*,
+    intentional: the goal is to *improve precision when we can*,
     not guarantee it.
     """
     if not query or from_line < 1:
@@ -554,26 +554,26 @@ def _handle_obsidian(req: OpenRequest) -> int:
       the only path that lands the cursor on the *matched line* rather
       than at the top of the section. Built-in URL forms can only target
       headings, so a match deep inside a long section drops the user
-      lines above their match — see :func:`_advanced_uri_available`.
+      lines above their match: see :func:`_advanced_uri_available`.
     * **Vault set, no plugin (or no line)**: ``obsidian://open?vault=X
       &file=Y#A#B#C``. Heading anchor uses Obsidian's chained-heading
       syntax via :func:`_heading_path_to_anchor`.
     * **No vault**: ``obsidian://open?path=<abs>[#A#B#C]``. Obsidian
       routes the path to whichever vault contains it. We never fall
-      back to ``open <path>`` — the user explicitly picked Obsidian and
+      back to ``open <path>``: the user explicitly picked Obsidian and
       a silent app-swap is misleading.
     """
     use_advanced = req.line > 0 and _advanced_uri_available(req.source_path)
     if req.vault and use_advanced:
         filepath = req.file_in_vault or str(req.path)
         # Resolve the chunk's heading line forward to the actual matched
-        # line when a query is in play — Advanced URI's ``line=N`` jumps
+        # line when a query is in play: Advanced URI's ``line=N`` jumps
         # the cursor to exactly that line, so we get word-precision
         # instead of section-precision.
         target_line = _resolve_match_line(req.path, req.query, req.line)
         # ``openmode=tab`` opens the match in a NEW tab instead of navigating
         # the active one (which silently loses whatever the user had open).
-        # Current Advanced URI param — supersedes the deprecated ``newpane``.
+        # Current Advanced URI param: supersedes the deprecated ``newpane``.
         url = (
             "obsidian://advanced-uri"
             f"?vault={urllib.parse.quote(req.vault, safe=_PCT_SAFE)}"
@@ -606,7 +606,7 @@ def _handle_vscode(req: OpenRequest) -> int:
 
 
 def _handle_zathura(req: OpenRequest) -> int:
-    """``zathura --page N <path>`` — page-jump on Linux (``--page`` is 1-based)."""
+    """``zathura --page N <path>``: page-jump on Linux (``--page`` is 1-based)."""
     argv = (
         ["zathura", "--page", str(req.page), str(req.path)]
         if req.page > 0
@@ -616,7 +616,7 @@ def _handle_zathura(req: OpenRequest) -> int:
 
 
 def _handle_okular(req: OpenRequest) -> int:
-    """``okular --page N <path>`` — page-jump on Linux/KDE (``--page`` is 1-based)."""
+    """``okular --page N <path>``: page-jump on Linux/KDE (``--page`` is 1-based)."""
     argv = (
         ["okular", "--page", str(req.page), str(req.path)]
         if req.page > 0
@@ -626,7 +626,7 @@ def _handle_okular(req: OpenRequest) -> int:
 
 
 def _handle_sumatra(req: OpenRequest) -> int:
-    """``SumatraPDF.exe -page N <path>`` — page-jump on Windows."""
+    """``SumatraPDF.exe -page N <path>``: page-jump on Windows."""
     exe = _sumatra_exe()
     if exe is None:  # available() gates this; defensive fall-through only
         return launcher.open_path(req.path)
@@ -696,7 +696,7 @@ BUILTIN_APPS: Final[dict[str, App]] = {
         positional=True,
         notes="`code -g <path>:<line>:1`; requires the `code` CLI in PATH.",
     ),
-    # Cross-platform PDF viewers — each self-gates via ``available`` (a
+    # Cross-platform PDF viewers: each self-gates via ``available`` (a
     # ``which`` / install-path probe), so it appears only on the OS where it
     # is installed. Registering them all in one table keeps the registry
     # OS-agnostic; the probes do the filtering.
@@ -729,7 +729,7 @@ BUILTIN_APPS: Final[dict[str, App]] = {
     ),
     # Last so the picker lists the apps that actually open the file first.
     # Resolved eagerly rather than via an ``os_labels`` placeholder: unlike help
-    # text, ``display_name`` feeds logic — ``letter_shortcuts`` derives the
+    # text, ``display_name`` feeds logic, ``letter_shortcuts`` derives the
     # picker's access key from its first free letter.
     "reveal": App(
         id="reveal",
@@ -838,7 +838,7 @@ def _make_user_handler(spec: _UserAppSpec) -> Callable[[OpenRequest], int]:
 
 def load_user_apps(raw_apps: dict[str, dict[str, Any]] | None) -> dict[str, App]:
     """Build an ``App`` per ``[apps.<id>]`` table. Raises ``ValueError`` on
-    the first invalid entry — partial registries hide bugs."""
+    the first invalid entry: partial registries hide bugs."""
     out: dict[str, App] = {}
     if not raw_apps:
         return out
@@ -849,7 +849,7 @@ def load_user_apps(raw_apps: dict[str, dict[str, Any]] | None) -> dict[str, App]
             display_name=spec.display_name,
             handles=spec.handles,
             handler=_make_user_handler(spec),
-            available=lambda: True,  # user-declared — assume present
+            available=lambda: True,  # user-declared: assume present
             positional="{page}" in (spec.url or "")
             or any("{line}" in t or "{page}" in t for t in (spec.argv or ())),
         )
@@ -858,7 +858,7 @@ def load_user_apps(raw_apps: dict[str, dict[str, Any]] | None) -> dict[str, App]
 
 def build_registry(cfg: Any) -> dict[str, App]:
     """Combine BUILTIN_APPS with the user-defined apps on ``cfg``. User
-    entries with the same id as a built-in win — gives users a way to
+    entries with the same id as a built-in win: gives users a way to
     override a built-in's template without touching code."""
     user_raw = getattr(cfg, "apps", None) or {}
     user_built = load_user_apps(
@@ -918,7 +918,7 @@ def detect_obsidian_vault_path(path: Path) -> Path | None:
     root, or ``None`` if no vault is found before the filesystem root.
 
     Used by the opener to compute ``file_in_vault`` relative to the
-    actual vault root — which Obsidian's Advanced URI expects — even
+    actual vault root, which Obsidian's Advanced URI expects, even
     when the source's ``path`` is a subdirectory of the vault (a
     common layout for collections that index only one project's notes
     out of a larger vault).

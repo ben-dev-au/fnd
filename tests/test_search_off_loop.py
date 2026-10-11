@@ -1,13 +1,13 @@
 """Search runs off the event loop.
 
-The point is a UI that stays alive while a query runs — but the change
+The point is a UI that stays alive while a query runs, but the change
 has to be safe before it is useful, so most of what is pinned here is
 the staleness and teardown behaviour rather than the responsiveness.
 
 The property everything rests on: Textual *cancels* a superseded thread
 worker but cannot *interrupt* it. The old search runs to completion and
 arrives anyway. So the generation guard in ``_commit`` is not a
-belt-and-braces extra — it is the only thing standing between a stale
+belt-and-braces extra: it is the only thing standing between a stale
 result and the caches.
 """
 
@@ -100,7 +100,7 @@ async def test_the_progress_line_is_up_while_the_search_runs(index: Path) -> Non
 @pytest.mark.asyncio
 async def test_a_superseded_search_never_reaches_the_caches(index: Path) -> None:
     """The staleness guard. A slow first query is overtaken by a second; when
-    the first finally finishes it must be discarded whole — not merged, not
+    the first finally finishes it must be discarded whole, not merged, not
     partially applied."""
     app = FNDApp(index_dir=index)
     async with app.run_test() as pilot:
@@ -181,7 +181,7 @@ async def test_an_exploding_search_does_not_strand_the_line(index: Path) -> None
 @pytest.mark.asyncio
 async def test_quitting_mid_search_is_not_an_error(index: Path) -> None:
     """A search in flight when the app goes away has no DOM to commit to.
-    That is an ordinary shutdown, not a crashed worker — which is exactly
+    That is an ordinary shutdown, not a crashed worker, which is exactly
     what it surfaced as before ``_marshal`` guarded it."""
     app = FNDApp(index_dir=index)
     async with app.run_test() as pilot:
@@ -233,7 +233,7 @@ async def test_a_malformed_query_supersedes_the_search_already_running(index: Pa
 
     ``_fail`` marks the current generation committed. Allocating the
     generation only after a successful parse meant a malformed query marked an
-    IN-FLIGHT search's generation as committed — that worker then passed the
+    IN-FLIGHT search's generation as committed: that worker then passed the
     guard in ``_commit``, restored its stale results, and wiped the error
     notice the user had just been shown.
     """
@@ -291,7 +291,7 @@ async def test_the_search_plan_uses_both_of_its_phases(index: Path) -> None:
         finally:
             app._search.__class__._commit = original_enter  # type: ignore[method-assign]
 
-    assert phases, "setup — the search never committed"
+    assert phases, "setup: the search never committed"
     assert phases[-1] == "results", "the commit stage never entered its own phase"
     assert {p.key for p in SEARCH.phases} == {"query", "results"}
 
@@ -305,7 +305,7 @@ async def test_a_malformed_query_does_not_reload_the_index_under_a_worker(
     single search from two index generations.
 
     The guard used to derive "nothing is running" from the generation
-    counters — but ``_fail`` marks a generation committed WITHOUT waiting for
+    counters, but ``_fail`` marks a generation committed WITHOUT waiting for
     its worker, so a malformed query in between reported idle while a real
     search was still executing.
     """
@@ -334,7 +334,7 @@ async def test_a_malformed_query_does_not_reload_the_index_under_a_worker(
 
         app._search.run("target")
         await wait_until(pilot, started.is_set)
-        # The first query reloads legitimately — nothing was running. What
+        # The first query reloads legitimately: nothing was running. What
         # follows is the case under test.
         reloads.clear()
 
@@ -355,7 +355,7 @@ async def test_a_cancelled_dispatch_does_not_disable_reload_forever(index: Path)
     Deriving that from a counter was wrong. ``exclusive=True`` makes Textual
     cancel the previous worker SYNCHRONOUSLY inside ``add_worker``, before the
     new one starts, so a worker cancelled before its coroutine ever ran never
-    reached either commit path — and a counter incremented at dispatch was
+    reached either commit path, and a counter incremented at dispatch was
     never decremented. Two searches in a single tick did it, which Enter
     auto-repeat produces, and the leak was permanent: the gate stayed shut and
     the app silently stopped picking up reindexes for the rest of the session.
@@ -365,7 +365,7 @@ async def test_a_cancelled_dispatch_does_not_disable_reload_forever(index: Path)
         await pilot.pause()
         await run_search(pilot, app, "target")
 
-        # Both in ONE tick — the second cancels the first before it starts.
+        # Both in ONE tick: the second cancels the first before it starts.
         app._search.run("target")
         app._search.run("target")
         await wait_until(pilot, lambda: app._search.idle, timeout=10.0)
@@ -373,7 +373,7 @@ async def test_a_cancelled_dispatch_does_not_disable_reload_forever(index: Path)
             await pilot.pause()
 
         assert not app._search._searches_running(), (
-            "a cancelled dispatch left the gate shut — reload() is off for good"
+            "a cancelled dispatch left the gate shut: reload() is off for good"
         )
 
         assert app._search.searcher is not None

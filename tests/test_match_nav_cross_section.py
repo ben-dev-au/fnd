@@ -127,7 +127,7 @@ def _nav_pressing(sections: list[int], *, chunk_has_stop: bool, stops: list[int]
 
 def test_a_press_before_the_layout_resolves_waits_rather_than_handing_over() -> None:
     """The chunk's stops are not measurable yet (mid-mount) but its match data is
-    there — the press must wait for the layout, not leave the section."""
+    there: the press must wait for the layout, not leave the section."""
     nav, taken = _nav_pressing([3, 7], chunk_has_stop=True, stops=[])
     nav.next()
     assert taken == []
@@ -143,7 +143,7 @@ def test_a_section_whose_match_cannot_be_reached_hands_over() -> None:
 
 def test_a_press_before_the_chunk_mounts_waits_rather_than_handing_over() -> None:
     """The window rebuild() zeroes the count for: no widget for the focus chunk
-    and no cached count. Absence of evidence is not a dead end — wait."""
+    and no cached count. Absence of evidence is not a dead end: wait."""
     nav, taken = _nav_pressing([3, 7], chunk_has_stop=False, stops=[], mounted=False, count=0)
     nav.next()
     assert taken == []
@@ -159,7 +159,7 @@ def test_a_press_during_a_cross_file_navigation_does_not_hand_over() -> None:
 
 def test_a_press_while_the_chunk_is_still_building_waits() -> None:
     """Blocks register during the build, so an empty match set there means "not
-    yet" — the wide window, seconds on a big chunk."""
+    yet": the wide window, seconds on a big chunk."""
     nav, taken = _nav_pressing([3, 7], chunk_has_stop=False, stops=[], building=True)
     nav.next()
     assert taken == []

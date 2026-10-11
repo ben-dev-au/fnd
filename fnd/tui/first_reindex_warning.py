@@ -6,7 +6,7 @@ extra becomes installed. After dismissal (Continue or Cancel), a marker
 file is written to ``$XDG_DATA_HOME/fnd/`` so we don't nag again.
 
 Estimation: count PDFs in the configured collection's sources × an
-average ~30s/PDF heuristic. Rough on purpose — the user just needs an
+average ~30s/PDF heuristic. Rough on purpose: the user just needs an
 order-of-magnitude warning before walking away from a multi-hour run.
 """
 

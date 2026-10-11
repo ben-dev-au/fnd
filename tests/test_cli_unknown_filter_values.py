@@ -23,7 +23,7 @@ from fnd.index import build_index_from_config
 
 runner = CliRunner()
 
-# Kwargs each stubbed FNDApp construction was called with — empty means the
+# Kwargs each stubbed FNDApp construction was called with: empty means the
 # TUI never got as far as being built.
 _built: list[dict[str, object]] = []
 
@@ -31,7 +31,7 @@ _built: list[dict[str, object]] = []
 @pytest.fixture
 def corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Two real collections: ``Work2`` (mixed case, the reported bug) and
-    ``papers`` — indexed, with a config TOML the CLI actually loads."""
+    ``papers``: indexed, with a config TOML the CLI actually loads."""
     for name in ("Work2", "papers"):
         root = tmp_path / name
         root.mkdir()
@@ -63,7 +63,7 @@ def corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch)
 
 @pytest.fixture
 def tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force the interactive branch — same escape hatch fnd.migrate uses."""
+    """Force the interactive branch: same escape hatch fnd.migrate uses."""
     monkeypatch.setenv("_FND_FORCE_TTY", "1")
 
 
@@ -95,7 +95,7 @@ def test_wrong_case_collection_is_offered_and_accepted(corpus: Path, tty: None) 
     assert code == 0, out
     assert "no collection named 'work2'" in out
     assert "Did you mean 'Work2'?" in out
-    # Accepting scopes the search — the papers copy must not appear.
+    # Accepting scopes the search: the papers copy must not appear.
     assert "Work2" in out
     assert "papers" not in out
 
@@ -108,7 +108,7 @@ def test_declining_the_suggestion_exits_without_searching(corpus: Path, tty: Non
 
 
 def test_non_tty_reports_instead_of_prompting(corpus: Path) -> None:
-    """Piped or scripted, the prompt would hang — print the fix instead."""
+    """Piped or scripted, the prompt would hang: print the fix instead."""
     code, out = _search("lightning", "-c", "work2")
     assert code == 2, out
     assert "no collection named 'work2'" in out
@@ -133,14 +133,14 @@ def test_unknown_kind_is_rejected_with_a_suggestion(corpus: Path) -> None:
 
 
 def test_kind_case_is_canonicalised_silently(corpus: Path) -> None:
-    """``--kind PDF`` is unambiguous — resolve it, don't interrogate the user."""
+    """``--kind PDF`` is unambiguous: resolve it, don't interrogate the user."""
     code, out = _search("lightning", "--kind", "PDF")
     assert code == 0, out
     assert "did you mean" not in out.lower()
 
 
 def test_in_query_collection_token_reports_but_never_prompts(corpus: Path, tty: None) -> None:
-    """A ``c:`` token inside the query is reported, not rewritten — silently
+    """A ``c:`` token inside the query is reported, not rewritten, silently
     editing text the user typed is worse than telling them what to change."""
     code, out = _search("c:work2 lightning", input="y\n")
     assert code == 2, out
@@ -197,7 +197,7 @@ def test_bad_date_and_bad_tag_match_report_together(corpus: Path) -> None:
 @pytest.mark.parametrize("blank", ["", " ", ","])
 def test_blank_collection_value_is_an_error_not_everything(corpus: Path, blank: str) -> None:
     """``-c "$COLL"`` with ``COLL`` unset is the scripted version of the bug
-    this PR fixes — it must not resolve to "search everything"."""
+    this PR fixes: it must not resolve to "search everything"."""
     code, out = _search("lightning", "-c", blank)
     assert code == 2, out
     assert "no collection named" in out

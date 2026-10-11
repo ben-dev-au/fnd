@@ -52,14 +52,14 @@ jobs:
         run: |
           set -euo pipefail
           gh issue create \
-            --title "Quarterly dependency review — $(date -u '+%Y-%m')" \
+            --title "Quarterly dependency review: $(date -u '+%Y-%m')" \
             --body "Per SECURITY.md, review the security-critical parsers this quarter.
 
           For each of **pymupdf, python-docx, python-pptx, tantivy, markdown-it-py**:
 
           - [ ] Read the changelog since the pinned version for disclosed security fixes
           - [ ] \`uv lock --upgrade-package <name>\`
-          - [ ] Raise the \`~=X.Y.Z\` pin in \`pyproject.toml\` to match — the pin, not the lock, is what users get
+          - [ ] Raise the \`~=X.Y.Z\` pin in \`pyproject.toml\` to match: the pin, not the lock, is what users get
           - [ ] Confirm \`deps-latest\` and the full suite are green at the new version
           - [ ] Ship as a patch release if anything security-relevant was disclosed
 
@@ -70,4 +70,4 @@ jobs:
           \`\`\`
 
           Note this diff only shows movement *allowed by the pins* (patches). A
-          new minor will not appear here — check the upstream changelogs directly."
+          new minor will not appear here: check the upstream changelogs directly."

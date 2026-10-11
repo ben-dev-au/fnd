@@ -1,4 +1,4 @@
-"""Frontmatter size limits — caps protect the markdown extractor from
+"""Frontmatter size limits: caps protect the markdown extractor from
 adversarial files whose YAML-like frontmatter expands into memory before
 markdown-it ever sees them. (S7)"""
 
@@ -39,7 +39,7 @@ def test_frontmatter_no_fence_returns_none() -> None:
 
 
 def test_frontmatter_limit_respects_patched_value() -> None:
-    """Confirm the limit is consulted at call time, not import time —
+    """Confirm the limit is consulted at call time, not import time,
     so users can tune it from config or environment in future."""
     short_limit = 32
     with patch.object(
@@ -48,7 +48,7 @@ def test_frontmatter_limit_respects_patched_value() -> None:
         wraps=read_frontmatter_from_text,
     ):
         doc = "---\n" + "k: v\n" * 20 + "---\n"
-        # 20 * 5 bytes = 100 bytes of body alone — guarantees we trip 32.
+        # 20 * 5 bytes = 100 bytes of body alone: guarantees we trip 32.
         from fnd.extract import _limits
 
         with patch.object(_limits, "LIMIT_FRONTMATTER_TOTAL_BYTES", short_limit):

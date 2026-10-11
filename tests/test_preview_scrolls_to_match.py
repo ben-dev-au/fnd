@@ -1,4 +1,4 @@
-"""Preview must scroll to the first match — flat (pdf/txt) and structural (md)."""
+"""Preview must scroll to the first match: flat (pdf/txt) and structural (md)."""
 
 from __future__ import annotations
 
@@ -223,7 +223,7 @@ async def test_md_preview_scrolls_to_matched_row_inside_tall_table(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
     """Regression: a match in a LOWER row of a tall table must scroll the
-    matched row into view — not stop at the top of the table.
+    matched row into view, not stop at the top of the table.
 
     The W3 table renders every row in one full-height DataTable (a single
     Rich render, no per-cell widgets, no internal scroll), so scrolling to
@@ -234,7 +234,7 @@ async def test_md_preview_scrolls_to_matched_row_inside_tall_table(
     Two distinct defects are guarded:
 
     1. The matched coordinate must be the cell that actually contains the
-       query term — not the first cell carrying *any* Content span. Early
+       query term, not the first cell carrying *any* Content span. Early
        rows here use inline ``code`` / **bold** styling (as a real
        flashcards table does); the buggy coord logic picked the first
        styled cell (near the top) instead of the matched row below.
@@ -250,7 +250,7 @@ async def test_md_preview_scrolls_to_matched_row_inside_tall_table(
     notes.mkdir()
     lines = ["# Notes", "", "Intro.", "", "| Term | Definition |", "| --- | --- |"]
     # Early rows carry markdown styling (inline code, bold) so their cell
-    # Content gains styling spans — the trap the old coord logic fell into.
+    # Content gains styling spans: the trap the old coord logic fell into.
     for i in range(40):
         lines.append(f"| Term{i} | Use `func{i}()` and **bold{i}** in definition {i}. |")
     lines.append("| Determinism | A Deterministic system always gives the same output. |")
@@ -285,7 +285,7 @@ async def test_md_preview_scrolls_to_matched_row_inside_tall_table(
         cell_text = getattr(cell_value, "plain", str(cell_value))
         assert "Deterministic" in cell_text, (
             f"match coord {coord} points at {cell_text!r}, not the cell "
-            f"containing the query term — coord resolved to a merely-styled cell"
+            f"containing the query term: coord resolved to a merely-styled cell"
         )
 
         # Defect 2: that cell is scrolled on-screen.
@@ -294,14 +294,14 @@ async def test_md_preview_scrolls_to_matched_row_inside_tall_table(
         top, bottom = pane.region.y, pane.region.y + pane.region.height
         assert top <= csy < bottom, (
             f"matched table cell at screen y={csy} is outside the preview "
-            f"viewport [{top}, {bottom}) — scrolled to the top of the table, "
+            f"viewport [{top}, {bottom}): scrolled to the top of the table, "
             f"not to the matched row (pane.scroll_y={pane.scroll_y})"
         )
 
 
 @pytest.mark.asyncio
 async def test_md_scroll_with_varied_constructs(tmp_path: Path, tmp_index_dir: Path) -> None:
-    """Frontmatter, headings, lists, tables, code blocks, blockquotes —
+    """Frontmatter, headings, lists, tables, code blocks, blockquotes:
     the match must still find its block."""
     notes = tmp_path / "notes"
     notes.mkdir()
@@ -331,7 +331,7 @@ def safe():
 | ----- | ----- |
 | x     | y     |
 
-## Module 1 — Topic 3 Cybersecurity Attacks
+## Module 1: Topic 3 Cybersecurity Attacks
 
 Some intro text.
 
@@ -361,8 +361,8 @@ Wrap-up paragraph.
 
 @pytest.mark.asyncio
 async def test_flat_preview_no_jump_on_install(tmp_path: Path, tmp_index_dir: Path) -> None:
-    """Flat buffer must already be scrolled to the match before first paint
-    — no flash to file top + jump-to-match."""
+    """Flat buffer must already be scrolled to the match before first paint:
+    no flash to file top + jump-to-match."""
     notes = tmp_path / "notes"
     notes.mkdir()
     lines = [f"filler line {i}" for i in range(200)]
@@ -390,8 +390,8 @@ async def test_flat_preview_no_jump_on_install(tmp_path: Path, tmp_index_dir: Pa
 async def test_flat_match_lands_a_quarter_down_not_at_top(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    """Flat (PDF/TXT) match drops ~25% down the viewport — context above it,
-    consistent with the structural preview — not pinned to the top row.
+    """Flat (PDF/TXT) match drops ~25% down the viewport (context above it,
+    consistent with the structural preview) not pinned to the top row.
     ``scroll_y > 0`` alone can't catch a regression to top-anchoring; assert
     the match's on-screen row equals the context margin."""
     notes = tmp_path / "notes"
@@ -429,7 +429,7 @@ async def test_md_preview_scrolls_to_the_row_a_wrapped_match_paints_on(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
     """Regression: one source line that WRAPS across the viewport several times
-    over, with its match late in it — a PDF contents page's shape.
+    over, with its match late in it: a PDF contents page's shape.
 
     ``scroll_y > 0`` is not a sufficient assertion: anchoring on the block's top
     row satisfies it while leaving the match below the fold, which is the defect.
@@ -487,6 +487,6 @@ async def test_md_preview_scrolls_to_the_row_a_wrapped_match_paints_on(
         top, bottom = pane.region.y, pane.region.y + pane.region.height
         assert top <= y < bottom, (
             f"the match paints at screen y={y}, outside the preview viewport "
-            f"[{top}, {bottom}) — anchored on the block's top row, not the "
+            f"[{top}, {bottom}): anchored on the block's top row, not the "
             f"match's (pane.scroll_y={pane.scroll_y})"
         )

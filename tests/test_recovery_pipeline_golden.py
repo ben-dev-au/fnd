@@ -2,7 +2,7 @@
 
 The Bug-E fix routes structured extraction through a tiered
 ``PageRecoveryPipeline``. These tests pin born-digital output so the
-refactor — and every later tier that gates on coverage — provably leaves
+refactor, and every later tier that gates on coverage, provably leaves
 born-digital pages byte-for-byte unchanged. Born-digital coverage floors
 well above the fallback gate, so no tier may ever rewrite these pages.
 """
@@ -21,7 +21,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "papers" / "test.pdf"
 
 def _direct_page_md() -> dict[int, str]:
     """The pre-refactor production transform per page: ``_extract_page_md``
-    followed by ``_strip_picture_markers`` (no docling — born-digital
+    followed by ``_strip_picture_markers`` (no docling: born-digital
     test.pdf emits no picture-omitted markers, so the splice never runs)."""
     from fnd.extract import pdf
 

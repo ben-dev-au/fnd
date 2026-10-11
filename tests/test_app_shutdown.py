@@ -2,7 +2,7 @@
 
 `_on_exit_app` stops the preview pipeline, cancels the prefetch drainer and stops
 the stall watch before handing back to Textual. Every step after a raising one is
-skipped, so this is a path where an exception does not merely log — it silently
+skipped, so this is a path where an exception does not merely log: it silently
 drops the rest of the teardown.
 """
 
@@ -21,7 +21,7 @@ async def test_exiting_while_the_drainer_runs_completes_the_teardown(
     tmp_index_dir: Path,
 ) -> None:
     """`await`ing a cancelled task raises CancelledError, and that is a
-    BaseException — so `suppress(Exception)` lets it through and it takes the
+    BaseException, so `suppress(Exception)` lets it through and it takes the
     rest of `_on_exit_app` with it, including `super()._on_exit_app()`.
 
     The drainer is idle-blocked on its queue here, which is its normal state:
@@ -45,7 +45,7 @@ async def test_exiting_while_the_drainer_runs_completes_the_teardown(
         await app._on_exit_app()
 
         assert stall_stopped == [True], (
-            "teardown stopped before the stall watch — the drainer's "
+            "teardown stopped before the stall watch: the drainer's "
             "CancelledError escaped and skipped the rest of the shutdown"
         )
         assert app._prefetch.sink_drainer is None

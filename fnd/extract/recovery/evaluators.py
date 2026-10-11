@@ -17,7 +17,7 @@ _ALPHA_TOKEN_RE = re.compile(r"[A-Za-z]{3,}")
 # prose as garbled).
 def _find_system_dict() -> Path:
     """First installed Unix word list (macOS/Linux/BSD locations). Windows
-    ships none — the caller then abstains from the legibility heuristic
+    ships none: the caller then abstains from the legibility heuristic
     rather than failing."""
     for candidate in (
         Path("/usr/share/dict/words"),
@@ -58,11 +58,11 @@ def alpha_tokens(text: str) -> set[str]:
 
 class CoverageEvaluator:
     """Scores how much of the flat text layer a Markdown extraction
-    captured — the signal that distinguishes a dropped invisible-text
+    captured: the signal that distinguishes a dropped invisible-text
     page (coverage ~0.08) from a faithfully extracted one (~0.95)."""
 
     def flat_token_count(self, flat: str) -> int:
-        """Distinct flat-layer tokens — the gate's token floor input."""
+        """Distinct flat-layer tokens: the gate's token floor input."""
         return len(alpha_tokens(flat))
 
     def coverage(self, markdown: str, flat: str) -> float:
@@ -84,7 +84,7 @@ def _is_camel(token: str) -> bool:
 
 
 class LegibilityEvaluator:
-    """Scores how readable a recovered page's prose is — the signal that
+    """Scores how readable a recovered page's prose is: the signal that
     separates clean baked OCR from a garbled scan. Operates on prose only
     (code fences stripped, since identifiers aren't dictionary words).
 
@@ -97,7 +97,7 @@ class LegibilityEvaluator:
         self._loaded = dictionary is not None
         # True only when the lazy system-dict load was attempted and the
         # word list was absent (Windows / minimal containers). An explicit
-        # empty dict is NOT "unavailable" — it deliberately isolates the
+        # empty dict is NOT "unavailable": it deliberately isolates the
         # CamelCase rule, so we still score against it.
         self._dict_unavailable = False
 
@@ -128,7 +128,7 @@ class LegibilityEvaluator:
             return None, 0
         self._dict()  # trigger lazy load so _dict_unavailable is set
         if self._dict_unavailable:
-            # No word list to judge against — abstain rather than scoring
+            # No word list to judge against: abstain rather than scoring
             # every page 0.0 (which would make the tier reprocess all prose).
             return None, len(tokens)
         legible = sum(1 for t in tokens if self._known(t) or _is_camel(t))

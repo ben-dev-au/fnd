@@ -23,7 +23,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 def test_get_file_chunks_returns_all_pages_in_order(built_index: Path) -> None:
-    """The PDF fixture has 12 pages — all should come back in chunk_seq order."""
+    """The PDF fixture has 12 pages: all should come back in chunk_seq order."""
     s = Searcher(index_dir=built_index)
     # Find the PDF's parent_id via a regular search.
     hits = s.search("blue penguin sandwich", limit=1)
@@ -61,7 +61,7 @@ def test_get_file_chunks_dedups_file_shared_across_collections(
 ) -> None:
     """A file covered by two collections (e.g. an Obsidian vault listed
     under nested source roots) is stored once per collection. The
-    full-document preview must still return each chunk_seq exactly once —
+    full-document preview must still return each chunk_seq exactly once,
     otherwise every chunk renders twice in the preview pane.
     """
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="alpha")
@@ -131,7 +131,7 @@ def test_render_document_uses_heading_path_when_available() -> None:
 
 
 def test_render_document_highlights_every_match_across_chunks() -> None:
-    """All occurrences across all chunks must be bolded — not just the first."""
+    """All occurrences across all chunks must be bolded, not just the first."""
     chunks = [
         FileChunk(
             parent_id="z",

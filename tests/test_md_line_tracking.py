@@ -66,10 +66,10 @@ def test_hit_line_round_trips_through_index(tmp_path: Path) -> None:
 
 
 def test_hit_line_zero_for_kinds_without_line_tracking(tmp_path: Path) -> None:
-    """PDF / DOCX / PPTX chunks set ``line=0`` — they have their own
+    """PDF / DOCX / PPTX chunks set ``line=0``: they have their own
     locators (page, slide, heading_path) and CLI deep-links for those
     formats don't accept a line anyway."""
-    # Use the existing fixture PDF — easiest non-MD non-TXT corpus.
+    # Use the existing fixture PDF: easiest non-MD non-TXT corpus.
     fixtures = Path("tests/fixtures")
     if not fixtures.is_dir():
         return

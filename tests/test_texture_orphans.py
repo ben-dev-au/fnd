@@ -37,7 +37,7 @@ def _ch() -> list[Chunk]:
 def test_count_and_prune_orphans(tmp_path: Path) -> None:
     cache = PdfStructureCache(root=tmp_path)
     cache.put("live1--tex-v2", _ch())
-    cache.put("live1--tex-v1", _ch())  # same content, older sig — still live
+    cache.put("live1--tex-v1", _ch())  # same content, older sig: still live
     cache.put("dead1--tex-v2", _ch())
     cache.put("dead2--tex-v2", _ch())
     live = {"live1"}

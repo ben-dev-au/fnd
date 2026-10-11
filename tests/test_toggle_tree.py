@@ -1,4 +1,4 @@
-"""Behavioural tests for the reusable ToggleTree — the three bug classes the
+"""Behavioural tests for the reusable ToggleTree: the three bug classes the
 ad-hoc trees hit must be impossible here."""
 
 from __future__ import annotations

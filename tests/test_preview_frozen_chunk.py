@@ -4,8 +4,8 @@ A chunk is tens of widgets (42 on a measured real PDF) and Textual's arrange is
 linear in widget count, so mounted DOM is what makes a long reading session
 progressively slower. Freezing keeps the rendered result and drops the tree.
 
-Fidelity is not re-implemented here — the strips are the real widget tree's own
-output — so the tests that matter are that the capture is COMPLETE (the whole
+Fidelity is not re-implemented here (the strips are the real widget tree's own
+output) so the tests that matter are that the capture is COMPLETE (the whole
 chunk, not just the part on screen), that the positions navigation needs survive
 the widgets that produced them, and that the stand-in occupies exactly the same
 height so swapping it in moves nothing.
@@ -44,7 +44,7 @@ def sample():
 
 """ + "\n\n".join(
     f"Filler paragraph {i}, present so the chunk is comfortably taller than the "
-    f"test viewport — otherwise 'captures past the fold' proves nothing."
+    f"test viewport, otherwise 'captures past the fold' proves nothing."
     for i in range(12)
 )
 
@@ -60,7 +60,7 @@ async def _built(pilot) -> FNDMarkdown:  # type: ignore[no-untyped-def]
     md.update(DOC)
     await md.build_done.wait()
     # Ask the operation, not a proxy for it: every geometry gate written here
-    # has been weaker than what `freeze` enforces — a DataTable can report a
+    # has been weaker than what `freeze` enforces: a DataTable can report a
     # height with `virtual_size` still zero, which freeze refuses.
     await wait_until(
         pilot,
@@ -94,7 +94,7 @@ async def test_capture_holds_everything_the_tree_painted() -> None:
         assert "quartzfin in prose" in text.replace("\n", " ")
         # ONE line carrying both words. "quartzfin" alone is in the heading,
         # the prose, the fence and the list item, so asserting it document-wide
-        # passes even when the table captures as an empty box — the exact
+        # passes even when the table captures as an empty box: the exact
         # failure the table guards exist to catch.
         assert any("quartzfin" in line and "cell" in line for line in text.splitlines()), (
             "the table row did not survive the capture"
@@ -134,7 +134,7 @@ async def test_positions_survive_the_widgets_that_produced_them() -> None:
         )
         assert frozen.stop_rows, "no match stops captured"
         assert all(0 <= r < frozen.outer_height for r in frozen.stop_rows)
-        # Table cells resolve to rows recorded while the DataTable still existed —
+        # Table cells resolve to rows recorded while the DataTable still existed:
         # the point being that a row cannot race, whereas a live cell region can.
         for coord, row in frozen.cell_rows.items():
             assert 0 <= row < frozen.outer_height, f"cell {coord} row {row} outside the chunk"
@@ -162,7 +162,7 @@ async def test_the_stand_in_is_one_widget_of_the_same_height() -> None:
 
         assert len(list(view.query("*"))) == 0, "the stand-in must hold no child widgets"
         assert view.size.height == frozen.outer_height, (
-            f"stand-in is {view.size.height} rows, capture is {frozen.outer_height} — "
+            f"stand-in is {view.size.height} rows, capture is {frozen.outer_height}: "
             "a height mismatch would shift the page when it is swapped in"
         )
         rendered = "\n".join(view.render_line(y).text for y in range(view.size.height))
@@ -171,7 +171,7 @@ async def test_the_stand_in_is_one_widget_of_the_same_height() -> None:
 
 
 class _PaddedHost(App[None]):
-    """A chunk as the preview actually mounts it — with the padding classes.
+    """A chunk as the preview actually mounts it, with the padding classes.
 
     ``_Host`` deliberately has none, so it cannot see this: ``freeze`` captures
     the CONTENT region, and a stand-in sized to that alone is a row shorter than
@@ -200,7 +200,7 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
 
     If a stand-in is even one row shorter than the chunk it replaces, the
     content above the viewport shrinks while ``scroll_y`` stays put, and
-    everything the user is reading slides upward — a second or two after the
+    everything the user is reading slides upward: a second or two after the
     navigation landed, which is exactly when it reads as the page jumping on its
     own. Measured before the padding was carried across: -6 rows for 6 chunks.
     """
@@ -229,7 +229,7 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
         # both were wrong: `scroll_y == scroll_target_y` settles before the
         # compositor re-arranges and read a position 174 rows stale, and
         # `reading.region.y == pane.region.y` assumes the scroll lands exactly at
-        # the chunk top — it can be clamped short, and the wait then times out
+        # the chunk top; it can be clamped short, and the wait then times out
         # under load while passing on an idle machine.
         #
         # The assertion below needs only that the position has STOPPED moving.
@@ -270,7 +270,7 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
         after = reading.region.y - pane.region.y
         assert after == before, (
             f"the page moved {after - before:+d} rows when {len(above)} chunks above it "
-            "were frozen — the stand-ins are not the height of what they replaced"
+            "were frozen: the stand-ins are not the height of what they replaced"
         )
 
 
@@ -301,7 +301,7 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
     """Freezing must not make matches unreachable.
 
     ``enumerate_stop_rows`` walks ``FNDMarkdown`` blocks, and a frozen chunk
-    is not one — so without explicit handling it contributes nothing and its
+    is not one, so without explicit handling it contributes nothing and its
     matches drop out of n/b navigation and the off-screen markers. Nothing
     raises; the matches simply stop existing, which is why this is pinned.
     """
@@ -332,14 +332,14 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
 
         frozen_rows = _rows_below(pane, view, spec)
         assert frozen_rows == live_rows, (
-            f"stops at rows {live_rows} live but {frozen_rows} once frozen — "
+            f"stops at rows {live_rows} live but {frozen_rows} once frozen: "
             "n/b and the markers move when a chunk is captured"
         )
 
 
 @pytest.mark.asyncio
 async def test_a_table_that_has_not_laid_out_is_refused() -> None:
-    """An unlaid table captures as a BORDER with no contents — an empty box, and
+    """An unlaid table captures as a BORDER with no contents: an empty box, and
     downstream nothing can tell it from a table that is genuinely empty.
 
     The nested-scroll guard cannot see this: an unlaid table measures 0 both
@@ -360,12 +360,12 @@ async def test_a_table_that_has_not_laid_out_is_refused() -> None:
         dt._size = Size(0, 0)  # type: ignore[attr-defined]
         dt.virtual_size = Size(0, 0)
         assert freeze(md, chunk_seq=7) is None, (
-            "a table with rows but no geometry was captured — it would be served "
+            "a table with rows but no geometry was captured: it would be served "
             "as an empty box where the table should be"
         )
 
 
-# One paragraph, one source line, wrapping to many rows with its match late —
+# One paragraph, one source line, wrapping to many rows with its match late:
 # the shape a PDF contents page has, and the one a block-top row gets wrong.
 # TWO matches, both inside that one block: with one, a per-block capture and a
 # per-row one produce the same rows and the parity test below cannot tell them
@@ -499,7 +499,7 @@ async def test_a_stand_in_paints_the_rows_the_tree_painted() -> None:
     ``Compositor.reflow`` lays a root's children out inside the size it is given
     MINUS that root's padding. Sized to the content region, a capture therefore
     spends its first row on the padding and drops the last content row, and a
-    stand-in that re-adds that padding paints everything one row low — which no
+    stand-in that re-adds that padding paints everything one row low, which no
     height check can see, and which showed up as the page stepping sideways the
     first time a file was frozen.
     """
@@ -555,7 +555,7 @@ async def test_a_stand_in_paints_the_rows_the_tree_painted() -> None:
 @pytest.mark.asyncio
 async def test_a_stand_in_swap_never_doubles_the_container() -> None:
     """Textual defers ``remove()``, so mounting the stand-in and then removing
-    the tree leaves BOTH in the layout until the removal lands — ten swaps
+    the tree leaves BOTH in the layout until the removal lands: ten swaps
     measured 559 duplicate rows in a container being read. ``display = False``
     is what takes the tree out in the pass the stand-in joins.
     """

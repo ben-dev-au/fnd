@@ -5,7 +5,7 @@ a source with a ``frontmatter_filter`` opens every candidate ``.md`` to
 evaluate the filter, and on a cloud-backed folder each open blocks while
 the provider materialises the file (~220 notes at ~2 s each = 6m52s).
 
-The scan itself is allowed to take that long — the file genuinely has to
+The scan itself is allowed to take that long: the file genuinely has to
 come down. What broke was the reporting: the whole scan ran as one opaque
 ``asyncio.to_thread`` hop, so the cancel event was not read until the
 scan finished and the modal showed a static "Scanning sources…" with no
@@ -62,7 +62,7 @@ async def test_cancel_during_scan_stops_before_indexing(
     # threading, not asyncio: this is set from inside the to_thread worker,
     # and asyncio.Event.set() is not thread-safe. Under asyncio debug mode the
     # loop's thread check raises inside the generator, which the runner turns
-    # into a scan error + cancelled — the test would then pass for the wrong
+    # into a scan error + cancelled: the test would then pass for the wrong
     # reason.
     slow_started = threading.Event()
 

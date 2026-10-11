@@ -1,7 +1,7 @@
 """Splice docling's recovered tables into pymupdf4llm's formatted page.
 
 The fallback used to replace the whole page with docling output, losing
-pymupdf4llm's bold/italic/headings — and on figure pages (no table)
+pymupdf4llm's bold/italic/headings, and on figure pages (no table)
 gaining nothing. The splice keeps the formatted page and drops tables in
 at the marker site, with three behaviours measured on the real corpus:
 no-table keeps pymupdf4llm, clean 1:1 splices, ambiguous count falls
@@ -48,7 +48,7 @@ def test_splice_keeps_formatting_and_inserts_table() -> None:
 
 
 def test_splice_keeps_pymupdf_when_docling_finds_no_table() -> None:
-    """The marker is a genuine figure/chart — docling recovers no table.
+    """The marker is a genuine figure/chart: docling recovers no table.
     Keep pymupdf4llm verbatim (formatting preserved); never replace with
     table-less docling output for no gain."""
     pymupdf_md = (
@@ -64,7 +64,7 @@ def test_splice_keeps_pymupdf_when_docling_finds_no_table() -> None:
 def test_splice_keeps_pymupdf_when_it_already_has_a_table() -> None:
     """pymupdf4llm already rendered a vector table on the page but also
     emitted a redundant picture marker (the same table as an image).
-    docling recovers no MISSED table here — splicing its copy would
+    docling recovers no MISSED table here: splicing its copy would
     duplicate. Keep pymupdf4llm (table + formatting), no duplicate."""
     pymupdf_md = (
         "## **Acids**\n\n"

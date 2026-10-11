@@ -114,7 +114,7 @@ def test_put_atomic_no_partial_file_on_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """F13: a failed write must not leave the entry path partially populated.
-    Either the previous entry survives, or nothing exists — never a corrupt half-write."""
+    Either the previous entry survives, or nothing exists: never a corrupt half-write."""
     cache = ExtractionCache(root=tmp_path)
     key = "atomic--v1"
 
@@ -181,7 +181,7 @@ def test_entry_path_sanitisation_is_collision_free(monkeypatch: pytest.MonkeyPat
 
 
 def test_pipe_bearing_key_round_trips(tmp_path: Path) -> None:
-    """put()/get() of a legacy ``|``-bearing key works on the host OS —
+    """put()/get() of a legacy ``|``-bearing key works on the host OS:
     on Windows only because entry_path sanitises the filename."""
     cache = ExtractionCache(root=tmp_path)
     key = "deadbeef--pymupdf4llm-1.0|cfg-abc"
@@ -248,7 +248,7 @@ def test_sha256_file_is_stable(tmp_path: Path) -> None:
 def test_cache_overlay_per_file_identity_on_restore(tmp_path: Path) -> None:
     """Regression: two files with identical bytes at DIFFERENT paths
     share a cache entry (keyed by content hash), but the restored
-    chunks must reflect the current file's parent_id / path / mtime —
+    chunks must reflect the current file's parent_id / path / mtime,
     otherwise the indexer routes chunks to the wrong Tantivy
     parent_id and the search shows only one of the two files.
 
@@ -273,7 +273,7 @@ def test_cache_overlay_per_file_identity_on_restore(tmp_path: Path) -> None:
 
     # First extraction populates the cache.
     chunks_a = list(extract(a))
-    # Second extraction is a cache hit — must overlay parent_id.
+    # Second extraction is a cache hit: must overlay parent_id.
     chunks_b = list(extract(b))
 
     assert chunks_a, "extract() must yield chunks"

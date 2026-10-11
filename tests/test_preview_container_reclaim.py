@@ -1,8 +1,8 @@
 """Navigating inside ONE file must not accumulate preview containers.
 
 The same-file out-of-window navigation path builds a FRESH ``PreviewContainer``
-and atomic-swaps to it. It used to return before reaching the sweep — which
-lives on the cross-file path — on the assumption that the old container would be
+and atomic-swaps to it. It used to return before reaching the sweep, which
+lives on the cross-file path, on the assumption that the old container would be
 "swept on the next navigation". Inside a single file that next navigation takes
 the same early return, so nothing was ever reclaimed.
 
@@ -50,7 +50,7 @@ async def test_in_file_navigation_does_not_accumulate_containers(
         assert searcher is not None
         chunks = searcher.get_file_chunks(group.parent_id)
         assert len(chunks) > tuning.FULLMOUNT_CHUNK_BUDGET, (
-            f"fixture has {len(chunks)} chunks — under the full-mount budget it is "
+            f"fixture has {len(chunks)} chunks: under the full-mount budget it is "
             "mounted whole and every jump scrolls in place, so this never exercises "
             "the rebuild path that leaked"
         )
@@ -66,7 +66,7 @@ async def test_in_file_navigation_does_not_accumulate_containers(
         # navigations must not leave eight containers.
         assert len(containers) <= 3, (
             f"{len(containers)} containers after 8 in-file navigations "
-            f"(parents={[c.parent_doc_id[:6] for c in containers]}) — "
+            f"(parents={[c.parent_doc_id[:6] for c in containers]}), "
             "the same-file rebuild path is not reclaiming"
         )
 
@@ -110,7 +110,7 @@ async def test_reclaim_runs_after_an_in_window_landing(
     a container stranded earlier survived for as long as the user stayed inside
     one file, where every jump is an in-window scroll and neither path runs.
     Measured on a real file: twelve in-window navigations later, one strand still
-    held 6 live chunk trees and 169 widgets — more DOM than the 92 frozen chunks
+    held 6 live chunk trees and 169 widgets, more DOM than the 92 frozen chunks
     of the file actually being read.
 
     Asserts the sweep is REACHED from the in-window landing rather than that a
@@ -150,6 +150,6 @@ async def test_reclaim_runs_after_an_in_window_landing(
         await settle(pilot, ticks=12)
 
         assert calls, (
-            "no reclamation ran for an in-window navigation — a container "
+            "no reclamation ran for an in-window navigation: a container "
             "stranded earlier would survive for the whole session"
         )

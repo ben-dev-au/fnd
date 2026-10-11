@@ -4,7 +4,7 @@ Hand-rolled subset because adding PyYAML for one feature isn't worth the
 dep weight. Supports the shapes Obsidian / Jekyll / Hugo / MkDocs use:
 flat key→scalar / quoted-string / inline list / block list / number /
 ISO date / bool / null. Nested mappings, multiline strings (``|``/``>``)
-and YAML anchors are out of scope — they raise FrontmatterParseError.
+and YAML anchors are out of scope: they raise FrontmatterParseError.
 
 A document with no leading ``---\\n`` fence returns None (signals "no
 frontmatter present"). An empty fenced block returns {}.
@@ -89,7 +89,7 @@ def _parse_block(lines: list[str]) -> dict[str, object]:
     i = 0
     while i < len(lines):
         raw = lines[i]
-        # Reject indented continuation that would imply nested mapping —
+        # Reject indented continuation that would imply nested mapping:
         # we don't support nested structures.
         if raw and raw[0] in (" ", "\t"):
             raise FrontmatterParseError(
@@ -104,7 +104,7 @@ def _parse_block(lines: list[str]) -> dict[str, object]:
             raise FrontmatterParseError(f"frontmatter line {i + 2}: expected ``key: value``")
         key = m.group(1).rstrip()
         value_text = m.group(2)
-        # YAML anchors / aliases / tags — explicit reject.
+        # YAML anchors / aliases / tags: explicit reject.
         if value_text.startswith("&") or value_text.startswith("*") or value_text.startswith("!"):
             raise FrontmatterParseError(
                 f"frontmatter line {i + 2}: anchors/aliases/tags are unsupported"

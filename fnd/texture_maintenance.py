@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 def live_content_shas(config: Config) -> set[str]:
     """Content hashes of every PDF currently reachable under any
-    collection's sources. Hashes file bytes, so it's O(corpus) — only
+    collection's sources. Hashes file bytes, so it's O(corpus): only
     call from an explicit maintenance action, never a hot path."""
     import contextlib
 

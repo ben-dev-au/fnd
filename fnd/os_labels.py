@@ -1,4 +1,4 @@
-"""OS display vocabulary — what the running platform *calls* things.
+"""OS display vocabulary: what the running platform *calls* things.
 
 Third seam alongside :mod:`fnd.paths` (where files live) and
 :mod:`fnd.launcher` (how to open/reveal them). Those two answer "where" and
@@ -6,7 +6,7 @@ Third seam alongside :mod:`fnd.paths` (where files live) and
 rows, and app labels read natively instead of hardcoding ``Finder`` / ``Alt``
 on every OS.
 
-Deliberately uncached pure functions of :func:`platform.system` — the value
+Deliberately uncached pure functions of :func:`platform.system`; the value
 never changes within a process, and staying uncached means a test can
 monkeypatch the platform without the ``cache_clear()`` bookkeeping
 ``launcher.get_launcher`` needs.
@@ -61,13 +61,13 @@ def file_manager_name() -> str:
 def file_manager_phrase() -> str:
     """The file manager as it reads mid-sentence. "Finder" and "File Explorer"
     are proper nouns and take no article; the generic Linux fallback is a common
-    noun, so it needs one — "reveals in file manager" is not English."""
+    noun, so it needs one: "reveals in file manager" is not English."""
     name = file_manager_name()
     return name if name != _FILE_MANAGER_FALLBACK else f"your {name}"
 
 
 def reveal_label() -> str:
-    """Title for the reveal action — "Reveal in Finder" and friends."""
+    """Title for the reveal action: "Reveal in Finder" and friends."""
     return f"Reveal in {file_manager_name()}"
 
 
@@ -102,7 +102,7 @@ ALT_WORD: Final = "{alt_word}"  # → Option / Alt         (prose)
 def localise(text: str) -> str:
     """Resolve the OS-vocabulary placeholders in ``text``.
 
-    Literal token replacement, not :meth:`str.format` — help text is full of
+    Literal token replacement, not :meth:`str.format`, help text is full of
     unrelated braces (``{60}`` proximity syntax, ``{path}`` app-argv
     templates) that formatting would mangle or raise on.
     """

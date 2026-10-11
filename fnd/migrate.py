@@ -37,10 +37,10 @@ def check_schema_status(index_dir: Path) -> tuple[SchemaStatus, str | None]:
 
     ``existing_version_string`` is None for READY / EMPTY; for STALE it is
     the raw text content of the sidecar (so callers can show it in
-    error messages — including when the sidecar is garbled).
+    error messages, including when the sidecar is garbled).
 
     The sidecar is the cheap first signal, but Tantivy stores the schema
-    in ``meta.json`` too — if a prior rebuild bumped the sidecar but
+    in ``meta.json`` too, if a prior rebuild bumped the sidecar but
     crashed before Tantivy committed new segments, the sidecar lies. So
     when the sidecar matches we additionally try opening the index; on
     Tantivy ``ValueError`` we report STALE (with ``"inconsistent"`` as the

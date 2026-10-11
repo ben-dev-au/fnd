@@ -49,7 +49,7 @@ _BLOCK_ID = re.compile(r"(?:(?<=\s)|^)\^[A-Za-z0-9-]+$")
 
 
 def has_match(text: str, spec: MatchSpec) -> bool:
-    """True when ``spec`` matches a word in ``text`` — the reveal test."""
+    """True when ``spec`` matches a word in ``text``: the reveal test."""
     if spec.is_empty or not text:
         return False
     return bool(match_word_spans(text, spec))

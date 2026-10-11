@@ -1,6 +1,6 @@
 """Policy tests for the dynamic sidebar height allocator.
 
-The allocator is pure — measured demands in, cell heights out — so the whole
+The allocator is pure (measured demands in, cell heights out) so the whole
 policy is pinned here without a running app. Panels are given in priority order
 (Results first).
 """
@@ -40,7 +40,7 @@ def test_fits_content_sizes_each_and_pools_slack_in_priority() -> None:
 
 def test_short_priority_hands_space_to_hungry_secondaries() -> None:
     # The case a static 50% floor gets wrong: Results wants almost nothing but
-    # the secondaries are long — the slack must flow to them, not sit empty in
+    # the secondaries are long: the slack must flow to them, not sit empty in
     # Results.
     h = allocate(45, _panels(5, 42, 42))
     assert h["R"] == 5
@@ -69,7 +69,7 @@ def test_priority_reclaims_unused_secondary_space() -> None:
 
 def test_short_secondary_is_satisfied_before_a_long_one_scrolls() -> None:
     # Max-min fairness: a 6-row filter list beside a 42-row collections list
-    # must be shown in full while collections scrolls — not both cut to equal
+    # must be shown in full while collections scrolls, not both cut to equal
     # shares.
     h = allocate(45, _panels(52, 42, 6))
     assert h["F"] == 6, "short secondary should get its full demand"
@@ -100,7 +100,7 @@ def test_tiny_terminal_still_gives_priority_the_majority() -> None:
 def test_never_over_allocates_the_column() -> None:
     # Fuzz a spread of demands/sizes; the allocation must never exceed avail.
     # Includes tiny columns (1-9 rows) where a naive per-panel floor of 1 would
-    # over-allocate — the case CodeRabbit caught that the >=10 sweep missed.
+    # over-allocate: the case CodeRabbit caught that the >=10 sweep missed.
     for avail in (1, 2, 3, 5, 7, 9, 10, 16, 24, 45, 60):
         for r in (1, 5, 30, 200):
             for c in (1, 4, 40):

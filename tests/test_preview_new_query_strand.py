@@ -3,11 +3,11 @@ mid-flight must not leave the old query's container stuck in the pane.
 
 `search_controller.run()` (new query), `clear_results()` (scope clear) and
 `rerender_current()` (highlight toggle) all clear the chunk + preview caches,
-drop the cached containers from the DOM, and cancel the in-flight mount — on
+drop the cached containers from the DOM, and cancel the in-flight mount: on
 the assumption the cancel takes effect synchronously. It doesn't: the mount
 task's `finally` runs a tick LATER and unconditionally `preview_cache.put()`s
 its container back AND leaves it mounted in the pane. So the just-cleared
-state is re-polluted with the previous query's half-built container — the
+state is re-polluted with the previous query's half-built container: the
 "stuck mid-mount after a new query" symptom.
 """
 
@@ -38,7 +38,7 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
     app = FNDApp(index_dir=built_index, initial_query="results")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
         preview = app._preview
 
         # Gate the cold structural mount in its early-await window so it sits
@@ -66,9 +66,9 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
             )
         )
         preview.mount_task = task
-        await safe_pause(pilot)  # park on the gate — container now mounted, pre-finalise
-        assert stale.parent is not None, "setup — parked container should be mounted in DOM"
-        assert getattr(stale, "_finalise_task", None) is None, "setup — must be pre-finalise"
+        await safe_pause(pilot)  # park on the gate: container now mounted, pre-finalise
+        assert stale.parent is not None, "setup: parked container should be mounted in DOM"
+        assert getattr(stale, "_finalise_task", None) is None, "setup: must be pre-finalise"
 
         # New query arrives while the mount is parked mid-flight; it clears the
         # caches + DOM and cancels the parked mount.
@@ -102,13 +102,13 @@ async def test_superseded_mount_cancels_detached_finaliser(built_index: Path) ->
     The cold path spawns ``container._finalise_task`` (``_finalise_via_lock``),
     which on completion unconditionally hides the bar and clears
     ``inflight_target``. Cancelling the mount task does not cancel that detached
-    task — so without the generation-guarded cancel, a stale finaliser fires
+    task, so without the generation-guarded cancel, a stale finaliser fires
     after a new query and tears down the new query's loading state.
     """
     app = FNDApp(index_dir=built_index, initial_query="results")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
         preview = app._preview
 
         gate = asyncio.Event()
@@ -128,7 +128,7 @@ async def test_superseded_mount_cancels_detached_finaliser(built_index: Path) ->
         )
 
         # Stand-in for the detached _finalise_via_lock: parked on a gate; if it
-        # ever completes it hides the bar + clears the latch — the clobber the
+        # ever completes it hides the bar + clears the latch: the clobber the
         # fix must prevent. Attached to the container exactly as the cold path
         # attaches the real one.
         finalise_gate = asyncio.Event()

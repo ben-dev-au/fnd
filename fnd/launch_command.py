@@ -4,13 +4,13 @@ A neutral domain module (no TUI, no CLI imports) that both surfaces depend
 on, so neither the CLI nor the TUI reaches into the other. Three value
 objects keep the serialise ↔ relaunch paths provable inverses:
 
-- ``LaunchScope`` — the filter state expressible as ``fnd`` launch flags.
+- ``LaunchScope``: the filter state expressible as ``fnd`` launch flags.
   The ``tui`` command both emits one (this module) and hydrates from one
   (``ScopeController``); a round-trip test asserts the symmetry.
-- ``SearchSnapshot`` — the read-only projection the serializer consumes,
+- ``SearchSnapshot``: the read-only projection the serializer consumes,
   built by ``ScopeController.snapshot`` so serialization never reaches into
   the controller's internals.
-- ``LaunchCommand`` — the rendered command plus any lossy-conversion notes.
+- ``LaunchCommand``: the rendered command plus any lossy-conversion notes.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ class LaunchScope:
     tag_match_all: bool = True
 
     def __bool__(self) -> bool:
-        # tag_match_all is a mode, meaningless without tags — it never makes
+        # tag_match_all is a mode, meaningless without tags: it never makes
         # an otherwise-empty scope "active".
         return bool(self.created or self.modified or self.kinds or self.tags or self.not_tags)
 

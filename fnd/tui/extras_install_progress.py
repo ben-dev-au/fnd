@@ -7,7 +7,7 @@ Follows :class:`fnd.tui.indexer_modal.IndexerScreen` discipline:
   screen, so dismissing (Background) keeps work going.
 - Cancel sends SIGTERM to the active subprocess; subsequent commands
   in the chain don't run.
-- Progress is derived from stderr / stdout lines emitted by uv —
+- Progress is derived from stderr / stdout lines emitted by uv:
   parsed loosely (uv prints lines like ``Resolved 23 packages``,
   ``Prepared 5 packages``, ``Installed 5 packages`` we surface for the
   user) and falls back to the most recent line as a status string.
@@ -57,7 +57,7 @@ class ProgressEvent:
 class ExtrasInstallProgressScreen(ModalScreen[None]):
     """Modal that drains the events queue on ``FNDApp._extras_events``.
 
-    Reopening the screen reattaches to the live task — the task
+    Reopening the screen reattaches to the live task: the task
     survives modal dismissal."""
 
     BINDINGS = [  # noqa: RUF012
@@ -69,7 +69,7 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
     # Visual consistency with the rest of fnd's UI: brackets reserved
     # for actions in the settings rows render exactly like the
     # ``[ Run ]`` affordance. The Textual ``Button`` widget adds
-    # ``▔``/``▁`` decorative chrome that's wider than its label —
+    # ``▔``/``▁`` decorative chrome that's wider than its label:
     # never matched fnd's settings-row buttons. Use plain Statics.
     #
     # All three button states (Background / Cancel / Close) are
@@ -230,7 +230,7 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
             self.dismiss(None)
 
     async def action_background_or_close(self) -> None:
-        """Esc / b behaves as Close once the operation has finished —
+        """Esc / b behaves as Close once the operation has finished:
         the modal has no work to background at that point."""
         if self._is_terminal:
             self.dismiss(None)
@@ -369,7 +369,7 @@ def start_extras_install(
 ) -> bool:
     """Spawn the install/uninstall task and push the progress modal.
 
-    Idempotent — refuses to start a second run while one is in flight,
+    Idempotent: refuses to start a second run while one is in flight,
     re-attaches the modal to the running task instead.
     """
     existing = getattr(app, "_extras_task", None)

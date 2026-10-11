@@ -94,7 +94,7 @@ def test_next_advances_by_viewport_and_wraps() -> None:
 
 def test_a_stop_inside_a_view_is_shown_not_skipped() -> None:
     # vh=24 tiles [0,30,49,60] into views at 0, 30 and 60. 49 gets no view of
-    # its own because the view at 30 spans [30,54) and already shows it — the
+    # its own because the view at 30 spans [30,54) and already shows it: the
     # hop must not stop twice on one screenful, nor skip 49 out of sight.
     nav = _nav([0, 30, 49, 60], vh=24)
     nav.next()
@@ -178,7 +178,7 @@ def test_a_frozen_focused_chunk_still_reports_its_stops() -> None:
 
     Serving a capture replaces the chunk's widget tree with a ``FrozenChunkView``
     and pops its match target. ``enumerate_stop_rows`` handles that view, so
-    ``n``/``b`` keep working — but without a matching branch here the plain-chunk
+    ``n``/``b`` keep working, but without a matching branch here the plain-chunk
     fallback reads the popped target, returns False, and the app hides the
     ``n/b Matches`` hint on a chunk where both keys work.
     """
@@ -233,7 +233,7 @@ def test_a_view_past_the_last_screenful_merges_into_it() -> None:
     scrolling nowhere."""
     # vh=20, document 120 rows → max_scroll_y=100. The view at 105 is past the
     # furthest the pane can scroll, so the clamped viewport [100,120) is what
-    # shows it — and 118 shares that view.
+    # shows it, and 118 shares that view.
     nav = _nav([0, 105, 118], vh=20, virtual_height=120)
 
     nav.next()
@@ -280,7 +280,7 @@ def _extent_nav(widgets: dict[int, _StubWidget], seq: int, virtual_height: int =
 def test_an_unlaid_chunk_scopes_to_nothing_not_to_everything() -> None:
     """The background fill hides every above-window chunk. Returning None there
     means "no per-chunk widgets", which sends _chunk_stops to its whole-preview
-    fallback — and that is how n/b walked out of the current result."""
+    fallback, and that is how n/b walked out of the current result."""
     nav, pane = _extent_nav({5: _StubWidget(0, 0), 6: _StubWidget(120, 40)}, seq=5)
 
     assert nav._current_chunk_extent(pane) == (0, 0)  # type: ignore[arg-type]

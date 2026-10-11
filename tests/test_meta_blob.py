@@ -34,7 +34,7 @@ def test_list_roundtrip() -> None:
 
 def test_date_roundtrip() -> None:
     """Dates must round-trip as ``datetime.date`` so the DSL evaluator's
-    ordered comparisons (`<=`, `>=`) work — strings can't be compared
+    ordered comparisons (`<=`, `>=`) work: strings can't be compared
     against dates and silently fail closed."""
     fm = {"due": dt.date(2026, 6, 1)}
     out = decode(encode(fm))

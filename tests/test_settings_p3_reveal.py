@@ -17,7 +17,7 @@ from tests._pilot_wait import settings_ready
     reason="asserts the macOS `open -R` reveal; cross-platform reveal is covered by test_launcher.py",
 )
 def test_reveal_runs_open_r_on_macos(tmp_path: Path) -> None:
-    """Spec: Reveal-in-Finder — uses `open -R <path>` on macOS."""
+    """Spec: Reveal-in-Finder, uses `open -R <path>` on macOS."""
     from fnd import opener
 
     p = tmp_path / "x.toml"
@@ -41,7 +41,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_root_has_open_keybindings_file(built_index: Path) -> None:
-    """Spec: IA › Root — sibling action for the keybindings TOML."""
+    """Spec: IA › Root, sibling action for the keybindings TOML."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsList
 
@@ -57,7 +57,7 @@ async def test_root_has_open_keybindings_file(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_shift_enter_on_open_config_calls_reveal(built_index: Path) -> None:
-    """Spec: Reveal pattern — Shift+Enter on the Open config row reveals
+    """Spec: Reveal pattern, Shift+Enter on the Open config row reveals
     config.toml in Finder."""
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SettingsList, SettingsScreen

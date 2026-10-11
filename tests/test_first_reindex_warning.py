@@ -2,7 +2,7 @@
 
 Tests cover the marker-file lifecycle, ETA estimator math, and the
 helpers that the FNDApp uses to decide whether to show the warning.
-The Textual modal class itself is exercised indirectly — full pilot
+The Textual modal class itself is exercised indirectly: full pilot
 testing of modals is flaky under load and out of scope here.
 """
 

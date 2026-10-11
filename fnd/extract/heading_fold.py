@@ -2,7 +2,7 @@
 
 A PDF page's heading is usually derived from the document TOC rather than
 read off the page, so it often isn't present in the page's own text. Baking
-it into ``body`` makes the section findable by its heading — but only the
+it into ``body`` makes the section findable by its heading, but only the
 chunk that *starts* the section may do so. ``_toc_heading_for_page`` returns
 the same heading for every page of a section, so an unconditional fold made
 every continuation page match a heading it neither owns nor renders: search
@@ -10,11 +10,11 @@ hit the chunk, the preview painted nothing, and the user landed on blank text.
 
 The rule is therefore twofold:
 
-* **Ownership** — a chunk owns its heading only when its ``heading_path``
+* **Ownership**: a chunk owns its heading only when its ``heading_path``
   differs from the previously yielded chunk's. Continuation pages and the
   ``carry_heading`` sections that inherit attribution across a page break are
   left untouched; their heading stays searchable through ``F_HEADING_PATH``.
-* **Parity** — when a chunk does own its heading, the text goes into all three
+* **Parity**, when a chunk does own its heading, the text goes into all three
   representations (``body`` for search, ``body_struct`` and ``body_md`` for the
   two preview substrates), so anything the index can match, the preview can
   paint.
@@ -60,7 +60,7 @@ def _leading_heading_key(body_md: str) -> str:
 class HeadingFolder:
     """Folds each chunk's own heading in, once, across all representations.
 
-    One instance per document — ownership is decided by comparing against the
+    One instance per document: ownership is decided by comparing against the
     previous chunk, so a shared instance would leak attribution between files.
     """
 

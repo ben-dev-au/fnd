@@ -78,7 +78,7 @@ class ResultsView:
         self._stale: set[str] = set()
 
     def title(self) -> str:
-        """Border title for the results pane — counts live next to the data
+        """Border title for the results pane: counts live next to the data
         they describe, not in a global status bar.
 
         A collapsed pane says so: two `←` presses shrink it to one row and the
@@ -150,11 +150,11 @@ class ResultsView:
 
         The top result is auto-expanded so its section rows (with their
         ``§ heading`` / ``p.N`` / ``chunk N`` locators) are immediately
-        visible — saves a keypress and makes the locator format
+        visible: saves a keypress and makes the locator format
         discoverable on first launch.
         """
         # Cancel any debounced preview load from the previous result
-        # set — its parent_id may no longer be a hit, and the new
+        # set: its parent_id may no longer be a hit, and the new
         # cursor placement below will arm a fresh timer.
         self._app._preview.cancel_pending_load()
         tree = self._app.query_one("#results_pane", Tree)
@@ -165,7 +165,7 @@ class ResultsView:
             #
             # Clearing the map instead was the first attempt and it did NOT
             # work. An unknown row falls through to the stock arrow, and
-            # Textual's ICON_NODE is byte-identical to the ready glyph — so
+            # Textual's ICON_NODE is byte-identical to the ready glyph, so
             # "no claim" rendered as "instant jump" for every row until the
             # next poll, at exactly the moment nothing was warm. Anything the
             # tree cannot answer has to fail towards COLD, never towards READY.
@@ -183,7 +183,7 @@ class ResultsView:
         # the disk. The preview renders the INDEX's copy, so a row whose file
         # has gone or moved on needs to say so before the user trusts it.
         self._stale = {g.path for g in self._app._search.groups if is_stale(g)}
-        # Rows are never filtered on paintability — see fnd.tui.match_evidence.
+        # Rows are never filtered on paintability: see fnd.tui.match_evidence.
         # A row the preview can't highlight is marked, not withheld.
         strict = self._app._effective_evidence_spec
         painting = self._app._effective_match_spec
@@ -237,7 +237,7 @@ class ResultsView:
             top_file = tree.root.children[0]
             if top_file.children:
                 tree.cursor_line = 1
-            # Dispatch explicitly — NodeHighlighted is suppressed when
+            # Dispatch explicitly: NodeHighlighted is suppressed when
             # cursor_line lands on the same index as before.
             top_group = self._app._search.groups[0]
             top_hit = top_group.hits[0] if top_group.hits else None
@@ -389,8 +389,8 @@ class ResultsView:
     def refresh_warmth(self) -> bool:
         """Repaint any file row whose readiness changed.
 
-        Polled rather than pushed. Warmth changes from two directions — a
-        capture landing, and coverage moving to the next file — and the second
+        Polled rather than pushed. Warmth changes from two directions (a
+        capture landing, and coverage moving to the next file) and the second
         has no single write to hook, so a notification would have to be
         emitted from several places and kept in step with them.
 
@@ -404,7 +404,7 @@ class ResultsView:
             return False
         states = self._app._preview.warm_states()
         if states is None:
-            # Cannot be answered right now — keep what the rows already show.
+            # Cannot be answered right now: keep what the rows already show.
             # An EMPTY map is different: it means there are no files, and the
             # rows should be cleared rather than left claiming anything.
             return False

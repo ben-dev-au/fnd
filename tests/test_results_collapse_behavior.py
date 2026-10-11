@@ -1,7 +1,7 @@
 """Results-pane collapse-to-header behaviour.
 
 Bug 3: collapsing the pane while a lower result is selected must keep the
-*selected* file in the single visible strip row — not snap back to the top
+*selected* file in the single visible strip row, not snap back to the top
 result (the strip drives the preview, so it must show the driving file).
 
 Bug 4: clicking the collapsed strip must reopen the pane (and expand the

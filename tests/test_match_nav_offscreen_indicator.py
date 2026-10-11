@@ -20,7 +20,7 @@ from tests._pilot_wait import wait_until
 
 # A CRC table taller than the viewport: CRC in card 32's answer and card 86's
 # question, ~50 rows apart so the second is well below the fold on load (the
-# viewport can't hold both — the original bug's shape).
+# viewport can't hold both; the original bug's shape).
 TALL_TABLE_MD = (
     "# Flashcards\n\n| # | Q | A |\n| --- | --- | --- |\n"
     + "".join(f"| {i} | filler question {i} | filler answer {i} |\n" for i in range(1, 32))
@@ -74,7 +74,7 @@ async def test_offscreen_match_announced_and_flips_on_nav(cfg: Config, tall_inde
         await pilot.pause()
         app.query_one("#results_pane", Tree).focus()
         # On load the viewport lands on the first CRC; the second is a screenful
-        # below in the SAME result — the awareness signal the original bug lacked.
+        # below in the SAME result: the awareness signal the original bug lacked.
         await wait_until(
             pilot,
             lambda: app._match_nav.below >= 1,

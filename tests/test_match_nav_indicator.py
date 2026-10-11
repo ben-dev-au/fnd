@@ -2,7 +2,7 @@
 
 * the ``n/b`` KEY hint lives in the footer keybinding area (like every key), and
 * the ``▲a ▼b`` off-screen VIEW markers live on the preview pane's bottom border
-  (``border_subtitle``) — but only when the current result has matches beyond
+  (``border_subtitle``), but only when the current result has matches beyond
   the viewport. A short result whose matches all fit on screen shows no markers.
 """
 
@@ -71,7 +71,7 @@ async def test_footer_hint_shows_and_short_result_has_no_view_markers(
             timeout=30.0,
             message="match-nav count never populated",
         )
-        # This result is a few lines — every match fits on screen, so the border
+        # This result is a few lines: every match fits on screen, so the border
         # carries no off-screen view markers (nothing hidden to announce).
         pane = app.query_one("#preview_pane", MatchAwareScroll)
         subtitle = str(pane.border_subtitle or "")
@@ -84,7 +84,7 @@ async def test_footer_hint_shows_and_short_result_has_no_view_markers(
         )
 
         # Reading View: markers gone (border dropped) AND the n/b footer hint
-        # gone too — the keys are inert there, so advertising them misleads.
+        # gone too: the keys are inert there, so advertising them misleads.
         app.action_toggle_reading_mode()
         await pilot.pause()
         rv_subtitle = str(app.query_one("#preview_pane").border_subtitle or "")

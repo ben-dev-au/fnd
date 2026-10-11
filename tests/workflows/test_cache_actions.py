@@ -1,4 +1,4 @@
-"""Cache maintenance workflows — end-to-end.
+"""Cache maintenance workflows: end-to-end.
 
 Covers:
   - Update cache (currently a stub; will surface a notify)

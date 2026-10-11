@@ -26,7 +26,7 @@ def test_action_label_applies_the_colour() -> None:
 
 
 def test_action_label_is_not_dim() -> None:
-    """Distinct from the dim category headers — actions should read brighter."""
+    """Distinct from the dim category headers: actions should read brighter."""
     label = _styled_action_label("x", "#BB9AF7")
     assert "dim" not in str(label.style).lower()
 
@@ -87,7 +87,7 @@ async def test_match_row_carries_the_action_colour(cfg: Config, idx: Path) -> No
 
 @pytest.mark.asyncio
 async def test_action_colour_equals_the_border_foreground(cfg: Config, idx: Path) -> None:
-    """The rows use the border's exact foreground — $primary 50% over surface.
+    """The rows use the border's exact foreground: $primary 50% over surface.
     Same foreground + same thin-stroke glyphs => same perceived colour."""
     from textual.color import Color
 
@@ -122,5 +122,5 @@ async def test_a_tag_row_is_not_action_coloured(cfg: Config, idx: Path) -> None:
         await pilot.pause()
         primary = app.get_css_variables().get("primary", "").lower()
         recipe = _find(tree, "recipe").label
-        # A plain string label (no primary styling) — tags aren't actions.
+        # A plain string label (no primary styling): tags aren't actions.
         assert primary not in str(getattr(recipe, "style", "")).lower()

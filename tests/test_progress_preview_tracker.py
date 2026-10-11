@@ -2,7 +2,7 @@
 
 The tracker reads the pipeline rather than being called from inside it,
 so these tests drive it against stand-ins for the signals it samples.
-The important one is ``test_mount_is_measured_against_the_window`` —
+The important one is ``test_mount_is_measured_against_the_window``:
 dividing by the whole file's chunk count is exactly why the old bar
 topped out around 1% on a large PDF.
 """
@@ -63,12 +63,12 @@ class StubPreview:
         # The flat path (PDF/TXT) shows a file without setting ``active``.
         self.flat_parent: str | None = None
         self.busy = False
-        # Whether the pane is showing readable content — not a container still
+        # Whether the pane is showing readable content, not a container still
         # behind ``-pre-reveal``. The tracker ends a navigation on this.
         self.painted = False
 
         # Per-file readiness, as the presenter answers it. None means "cannot
-        # be answered yet" — before layout there is no capture width.
+        # be answered yet": before layout there is no capture width.
         self.warm: WarmState | None = None
 
     def is_painted(self) -> bool:
@@ -193,7 +193,7 @@ def test_an_uncommitted_scroll_puts_us_in_land(
 def test_a_navigation_that_skips_the_decode_still_advances(
     app: StubApp, tracker: PreviewProgressTracker
 ) -> None:
-    """Cached chunks mean no decode at all — the phase must be retired,
+    """Cached chunks mean no decode at all: the phase must be retired,
     not waited on."""
     session = tracker.begin("doc")
     app._preview.mount_task = StubTask(done=False)
@@ -320,12 +320,12 @@ def test_a_scroll_that_never_commits_is_bounded_by_the_reveal_budget(
 ) -> None:
     """dispatch_mount has paths that cancel and rebuild without reconciling, so
     is_settling can stay true for good. The land phase is therefore bounded by
-    how long the app itself allows a reveal to take — past that the navigation
+    how long the app itself allows a reveal to take: past that the navigation
     is over whatever the scroll controller believes.
 
     Gating this on inflight_target instead (an earlier attempt) made the land
     phase UNREACHABLE, because reveal_active clears that latch before the
-    scroll commits — which capped every cold navigation near 20-40%.
+    scroll commits, which capped every cold navigation near 20-40%.
     """
     from fnd.tui.preview import tuning
 
@@ -359,7 +359,7 @@ def test_the_land_phase_is_reachable_at_all(app: StubApp, tracker: PreviewProgre
 
 def test_a_jump_inside_an_open_pdf_is_warm(app: StubApp, tracker: PreviewProgressTracker) -> None:
     """The flat path installs into one shared buffer and leaves ``active`` as
-    None, so reading ``active`` classified every PDF navigation as cold —
+    None, so reading ``active`` classified every PDF navigation as cold,
     including a jump inside the file already on screen. PDFs are the heavy
     case, so that mispriced the bar and fed warm samples into the cold
     calibration."""
@@ -396,14 +396,14 @@ def test_a_signal_from_the_other_path_does_not_retire_the_line(
 def test_a_navigation_that_ends_between_samples_still_retires_its_phases(
     app: StubApp, tracker: PreviewProgressTracker
 ) -> None:
-    """An observer only sees a phase if a tick falls inside it — and the event
+    """An observer only sees a phase if a tick falls inside it, and the event
     loop is saturated during exactly the work this line reports on, so ticks
     are dropped and the pipeline can pass through build and land between two
     samples.
 
     Measured on a real corpus: 7 of 31 navigations finished while the tracker
     still believed they were mounting. ``mount`` is followed by 53% of the
-    bar, so those sat at a median fill of 0.50 and then jumped to full — the
+    bar, so those sat at a median fill of 0.50 and then jumped to full: the
     "pauses halfway, then completes" report. The work being over means every
     phase of it is over, so the last sample retires them.
     """
@@ -440,7 +440,7 @@ def arrive(app: StubApp, parent_id: str) -> None:
 def test_a_navigation_ends_when_its_match_is_on_screen(
     app: StubApp, tracker: PreviewProgressTracker
 ) -> None:
-    """Not when the pipeline runs dry — those stopped being the same thing
+    """Not when the pipeline runs dry: those stopped being the same thing
     when the capture cache landed. The mount keeps filling below the fold long
     after the visible window has arrived, and waiting for it left the line up
     over a second after the match was readable: measured TRAIL p90 735 ms and
@@ -452,7 +452,7 @@ def test_a_navigation_ends_when_its_match_is_on_screen(
     assert tracker.sample(session) is True
 
     arrive(app, "doc")
-    assert app._preview.pipeline_busy() is True, "setup — work must still be in flight"
+    assert app._preview.pipeline_busy() is True, "setup: work must still be in flight"
     assert tracker.sample(session) is False, "the line waited for work nobody is watching"
 
 
@@ -460,7 +460,7 @@ def test_a_navigation_is_not_over_while_the_view_is_still_moving(
     app: StubApp, tracker: PreviewProgressTracker
 ) -> None:
     """Arrival must not short-circuit the scroll commit. Without this the line
-    cleared while the view was still moving — the opposite failure, and the
+    cleared while the view was still moving: the opposite failure, and the
     one that reads as the bar vanishing before it finished."""
     session = tracker.begin("doc")
     arrive(app, "doc")
@@ -487,7 +487,7 @@ def test_a_pane_showing_nothing_falls_back_to_the_pipeline(
     app: StubApp, tracker: PreviewProgressTracker
 ) -> None:
     """Arrival cannot be answered before anything is painted, so the pipeline
-    signals stay the authority there — and stay the thing that ends a
+    signals stay the authority there, and stay the thing that ends a
     navigation which never manages to paint at all."""
     session = tracker.begin("doc")
     app._preview.painted = False

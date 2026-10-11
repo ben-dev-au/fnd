@@ -2,7 +2,7 @@
 
 The single-anchor controller stopped the *many inline scroll sites* race, but
 the strategy's ``_do_scroll_to_chunk`` retry chain reschedules itself across
-refreshes — so rapid navigation spawns overlapping chains, each pinned to a
+refreshes, so rapid navigation spawns overlapping chains, each pinned to a
 captured chunk seq, all ending in a ``scroll_to_region`` commit. They race;
 the loser wins. A monotonic generation token (bumped on ``arm``) lets a
 superseded chain die at its next tick AND immediately before the commit
@@ -25,7 +25,7 @@ from tests.test_preview_scroll_controller import _FakeHost, _FakePane, _FakeWidg
 
 
 class _DeferStrategy:
-    """Captures ``on_settled`` without firing it — models a scroll commit that
+    """Captures ``on_settled`` without firing it: models a scroll commit that
     lands a tick later, so a newer ``arm`` can supersede it in between."""
 
     def __init__(self) -> None:
@@ -59,7 +59,7 @@ def test_stale_reveal_is_honoured_but_does_not_flip_is_settling() -> None:
     c.arm(ScrollAnchor("p", 2))  # generation 2 supersedes; gen2 nav in flight
     assert c.is_settling
     strat.held[0]()  # gen1's deferred commit lands LATE
-    assert revealed == ["g1"]  # reveal still honoured — no stranded hidden container
+    assert revealed == ["g1"]  # reveal still honoured: no stranded hidden container
     assert c.is_settling  # but the stale commit did NOT open gen2's settling gate
 
 
@@ -74,7 +74,7 @@ def test_current_reveal_flips_is_settling() -> None:
 
 def test_stale_do_scroll_does_not_commit_or_reschedule() -> None:
     # height 0 would normally reschedule the retry chain; a superseded chain must
-    # instead die on this tick — no scroll, no reschedule, reveal floor honoured.
+    # instead die on this tick: no scroll, no reschedule, reveal floor honoured.
     target = _FakeWidget(Region(0, 0, 80, 0))
     pane = _FakePane()
     host = _FakeHost(pane, chunk_widgets={3: target}, match_targets={3: target})
@@ -108,7 +108,7 @@ def test_current_do_scroll_commits() -> None:
 
 def test_pre_commit_guard_catches_supersession_after_resolution() -> None:
     # The target resolves (would commit), but the generation bumps between
-    # resolution and the commit — the re-check immediately before the side
+    # resolution and the commit: the re-check immediately before the side
     # effect must prevent the scroll (the cooperative-cancel window).
     inner = _FakeWidget(Region(0, 100, 80, 2))
     target = _FakeWidget(Region(0, 100, 80, 40), first_match_block=inner)

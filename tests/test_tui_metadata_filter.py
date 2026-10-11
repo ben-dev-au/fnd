@@ -50,7 +50,7 @@ async def test_tui_invalid_filter_does_not_run_search(tui_corpus: Path) -> None:
         inp.value = "[Project ==] foo"
         await pilot.press("enter")
         await pilot.pause()
-        # Filter has invalid DSL syntax — should clear groups, not crash.
+        # Filter has invalid DSL syntax: should clear groups, not crash.
         assert app._search.groups == []  # type: ignore[attr-defined]
 
 
@@ -63,6 +63,6 @@ async def test_tui_unclosed_bracket_does_not_run_search(tui_corpus: Path) -> Non
         inp.value = "[Project == 'Website' foo"  # unclosed [
         await pilot.press("enter")
         await pilot.pause()
-        # ValueError from split_metadata_filter — should not run search,
+        # ValueError from split_metadata_filter: should not run search,
         # leave groups empty (or as previous, depending on implementation).
         assert app._search.groups == []  # type: ignore[attr-defined]

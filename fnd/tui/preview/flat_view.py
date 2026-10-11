@@ -48,7 +48,7 @@ class FlatBufferView:
     def ensure_shared_buffer(self) -> LineBufferPreview | None:
         """Lazy-mount the single hidden LineBufferPreview under #preview_pane.
 
-        Returns None when there is no pane to mount into — the screen is
+        Returns None when there is no pane to mount into: the screen is
         being torn down, or has not composed yet. This runs on the
         ``preview-load`` worker, so raising here surfaces as a WorkerFailed
         that takes the run down instead of a mount that quietly has nothing
@@ -60,7 +60,7 @@ class FlatBufferView:
         buf = self.shared_buffer
         # ``is_live`` rather than ``parent is not None``: a buffer whose removal
         # is queued still reports a parent (Textual prunes on a message), so the
-        # old test handed back a widget that was about to be torn out — the doc
+        # old test handed back a widget that was about to be torn out: the doc
         # was installed into it and the flat preview painted nothing. A dead
         # buffer is replaced, and ``installed_key`` reset so the fresh widget
         # gets the document installed rather than short-circuiting as "already
@@ -138,9 +138,9 @@ class FlatBufferView:
     def build_file_view(self, chunks: list[FileChunk]) -> FileView:
         """Convert decoded chunks into a :class:`FileView` for the flat
         path. Reuses the same word-level match-span helper the
-        structural renderer uses so highlight semantics — including
+        structural renderer uses so highlight semantics, including
         the per-word colour (yellow for exact matches, orange for
-        fuzzy ones) — agree across pipelines."""
+        fuzzy ones): agree across pipelines."""
         spec = self._app._effective_match_spec
         import os
 

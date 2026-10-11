@@ -1,4 +1,4 @@
-"""Install/uninstall progress modal — modal-lifecycle tests.
+"""Install/uninstall progress modal: modal-lifecycle tests.
 
 Follows dev/docs/test_patterns/settings_screen.md §9: task lives on
 FNDApp, Background dismisses but task survives, Cancel SIGTERMs the
@@ -53,7 +53,7 @@ def fake_sleep() -> list[list[str]]:
     return [[sleep, "0.05"], [sleep, "0.05"]]
 
 
-# 1 — Modal mounts and renders chrome
+# 1: Modal mounts and renders chrome
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ async def test_progress_modal_chrome(
         await asyncio.wait_for(app._extras_task, timeout=3.0)
 
 
-# 2 — Background dismisses modal, task survives
+# 2: Background dismisses modal, task survives
 
 
 @pytest.mark.asyncio
@@ -116,7 +116,7 @@ async def test_background_keeps_task_running(
         await asyncio.wait_for(app._extras_task, timeout=2.0)
 
 
-# 3 — Cancel stops the subprocess
+# 3: Cancel stops the subprocess
 
 
 @pytest.mark.asyncio
@@ -149,7 +149,7 @@ async def test_cancel_stops_subprocess(built_index: Path, cfg: Config) -> None:
         assert app._extras_proc is None
 
 
-# 4 — Idempotent: second start while running re-attaches modal
+# 4: Idempotent: second start while running re-attaches modal
 
 
 @pytest.mark.asyncio
@@ -160,7 +160,7 @@ async def test_double_start_reattaches(built_index: Path, cfg: Config) -> None:
     rather than a short sleep. The old ``sleep 0.5`` raced the pauses below:
     on a loaded runner it exited first, so the second call correctly started a
     fresh run and returned True. That failed as ``assert True is False`` on
-    Linux CI while macOS and Windows passed — the test's premise had lapsed,
+    Linux CI while macOS and Windows passed: the test's premise had lapsed,
     not the behaviour under test.
     """
     sleep = shutil.which("sleep") or "/bin/sleep"
@@ -200,12 +200,12 @@ async def test_double_start_reattaches(built_index: Path, cfg: Config) -> None:
         await asyncio.wait_for(app._extras_task, timeout=5.0)
 
 
-# 5 — Worker emits done event on success
+# 5: Worker emits done event on success
 
 
 @pytest.mark.asyncio
 async def test_worker_emits_done(cfg: Config) -> None:
-    """Direct unit test of run_install — bypass the modal."""
+    """Direct unit test of run_install: bypass the modal."""
     from fnd.tui.extras_install_progress import ProgressEvent, run_install
 
     sleep = shutil.which("sleep") or "/bin/sleep"
@@ -227,7 +227,7 @@ async def test_worker_emits_done(cfg: Config) -> None:
     assert phases[-1] == "done"
 
 
-# 6 — Worker emits failed on missing executable
+# 6: Worker emits failed on missing executable
 
 
 @pytest.mark.asyncio

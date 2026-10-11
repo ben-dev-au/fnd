@@ -85,7 +85,7 @@ async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Pa
 
 @pytest.mark.asyncio
 async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None:
-    """Spec: Wizard › Source path — live ✓/✗ inline validation."""
+    """Spec: Wizard › Source path, live ✓/✗ inline validation."""
     from textual.widgets import Input, Static
 
     from fnd.tui.settings_screen import (
@@ -117,7 +117,7 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
 
         # Path validation is debounced to avoid a per-keystroke disk walk. The
         # debounce plus the walk plus the repaint is real work, and sleeping the
-        # debounce is a wait for it only while the machine is idle — on Windows
+        # debounce is a wait for it only while the machine is idle: on Windows
         # the second read returned the FIRST path's verdict.
         bar.query_one("#editor_input", Input).value = str(tmp_path / "nope")
         await wait_until(
@@ -140,7 +140,7 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
 async def test_save_writes_collection_and_reindexes(
     tmp_path: Path, built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: Wizard › Save — write_collection + reindex + drop on per-collection sub-screen."""
+    """Spec: Wizard › Save, write_collection + reindex + drop on per-collection sub-screen."""
     from fnd.config import load
     from fnd.tui.settings_screen import (
         AddCollectionWizard,
@@ -195,7 +195,7 @@ async def test_save_writes_collection_and_reindexes(
 async def test_esc_discards_wizard_with_no_side_effects(
     tmp_path: Path, built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: Wizard › Esc — cancelling after typing a name does NOT
+    """Spec: Wizard › Esc, cancelling after typing a name does NOT
     create an empty collection."""
     from fnd.config import default_config_path, load
     from fnd.tui.settings_screen import AddCollectionWizard
@@ -298,7 +298,7 @@ async def test_source_form_shows_include_globs_as_ticked_file_types(
 async def test_save_with_missing_name_shows_inline_error(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: Locked decision #12 — inline error, no toast."""
+    """Spec: Locked decision #12, inline error, no toast."""
     from textual.widgets import Static
 
     from fnd.tui.settings_screen import AddCollectionWizard

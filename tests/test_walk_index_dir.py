@@ -34,7 +34,7 @@ def test_walk_indexes_ordinary_json(tmp_path: Path) -> None:
 
 
 def test_walk_skips_index_dir_used_as_the_root(tmp_path: Path) -> None:
-    """An index dir passed directly as a scan root yields nothing — the
+    """An index dir passed directly as a scan root yields nothing: the
     per-child guard doesn't cover the root itself."""
     index = tmp_path / "index"
     index.mkdir()

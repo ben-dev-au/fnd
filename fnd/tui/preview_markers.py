@@ -7,7 +7,7 @@ far *down the rendered document* the match sits.
 The earlier feed was a bool per chunk, mapped to the bar by chunk *ordinal*
 (cell ``i`` lit if ``floor(i * n / size)`` matched). That ignores chunk size:
 a match in a short chunk right after a long one was drawn near the top while
-the match actually sat ~2/3 down — off by up to half the bar.
+the match actually sat ~2/3 down, off by up to half the bar.
 
 Here each chunk is weighted by its rendered line count, taken from the same
 source the renderer mounts (``body_md`` else reconstructed block text), so a
@@ -42,7 +42,7 @@ def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[li
 
     A chunk whose match exists only in text the renderer does NOT mount
     contributes nothing. It used to contribute a marker at the chunk's top line,
-    which put a mark on the track pointing at a place with no highlight — the
+    which put a mark on the track pointing at a place with no highlight: the
     scrollbar promising a match the pane could never show.
     """
     match_lines: list[int] = []
@@ -54,7 +54,7 @@ def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[li
     prime(spec, (w for text in texts for w in DOC_WORD_RE.findall(text)))
     for text in texts:
         # splitlines() (not split("\n")) so a trailing newline doesn't add a
-        # phantom line and an empty source counts as 0 lines, not 1 — both keep
+        # phantom line and an empty source counts as 0 lines, not 1: both keep
         # the total / fractions closer to the rendered row count.
         lines = text.splitlines()
         local = next(

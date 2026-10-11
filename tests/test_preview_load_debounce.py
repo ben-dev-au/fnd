@@ -49,7 +49,7 @@ async def test_settled_move_loads_immediately(built_index: Path, cfg_with_deboun
             original(parent_id, focus_chunk_seq=focus_chunk_seq)
 
         app._preview.render_full_doc = counted  # type: ignore[method-assign]
-        app._preview.cancel_pending_load()  # settled — no pending window
+        app._preview.cancel_pending_load()  # settled: no pending window
         app._preview.schedule_load("p1", 0)
         # Fires synchronously, before any time passes (no wait_until / sleep).
         assert render_calls == [("p1", 0)], "a settled move must load immediately"
@@ -60,7 +60,7 @@ async def test_scan_move_never_mounts_until_cleared(
     built_index: Path, cfg_with_debounce: Config
 ) -> None:
     """Option/Alt + arrow scan: a scan move records the cursor but mounts
-    NOTHING — not even on a pause (no trailing timer is armed). The preview only
+    NOTHING, not even on a pause (no trailing timer is armed). The preview only
     loads once scan mode is cleared (a normal key) and a normal move dispatches.
     This is the "browse without mounting" behaviour; terminals can't report key
     release, so a normal key is the portable stand-in for releasing Option."""
@@ -80,7 +80,7 @@ async def test_scan_move_never_mounts_until_cleared(
         app._preview.schedule_load("p1", 0)
         assert render_calls == [], "a scan move must not load"
         # No timer is armed either, so a *pause* mid-scan can never mount. (This
-        # is the deterministic form of "even on a pause" — no sleep to flake on.)
+        # is the deterministic form of "even on a pause": no sleep to flake on.)
         assert app._preview.load_timer is None, "a scan move must not arm a load timer"
         # A normal key clears scan mode; the next move loads immediately (leading).
         app._preview._scan_move = False
@@ -109,7 +109,7 @@ async def test_rapid_cursor_sweep_loads_leading_plus_final(
         app._preview.render_full_doc = counted  # type: ignore[method-assign]
         app._preview.cancel_pending_load()  # settled
 
-        # Five highlights back-to-back: leading fires p1 now; p2–p5 coalesce.
+        # Five highlights back-to-back: leading fires p1 now; p2, p5 coalesce.
         app._preview.schedule_load("p1", 0)
         app._preview.schedule_load("p2", 0)
         app._preview.schedule_load("p3", 0)
@@ -131,7 +131,7 @@ async def test_rapid_cursor_sweep_loads_leading_plus_final(
 async def test_zero_delay_dispatches_synchronously(
     built_index: Path,
 ) -> None:
-    """When ``preview_load_debounce_ms`` is 0 the load fires inline —
+    """When ``preview_load_debounce_ms`` is 0 the load fires inline:
     the legacy / test-time behaviour."""
     cfg = Config(defaults=Defaults(preview_load_debounce_ms=0))
     app = FNDApp(index_dir=built_index, config=cfg, initial_query="results")
@@ -157,7 +157,7 @@ async def test_return_to_cancelled_target_redispatches(
 
     Sweeping past a file whose mount is mid-flight cancels that mount; if the
     cursor then lands back on it, the coalescing latch must not suppress the
-    remount — the cancelled mount will never land it. Regression: the latch was
+    remount: the cancelled mount will never land it. Regression: the latch was
     cleared only on settle/new-query, so returning to a cancelled target was
     mistaken for "already in flight" and the only dispatch that would mount it
     was dedup-skipped, hanging the preview until an unrelated nav reset it.
@@ -215,7 +215,7 @@ async def test_query_change_cancels_pending_load(
     app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        # Don't actually load the stale parents — they have no real chunk data.
+        # Don't actually load the stale parents: they have no real chunk data.
         app._preview.render_full_doc = (  # type: ignore[method-assign]
             lambda parent_id, *, focus_chunk_seq: None
         )
@@ -241,7 +241,7 @@ async def test_scan_start_cancels_prior_cooldown_timer(
     built_index: Path, cfg_with_debounce: Config
 ) -> None:
     """A scan move started during a prior normal nav's cooldown window cancels
-    that timer — otherwise the old timer fires and mounts the scanned row on a
+    that timer, otherwise the old timer fires and mounts the scanned row on a
     pause, defeating scan mode (review finding)."""
     app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
@@ -258,7 +258,7 @@ async def test_scan_start_cancels_prior_cooldown_timer(
 
 @pytest.mark.asyncio
 async def test_non_scan_key_clears_scan_mode(built_index: Path, cfg_with_debounce: Config) -> None:
-    """A non-Option key (End) ends scan mode so a later move loads — covers
+    """A non-Option key (End) ends scan mode so a later move loads: covers
     home/end/pageup/pagedown that the cursor-action overrides don't intercept
     (review finding). Without this a scan could leave the preview stuck."""
     from fnd.tui.widgets.results_tree import ResultsTree

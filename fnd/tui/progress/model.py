@@ -1,18 +1,18 @@
 """Phase-weighted progress model.
 
-Pure — no Textual, no I/O, injected clock. An operation declares an
+Pure: no Textual, no I/O, injected clock. An operation declares an
 :class:`OperationPlan`: an ordered set of phases, each with an expected
 duration. The model turns "which phase are we in, and how far through
 it" into one monotonic 0..1 fraction.
 
 A phase's **weight is its share of the plan's total expected duration**,
-so a calibrated expectation reshapes the bar automatically — there are
+so a calibrated expectation reshapes the bar automatically: there are
 no hand-tuned weights to drift out of step with what the code actually
 does.
 
 Phases with countable units (chunks mounted, files indexed) report a
-real fraction. Phases with nothing to count — a single
-``await build_done``, a layout settle — ease on elapsed time against
+real fraction. Phases with nothing to count (a single
+``await build_done``, a layout settle) ease on elapsed time against
 their expectation, so the line keeps moving through the waits that
 dominate the budget without ever claiming a completion it has not
 reached.
@@ -33,7 +33,7 @@ _PHASE_CEILING = 0.97
 #
 # This single number balances the two halves of the original complaint. Too
 # low and a correctly-estimated operation finishes with the bar partway (at
-# 0.5 — a plain hyperbolic — the flat path completed at a median fill of
+# 0.5 (a plain hyperbolic) the flat path completed at a median fill of
 # 0.167). Too high and there is no headroom left for a phase that overruns, so
 # the fill stops moving: at 0.9 a phase running 5x its estimate painted the
 # same cell for 1.85s, which is the freeze this exists to prevent.
@@ -51,7 +51,7 @@ class OperationKind(Enum):
     The distinction earns its place because the two classes have opposite
     needs and one line to share. INTERACTIVE work answers something the
     user just did, so it must take the line immediately. AMBIENT work runs
-    on its own schedule — a background reindex started by auto-resume —
+    on its own schedule (a background reindex started by auto-resume)
     and lasts orders of magnitude longer, so it must *yield* the line and
     get it back, rather than fight for it.
     """
@@ -66,7 +66,7 @@ class Phase:
 
     ``expected_ms`` is a seed; :mod:`fnd.tui.progress.calibration` replaces it
     with what this machine actually measured. ``countable`` marks a phase whose
-    caller can supply real units — it eases on time until the first
+    caller can supply real units: it eases on time until the first
     :meth:`ProgressModel.report`.
     """
 
@@ -171,7 +171,7 @@ class ProgressModel:
     def enter(self, key: str) -> None:
         """Advance to ``key``; every earlier phase counts finished.
 
-        Re-entering the current phase, or naming an earlier one, is ignored —
+        Re-entering the current phase, or naming an earlier one, is ignored:
         an operation only ever moves forwards.
         """
         if self._complete:
@@ -184,7 +184,7 @@ class ProgressModel:
         if current is not None:
             current.ended = now
         self._index = target
-        # Phases stepped over were never observed, so they get no run record —
+        # Phases stepped over were never observed, so they get no run record:
         # calibration must not learn from a duration nobody measured.
         self._runs[key] = _PhaseRun(started=now)
         self.tick()
@@ -247,7 +247,7 @@ class ProgressModel:
         #
         # A plain hyperbolic (elapsed / (elapsed + expected)) reads HALF the
         # phase at exactly its expected duration, so even a perfectly
-        # calibrated operation finished with the bar at ~50% — measured on the
+        # calibrated operation finished with the bar at ~50%: measured on the
         # flat path, median fill at completion was 0.167. That is the
         # "it pauses partway" complaint, and no amount of fixing the
         # expectations cures it, because the curve itself is the cause.

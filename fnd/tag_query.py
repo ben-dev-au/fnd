@@ -43,7 +43,7 @@ def _terms(selection: dict[str, frozenset[str]], schema: tantivy.Schema) -> list
 
     Grouping by value matters: ``--tag recipe`` with both sources enabled
     fans out to {frontmatter: recipe, os: recipe}, and ANDing those would
-    demand the same tag in frontmatter *and* Finder — which a real file
+    demand the same tag in frontmatter *and* Finder, which a real file
     essentially never satisfies. Distinct values stay separate, so
     ``match_all`` still ANDs genuinely different selections.
 

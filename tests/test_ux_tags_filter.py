@@ -252,7 +252,7 @@ async def test_expanded_section_header_stays_under_cursor(cfg: Config, tagged_in
     """An expanded section header (File type) is reachable, not skipped.
 
     It was once treated as a dead row, but Enter/click on a section header now
-    collapses the section — so the cursor must be able to land on it. Skipping
+    collapses the section, so the cursor must be able to land on it. Skipping
     it also caused a *click* on an expanded header to drift the cursor down
     onto (and toggle) its first child instead of collapsing the header.
     """
@@ -306,7 +306,7 @@ async def test_toggling_a_tag_keeps_cursor_and_focus(cfg: Config, tagged_index: 
     """Toggling must not throw the user into the results pane.
 
     The pane rebuilds on every toggle (counts change), and the re-run search
-    used to grab focus — between them the cursor left the tag being pressed.
+    used to grab focus: between them the cursor left the tag being pressed.
     """
     app = FNDApp(index_dir=tagged_index, config=cfg)
     async with app.run_test() as pilot:

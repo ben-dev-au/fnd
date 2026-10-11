@@ -1,4 +1,4 @@
-"""Uninstall pdf-structure workflow — end-to-end-ish.
+"""Uninstall pdf-structure workflow: end-to-end-ish.
 
 Verifies:
   1. Uninstall commands target fnd's actual venv (not cwd).

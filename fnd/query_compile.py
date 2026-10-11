@@ -101,7 +101,7 @@ class _Compiler:
             return Query.boolean_query(
                 [(Occur.Must, Query.all_query()), (Occur.MustNot, self.compile(n.child))]
             )
-        # Required (the only remaining node) — its child carries the query; the
+        # Required (the only remaining node): its child carries the query; the
         # forced-Must occur is applied by the enclosing group in _assemble.
         return self.compile(n.child)
 

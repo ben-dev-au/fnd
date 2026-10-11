@@ -42,7 +42,7 @@ def test_zip_bomb_total_size_rejected(tmp_path: Path) -> None:
 def test_zip_bomb_ratio_rejected(tmp_path: Path) -> None:
     bomb = tmp_path / "ratio.docx"
     with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as zf:
-        # A 16 KB run of repeating bytes compresses to a few bytes —
+        # A 16 KB run of repeating bytes compresses to a few bytes:
         # natural ratio well over 200×.
         zf.writestr("bomb.xml", b"A" * 16384)
     with pytest.raises(ExtractError, match="ratio"):
@@ -58,8 +58,8 @@ def test_not_a_zip_is_rejected(tmp_path: Path) -> None:
 
 def test_docx_parser_crash_becomes_extract_error(tmp_path: Path) -> None:
     """A ZIP that passes the bomb precheck but isn't actually a valid
-    OOXML package raises ``PackageNotFoundError`` inside ``python-docx``
-    — we convert it to ExtractError."""
+        OOXML package raises ``PackageNotFoundError`` inside ``python-docx``:
+    we convert it to ExtractError."""
     f = tmp_path / "fake.docx"
     with zipfile.ZipFile(f, "w") as zf:
         zf.writestr("not-the-right-parts.xml", b"<x/>")
@@ -199,7 +199,7 @@ def test_index_drops_partial_chunks_on_midstream_extract_error(
     build_index(roots=[tmp_path], index_dir=index_dir, collection="default")
 
     searcher = Searcher(index_dir=index_dir)
-    # The poison file's body never wins a hit — its (partial) chunks
+    # The poison file's body never wins a hit: its (partial) chunks
     # should have been cleaned up in the except branch.
     assert searcher.search("partial-chunk-1") == []
     assert searcher.search("partial-chunk-2") == []

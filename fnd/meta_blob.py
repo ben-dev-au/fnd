@@ -11,7 +11,7 @@ so we wrap dates in a small typed envelope::
 The decoder restores them via a JSON ``object_hook``. The DSL evaluator
 needs ``dt.date`` instances on both sides for ordered comparisons (the
 :func:`fnd.filter_dsl._orderable` helper rejects str-vs-date), so the
-round-trip is load-bearing — not just cosmetic.
+round-trip is load-bearing, not just cosmetic.
 """
 
 from __future__ import annotations

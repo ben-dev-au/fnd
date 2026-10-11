@@ -1,6 +1,6 @@
 """The wait helpers every timing test rests on, tested without an app.
 
-Driven by a stand-in Pilot whose ``pause`` is free — the shape ``safe_pause``
+Driven by a stand-in Pilot whose ``pause`` is free: the shape ``safe_pause``
 degrades to when Textual's internal screen wait times out on a loaded runner.
 """
 

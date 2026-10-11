@@ -11,7 +11,7 @@ from fnd import launcher, opener
 
 # Skim is a macOS-only PDF viewer and its skim:/// deep-link is only ever built
 # on Darwin (open_smart gates the promotion behind sys.platform == "darwin").
-# The URL is an absolute-path scheme, so its shape is platform-specific — pin
+# The URL is an absolute-path scheme, so its shape is platform-specific: pin
 # these to macOS rather than reason about Windows drive-letter encoding.
 mac_only = pytest.mark.skipif(sys.platform != "darwin", reason="Skim is macOS-only")
 
@@ -122,7 +122,7 @@ def test_open_smart_falls_through_to_system_when_no_skim_no_ax(
     from fnd import apps as apps_mod
 
     apps_mod._reset_ax_cache()
-    # macOS no-Skim/no-AX path — pin the platform so a Linux/Windows box with a
+    # macOS no-Skim/no-AX path: pin the platform so a Linux/Windows box with a
     # page-jump viewer installed doesn't auto-promote it and bypass the seam.
     monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: False)

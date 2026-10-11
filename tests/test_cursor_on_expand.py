@@ -4,13 +4,13 @@ When the TUI auto-expands the top result on a new query (or the user
 presses Right on a collapsed file row), the cursor must drop onto the
 first hit *child* of that file. Leaving it on the parent file row
 forces a redundant Down keypress before navigation actually advances
-to a fresh match — the preview is already showing the file's first
+to a fresh match: the preview is already showing the file's first
 hit, so re-selecting it via the parent contributes nothing.
 
 ``node.expand()`` only invalidates the tree's line cache; the new
 children keep a stale ``_line`` of -1 until a rebuild. Moving via
 ``move_cursor(child)`` then reads -1 and the skip-expanded-parents
-validator parks the cursor on the first file — visible when the rebuild
+validator parks the cursor on the first file: visible when the rebuild
 lags (preview pane mid full-mount). The move goes through
 ``move_cursor_to_line(node.line + 1)``, which forces the rebuild.
 """
@@ -38,7 +38,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 class _ResultsTreeApp(App[None]):
     """Bare host for a ``ResultsTree`` so the stale-line race can be
-    reproduced deterministically with several file rows — the real
+    reproduced deterministically with several file rows: the real
     corpus yields too few groups to tell a wrong "first file" jump apart
     from a correct "first hit" landing."""
 
@@ -65,7 +65,7 @@ async def test_naive_move_cursor_with_stale_line_jumps_to_first_file() -> None:
     """Characterizes the root cause: ``move_cursor(child)`` while the
     child's line index is stale (-1) sets ``cursor_line`` to -1, which the
     skip-expanded-parents validator clamps to 0 and parks on the first
-    file — the bug the production helper must avoid."""
+    file: the bug the production helper must avoid."""
     app = _ResultsTreeApp()
     async with app.run_test() as pilot:
         tree = app.query_one("#t", ResultsTree)

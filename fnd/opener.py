@@ -1,10 +1,10 @@
 """Open-in-app dispatch.
 
-* PDF: Skim URL scheme — ``skim:///<percent-encoded-absolute-path>#page=N``
-  — handed to ``open <url>``. ``urllib.parse.quote`` covers every byte
+* PDF: Skim URL scheme, ``skim:///<percent-encoded-absolute-path>#page=N``:
+handed to ``open <url>``. ``urllib.parse.quote`` covers every byte
   including filename newlines/quotes that could otherwise inject into
   a shell-out or AppleScript string literal.
-* PPTX / DOCX / MD / TXT: ``open <file>`` (LaunchServices default app) — these
+* PPTX / DOCX / MD / TXT: ``open <file>`` (LaunchServices default app); these
   formats have no reliable page-jump protocol on macOS; the TUI surfaces the
   slide/heading in its footer so the user can scroll to it manually.
 """
@@ -84,7 +84,7 @@ def open_smart(
       3. ``Config.app_defaults[kind]``
       4. The ``system`` built-in (``open <path>``).
 
-    ``pdf_strategy = "default"`` is preserved for back-compat — it forces
+    ``pdf_strategy = "default"`` is preserved for back-compat: it forces
     the ``system`` handler for the current call regardless of the
     resolved app. Always-default callers should use :func:`open_default`.
     """

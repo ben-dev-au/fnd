@@ -1,13 +1,13 @@
 """Hard limits applied to untrusted documents before they reach a parser.
 
 Centralised so the same numbers cover DOCX, PPTX, frontmatter, and the
-query layer — and so they're easy to tune from one place if a real-world
+query layer, and so they're easy to tune from one place if a real-world
 file legitimately exceeds them.
 
 Numbers are conservative: a legitimate office document doesn't approach
 500 MB uncompressed, doesn't have a single entry that expands 200× from
 its compressed size, and doesn't carry a 64 KB YAML frontmatter block.
-A document that does trip a limit is either pathological or hostile —
+A document that does trip a limit is either pathological or hostile,
 either way we'd rather refuse and tell the user than feed the parser.
 """
 
@@ -34,6 +34,6 @@ LIMIT_FRONTMATTER_LINE_BYTES: Final = 4 * 1024  # 4 KB single line
 # TUI, but once we add Spotlight / URL-handler / --query-from-file the
 # query becomes attacker-controllable and these bounds matter. Tantivy's
 # parser will compile arbitrarily-deep boolean trees and arbitrarily-
-# long phrase queries — the limits below cap both before parsing.
+# long phrase queries: the limits below cap both before parsing.
 LIMIT_QUERY_BYTES: Final = 8 * 1024  # 8 KB raw query string
 LIMIT_QUERY_BOOLEAN_TOKENS: Final = 64  # AND/OR/NOT count

@@ -100,7 +100,7 @@ async def test_cursor_skips_headers_on_keybindings(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_left_arrow_pops(built_index: Path) -> None:
-    """`←` is Esc (pop) — back-stack navigation when the list owns
+    """`←` is Esc (pop): back-stack navigation when the list owns
     focus. (The filter Input owns Left as text-cursor movement, so
     arrow down into the list first.)"""
     from fnd.tui.settings_screen import SettingsScreen
@@ -167,7 +167,7 @@ async def test_palette_toggle(built_index: Path) -> None:
         assert isinstance(app.screen, SettingsScreen)
         app.action_open_command_palette()
         # This press CLOSES the stack, so wait for it to go rather than for a
-        # list to populate — the same action toggles both ways.
+        # list to populate: the same action toggles both ways.
         await wait_until(
             pilot,
             lambda: not isinstance(app.screen, SettingsScreen),

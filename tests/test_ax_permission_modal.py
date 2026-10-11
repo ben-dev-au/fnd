@@ -143,7 +143,7 @@ def test_preview_handler_emits_ax_notice_when_blocked(
 def test_preview_handler_silent_when_no_page_locator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``page == 0`` means "open this PDF" with no position request — no
+    """``page == 0`` means "open this PDF" with no position request: no
     page-jump attempt, so no Accessibility-permission notice."""
     apps._reset_ax_cache()
     monkeypatch.setattr(apps, "_probe_ax_trusted", lambda: False)

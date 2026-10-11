@@ -8,7 +8,7 @@ calls ``_wait_for_screen`` after.
 
 These helpers wrap ``pilot.pause()`` so timeouts are swallowed and
 state changes are awaited via predicate polling on a wall-clock
-budget — robust to load spikes that exceed the 30 s internal bound.
+budget: robust to load spikes that exceed the 30 s internal bound.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ async def safe_press(pilot: Pilot[None], *keys: str) -> None:
     """``pilot.press(*keys)`` that swallows ``WaitForScreenTimeout``.
 
     ``pilot.press`` posts keys via ``_app._press_keys`` then calls
-    ``_wait_for_screen`` directly — that 30 s timeout is the same load
+    ``_wait_for_screen`` directly: that 30 s timeout is the same load
     flake source we work around in ``safe_pause``.
     """
     try:
@@ -55,7 +55,7 @@ async def safe_press(pilot: Pilot[None], *keys: str) -> None:
 async def settle(pilot: Pilot[None], ticks: int = 4) -> None:
     """Repeated ``safe_pause`` to drain the message loop. ``ticks``
     matches the legacy ``for _ in range(n): await pilot.pause()``
-    shape — each iteration tolerates a ``WaitForScreenTimeout``."""
+    shape, each iteration tolerates a ``WaitForScreenTimeout``."""
     for _ in range(max(1, ticks)):
         await safe_pause(pilot)
 
@@ -80,8 +80,8 @@ async def wait_stable(
     The event-gated replacement for ``settle(pilot, ticks=N)``: a tick count
     assumes each ``safe_pause`` flushes a refresh, but a load spike degrades it
     to ``asyncio.sleep(0)``, so exactly when the wait is needed it does least.
-    Sampling the thing you actually care about — a scroll offset, a virtual
-    size — is load-proof, and the wall-clock budget bounds it.
+    Sampling the thing you actually care about (a scroll offset, a virtual
+    size) is load-proof, and the wall-clock budget bounds it.
 
     Prefer gating on a product signal (``is_restoring``, ``pipeline_busy()``)
     where one exists; use this when the only evidence is geometry holding
@@ -99,7 +99,7 @@ async def wait_stable(
             current = sample()
         except Exception:
             # Mid-rebuild the widget may not be queryable. That is "still
-            # moving", not a test failure — keep waiting.
+            # moving", not a test failure: keep waiting.
             current = unreadable
         if current == last and current is not unreadable:
             stable += 1
@@ -132,7 +132,7 @@ async def wait_until(
     """Poll ``predicate`` until truthy or ``timeout`` (wall-clock) elapses.
 
     ``quiet`` skips the state snapshot for callers that CATCH the timeout and
-    carry on — there the snapshot is three region walks fired mid-navigation,
+    carry on: there the snapshot is three region walks fired mid-navigation,
     in the files most sensitive to exactly that.
 
     Each iteration: evaluate predicate, then yield the event loop via
@@ -177,7 +177,7 @@ async def run_search(pilot: Pilot[None], app: Any, query: str, *, timeout: float
 
     ``SearchController.run`` returns as soon as the worker is dispatched, so
     the old ``run(q)`` + one ``pilot.pause()`` under-waits. Gate on the
-    controller's own ``idle`` signal — a product signal, not a tick count.
+    controller's own ``idle`` signal: a product signal, not a tick count.
 
     ``timeout`` is exposed because several call sites budget longer than the
     default for search readiness (15 s, 30 s); without it they would gate on a

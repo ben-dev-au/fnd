@@ -2,7 +2,7 @@
 
 The PDF texture cache stores whole chunks (including ``body``) keyed by
 content hash, and durably reuses prior entries across signature bumps.
-So the heading-into-body fix must apply when serving cached chunks too —
+So the heading-into-body fix must apply when serving cached chunks too,
 otherwise a plain ``reindex --rebuild`` would keep serving the old
 un-folded body and the fix would require a full re-texture to land.
 """

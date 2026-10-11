@@ -63,7 +63,7 @@ async def test_prepare_lockbusy_emits_file_error_then_cancelled(
 async def test_prepare_unexpected_exception_also_recovered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Any exception type, not just LockBusy — the modal must never
+    """Any exception type, not just LockBusy: the modal must never
     hang on a silent task death."""
 
     def boom(*_args: Any, **_kwargs: Any) -> Any:

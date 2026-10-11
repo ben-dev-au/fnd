@@ -7,7 +7,7 @@ Before the audit-fix branch:
   removed from the DOM.
 - Result: every file visit added a container to ``#preview_pane`` and
   ``_activate_preview_container`` paid an O(N) walk over the growing
-  stack — a real linear slowdown for sessions of any length.
+  stack; a real linear slowdown for sessions of any length.
 
 After the fix:
 - ``_PREVIEW_CACHE_MIN_CHUNKS = 1`` so every complete file is bounded
@@ -29,7 +29,7 @@ _TEST_LRU_CAP = 8
 
 @pytest.fixture
 def small_corpus(tmp_path: Path) -> Path:
-    """Short markdown files — enough to exceed _TEST_LRU_CAP and exercise
+    """Short markdown files: enough to exceed _TEST_LRU_CAP and exercise
     eviction."""
     root = tmp_path / "corpus"
     root.mkdir()

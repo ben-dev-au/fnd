@@ -62,19 +62,19 @@ async def _search(pilot: Pilot[None], app: FNDApp) -> tuple[FileGroup, FileGroup
 
 @pytest.mark.asyncio
 async def test_a_navigation_opens_a_session_straight_away(two_file_index: Path) -> None:
-    """The line must belong to the keypress that caused it — not appear
+    """The line must belong to the keypress that caused it, not appear
     once some later stage happens to get round to showing it."""
     app = FNDApp(index_dir=two_file_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         _small, big = await _search(pilot, app)
         # A committed search parks the cursor, which dispatches a preview load
-        # of its own — so wait for that to land before testing a navigation.
+        # of its own, so wait for that to land before testing a navigation.
         await wait_until(pilot, lambda: app._progress.active is None)
 
         # Make the navigation cold, don't hope for it. That parked load starts
         # a coverage sweep which decodes and captures NEIGHBOURS, and both are
-        # inputs to the warm/cold plan — so whether this file is still cold when
+        # inputs to the warm/cold plan, so whether this file is still cold when
         # the test gets here is the runner's timing, not the test's setup.
         _make_cold(app, big.parent_id)
 
@@ -108,7 +108,7 @@ async def test_a_jump_inside_the_open_file_is_a_warm_navigation(
     two_file_index: Path,
 ) -> None:
     """Cold and warm navigations differ by more than an order of magnitude,
-    so they calibrate separately — pooling them would make both estimates
+    so they calibrate separately: pooling them would make both estimates
     useless."""
     app = FNDApp(index_dir=two_file_index)
     async with app.run_test() as pilot:
@@ -162,7 +162,7 @@ async def test_a_background_index_survives_a_navigation_in_the_real_app(
     made the line useless for the one operation long enough to need it.
 
     Driven through the real app so the second visual channel is exercised
-    too — an unresolved component class raises at render time, and the
+    too: an unresolved component class raises at render time, and the
     stub bar cannot see that.
     """
     app = FNDApp(index_dir=two_file_index)

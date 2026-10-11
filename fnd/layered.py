@@ -150,7 +150,7 @@ def search_layered(
 
     # Step 1: literal probe. Doubles as the bypass-decision input AND
     # (when bypass fires) the result set. When bypass does NOT fire,
-    # fusion reuses this as its precomputed lex ranking — no wasted
+    # fusion reuses this as its precomputed lex ranking: no wasted
     # Tantivy round-trip.
     window = candidate_window(limit)
     probe = searcher._candidates(
@@ -440,7 +440,7 @@ def _evaluate_strong_signal(
     """Decide whether the literal probe is a clear winner.
 
     A single uncontested hit (``len(probe) == 1``) treats the runner-up
-    score as 0 — the gap then equals the top score, so any top above
+    score as 0: the gap then equals the top score, so any top above
     the score threshold fires. Mirrors QMD's behaviour where
     ``secondScore`` defaults to 0 when no runner-up exists.
     """

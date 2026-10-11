@@ -176,8 +176,8 @@ async def test_a_background_run_opens_an_ambient_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Everything above tests the tracker against stand-ins, which cannot see
-    whether the service ever calls it. A background run — ``open_modal=False``,
-    which is what auto-resume starts on launch — is the case with no other
+    whether the service ever calls it. A background run (``open_modal=False``,
+    which is what auto-resume starts on launch) is the case with no other
     indication at all, so this pins the one line that connects them.
 
     The session must be AMBIENT: an interactive one is retired by the first
@@ -201,7 +201,7 @@ async def test_a_background_run_opens_an_ambient_session(
         started = app._indexer.start(
             collection="default", config=cfg.collections["default"], open_modal=False
         )
-        assert started, "setup — the indexer did not start"
+        assert started, "setup: the indexer did not start"
         session = app._progress.ambient
         assert session is not None, "a background index reported nothing on the line"
         assert session.operation_id == "index"

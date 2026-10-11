@@ -2,7 +2,7 @@ name: release
 
 # Triggered on any `v*` tag. Builds sdist + wheel, emits SBOM and a
 # SLSA-style build-provenance attestation, publishes to PyPI via a
-# Trusted Publisher (OIDC — no API token in repo secrets), and opens
+# Trusted Publisher (OIDC: no API token in repo secrets), and opens
 # a bump-PR against the Homebrew tap with the new sdist SHA-256.
 
 on:
@@ -34,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Guard — release tag matches pyproject version
+      - name: Guard (release tag matches pyproject version)
         # Fail fast (before build/publish) if the `vX.Y.Z` tag and the
         # declared version have drifted. pyproject is the single source;
         # this just stops a mismatched tag from shipping.
@@ -42,7 +42,7 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
           ver=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          [ "$tag" = "$ver" ] || { echo "::error::tag v$tag != pyproject version $ver — bump pyproject.toml before tagging"; exit 1; }
+          [ "$tag" = "$ver" ] || { echo "::error::tag v$tag != pyproject version $ver, bump pyproject.toml before tagging"; exit 1; }
           echo "tag and pyproject version agree: $ver"
 
       - name: Install uv
@@ -82,7 +82,7 @@ jobs:
           sha=$(shasum -a 256 "$sdist" | awk '{print $1}')
           # PEP 625 sdist name is `{name}-{version}.tar.gz` and the name
           # part carries no `-` (normalised to `_`), so the first `-`
-          # splits name from version — name-agnostic (fndr, fnd_x, …).
+          # splits name from version: name-agnostic (fndr, fnd_x, …).
           base=$(basename "$sdist" .tar.gz)
           ver="${base#*-}"
           echo "sdist=$(basename "$sdist")" >> "$GITHUB_OUTPUT"
@@ -176,7 +176,7 @@ jobs:
         env:
           # HOMEBREW_TAP_PAT: fine-scoped PAT with PR-write to the tap
           # (the default GITHUB_TOKEN can't push cross-repo). Both live
-          # on THIS repo, not the tap — the workflow runs here.
+          # on THIS repo, not the tap: the workflow runs here.
           # HOMEBREW_TAP_REPO = ben-dev-au/homebrew-tap.
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
           TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
@@ -184,7 +184,7 @@ jobs:
         if: ${{ vars.HOMEBREW_TAP_REPO != '' }}
         run: |
           set -euo pipefail
-          # Resolve url + sha256 from PyPI's JSON API — one source of
+          # Resolve url + sha256 from PyPI's JSON API: one source of
           # truth, immune to name normalisation and the hashed storage
           # path. The index can lag the publish by a few seconds, so retry.
           meta=""
@@ -212,7 +212,7 @@ jobs:
           existing_url=$(sed -nE 's/^  url "([^"]+)"/\1/p' "$formula" | head -n1)
           existing_sha=$(sed -nE 's/^  sha256 "([^"]+)"/\1/p' "$formula" | head -n1)
           if [ "$existing_url" = "$new_url" ] && [ "$existing_sha" = "$new_sha" ]; then
-            echo "Homebrew formula already at $VERSION — leaving its bottle block alone"
+            echo "Homebrew formula already at $VERSION, leaving its bottle block alone"
             exit 0
           fi
           sed -i.bak "s|^  url \".*\"|  url \"$new_url\"|" "$formula"
@@ -220,7 +220,7 @@ jobs:
           # Drop the PREVIOUS version's `bottle do` block. Homebrew derives the
           # bottle filename from the formula version, so a bumped url + a stale
           # root_url makes every `brew upgrade fnd` 404 until the tap's bottle
-          # workflow runs. With no block, brew builds from source instead —
+          # workflow runs. With no block, brew builds from source instead:
           # slower, but never broken. The bottle job re-adds it via
           # `brew bottle --merge --write`. No-op when the block is absent.
           sed -i.bak "/^  bottle do$/,/^  end$/d" "$formula"
@@ -233,7 +233,7 @@ jobs:
           if git diff --cached --quiet; then
             # Re-run for a version whose formula is already current: `git commit`
             # would exit 1 on an empty commit and fail the job before the PR.
-            echo "Homebrew formula already at $VERSION — nothing to bump"
+            echo "Homebrew formula already at $VERSION: nothing to bump"
             exit 0
           fi
           git -c user.email="actions@github.com" -c user.name="fnd-release-bot" \
@@ -244,7 +244,7 @@ jobs:
             --body "Automated bump from ben-dev-au/fnd@${GITHUB_REF##*/}. sha256 \`$new_sha\`.")
           # Merge it here rather than leaving it for a human. The diff is
           # machine-generated from PyPI's own metadata and the tap runs no PR
-          # checks, so the manual gate bought nothing — and forgetting it is
+          # checks, so the manual gate bought nothing, and forgetting it is
           # what left 0.0.5's formula serving a 404 for twelve hours. Merging
           # is also what triggers the tap's bottle build.
           gh pr merge "$pr" --squash --delete-branch
@@ -283,7 +283,7 @@ jobs:
           # a bare grep.
           [ "$installed" -eq 1 ] \
             || { echo "::error::fndr $VERSION never became installable"; exit 1; }
-          # Whole line, not substring — 0.0.50 contains 0.0.5.
+          # Whole line, not substring: 0.0.50 contains 0.0.5.
           printf '%s\n' "$out" | grep -qFx "$VERSION" \
             || { echo "::error::\`fnd version\` did not report exactly $VERSION"; exit 1; }
           echo "PyPI install OK: fndr $VERSION"

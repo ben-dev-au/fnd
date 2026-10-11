@@ -1,10 +1,10 @@
 """The per-collection 'Rebuild index' action must reach the indexer as a
-true rebuild — drop chunks (rebuild) + bypass durable cache (force_fresh)
+true rebuild: drop chunks (rebuild) + bypass durable cache (force_fresh)
 + revisit every file (skip_unchanged off) + texturise on. Regression for
 a Rebuild that silently ran a plain incremental update.
 
 Drives the real menu action callback against the real app, capturing the
-exact kwargs start_indexer receives — the layer where the bug would hide.
+exact kwargs start_indexer receives: the layer where the bug would hide.
 
 The action asks first, because it empties the collection before
 refilling it, so the test confirms as a user would. That also proves the

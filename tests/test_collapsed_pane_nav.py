@@ -1,7 +1,7 @@
 """While a sidebar panel is collapsed-to-header, Up/Down navigate *between*
 panels (up = previous, down = next, wrapping) rather than moving a cursor no
 one can see. The filters tree lives inside the ``#filters_pane`` wrapper, so it
-is not a direct child ``Tree`` of the column — the navigation must still reach
+is not a direct child ``Tree`` of the column: the navigation must still reach
 it, both to depart from and to arrive at. Regression: the wrapper hid the
 filters tree from the pane list, so Up/Down stopped working there.
 """
@@ -32,8 +32,8 @@ async def _collapse_all(app: FNDApp) -> None:
 async def test_pane_collapse_reflows_synchronously(built_index: Path) -> None:
     """Collapsing a panel reallocates the sidebar heights in the SAME frame,
     not after the next refresh. A deferred reflow left the panel drawn at its
-    old (taller) inline height for one frame — a container with side walls but
-    no bottom edge — before snapping to the header box (the flicker).
+    old (taller) inline height for one frame (a container with side walls but
+    no bottom edge) before snapping to the header box (the flicker).
     """
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:

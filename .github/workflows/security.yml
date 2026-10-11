@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Weekly Monday 09:00 UTC — catches CVEs published since the last
+    # Weekly Monday 09:00 UTC, catches CVEs published since the last
     # human-driven push.
     - cron: "0 9 * * 1"
 
@@ -36,8 +36,8 @@ jobs:
         # `--no-emit-project` drops the local `fnd` package (which uv
         # emits as `-e .`); pip-audit can't look up an unpublished
         # editable install and would fail the whole audit. Once Phase
-        # 0 of the publish runbook lands `fnd` on PyPI, the flag stays
-        # — we don't need to audit ourselves, only our deps.
+        # 0 of the publish runbook lands `fnd` on PyPI, the flag stays:
+        # we don't need to audit ourselves, only our deps.
         run: |
           uv export \
             --format requirements-txt \

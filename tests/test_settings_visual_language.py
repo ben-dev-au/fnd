@@ -267,7 +267,7 @@ def test_action_button_visible_under_realistic_width() -> None:
 
 def test_keybindings_row_has_no_trailing_button() -> None:
     """Documentation rows on the Keybindings cheat sheet (KIND_ACTION
-    with a ``key`` field) MUST NOT render a `[ Run ]` affordance —
+    with a ``key`` field) MUST NOT render a `[ Run ]` affordance:
     the leading [key] glyph is the affordance, and a trailing button
     on every row both clutters the page and pushes [key] off the
     right edge under narrow widths."""
@@ -315,7 +315,7 @@ def test_keybindings_row_fits_under_narrow_width() -> None:
 )
 def test_hint_cluster_action_label_matches_kind(kind: str, expected_verb: str) -> None:
     """The cursor row's kind determines the ⏎ label so the footer never lies."""
-    # Hint-cluster derivation tested indirectly here — render is the
+    # Hint-cluster derivation tested indirectly here: render is the
     # actual end-user path. Direct pilot tests live in
     # test_settings_indexing.py / cache_maintenance.py.
     from fnd.tui.menu import (

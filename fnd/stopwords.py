@@ -2,7 +2,7 @@
 
 Function words carry ~zero IDF. They matter inside quoted phrases (so the
 phrase still matches) but a bare-word query that overlaps a chunk *only*
-via a stopword is pure noise — the chunk ranks at the tail yet is still
+via a stopword is pure noise: the chunk ranks at the tail yet is still
 retrieved. :func:`strip_query_stopwords` drops standalone stopwords from a
 plain bag-of-words query so retrieval gates on content terms. It bails on
 any query carrying special syntax (quotes, field qualifiers, booleans,
@@ -60,7 +60,7 @@ STOPWORDS: Final[frozenset[str]] = frozenset(
 )
 
 # Any of these means the query carries explicit syntax (phrase, field
-# qualifier, boolean/required term, range, proximity/fuzzy, wildcard) — we
+# qualifier, boolean/required term, range, proximity/fuzzy, wildcard): we
 # leave it verbatim so stripping can never break it. ``-`` / ``+`` only count
 # as operators at a token boundary so hyphenated words ("defence-in-depth")
 # stay plain.

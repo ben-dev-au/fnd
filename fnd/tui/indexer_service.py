@@ -41,7 +41,7 @@ class IndexerService:
 
     def __init__(self, app: FNDApp) -> None:
         self._app = app
-        # Async indexer state — see fnd/tui/indexer_modal.py. None when
+        # Async indexer state: see fnd/tui/indexer_modal.py. None when
         # no indexer is running; populated for the lifetime of one
         # `fnd collection reindex` invoked from the TUI / palette.
         self.task: asyncio.Task[None] | None = None
@@ -88,7 +88,7 @@ class IndexerService:
         # with durable cache reuse.
         self.skip_unchanged: bool = True
         self.force_fresh: bool = False
-        # rebuild=True drops each collection's chunks before re-indexing —
+        # rebuild=True drops each collection's chunks before re-indexing:
         # the "Rebuild" actions pair it with force_fresh for a true redo.
         self.rebuild: bool = False
         # Per-collection final snapshots captured as each chain step
@@ -122,7 +122,7 @@ class IndexerService:
 
         A new explicit request (``_bump_seq=True``) bumps the run
         generation. If a run is already in flight, it is cancelled and
-        this one is started only once the old has fully torn down — so the
+        this one is started only once the old has fully torn down, so the
         old teardown can never race the new setup (and can't clobber this
         request's chain queue). Chain continuations pass ``_bump_seq=False``
         to inherit the current generation.
@@ -139,7 +139,7 @@ class IndexerService:
                 # Either a chain continuation racing a busy task (defensive)
                 # or an actively-running run the user re-opened to watch:
                 # don't start a second, don't disturb its generation. Show
-                # the running modal so "view progress" still works — with the
+                # the running modal so "view progress" still works, with the
                 # in-flight chain context so a mid-chain re-open keeps its
                 # "(N of M)" title instead of dropping to a single-run one.
                 if open_modal and _bump_seq:
@@ -178,7 +178,7 @@ class IndexerService:
                         )
                 return False
             # In flight but already cancelling (cancel-then-start-again):
-            # serialise — bump the generation so the dying run's teardown
+            # serialise: bump the generation so the dying run's teardown
             # knows it's superseded and won't clobber this request's chain,
             # then start fresh once it has fully torn down.
             self.run_seq += 1
@@ -277,7 +277,7 @@ class IndexerService:
             )
         )
         # Put the run on the app-level line. The modal, when it is open, sits
-        # on its own screen and hides this — which is right: it shows strictly
+        # on its own screen and hides this, which is right: it shows strictly
         # more. What this covers is the background run (auto-resume on launch,
         # or a modal the user dismissed with "Background"), which until now
         # reported nothing at all after its opening toast.
@@ -314,7 +314,7 @@ class IndexerService:
         indexer. Otherwise start the indexer directly.
 
         ``rebuild=True`` is for callers that need a fresh build after a
-        config change (collection rename, source delete, etc.) — it
+        config change (collection rename, source delete, etc.): it
         drops the collection's existing chunks before re-indexing.
 
         This is the one user-initiated reindex entry point, so it owns the
@@ -346,7 +346,7 @@ class IndexerService:
         col_cfg = cfg.collections[collection]
 
         # Establish the chain queue for this request before start() reads
-        # it — but only when start() will actually act on it. If a run is
+        # it, but only when start() will actually act on it. If a run is
         # already in flight and NOT cancelling, start() rejects this request
         # (busy modal); overwriting here would wipe the live chain's queue
         # and strand its remaining collections. When there's no run, or the
@@ -405,7 +405,7 @@ class IndexerService:
             )
 
     def maybe_resume(self) -> None:
-        """Auto-resume an interrupted background index on launch — only when
+        """Auto-resume an interrupted background index on launch: only when
         the user has opted in (defaults.indexer_auto_resume, off by default)
         AND a saved state is genuinely resumable. Indexing is heavy, so it
         must never start unbidden; see index_runner.is_state_resumable for the
@@ -413,7 +413,7 @@ class IndexerService:
 
         Every collection's state file is considered, most recently touched
         first, and the rest of the resumable ones are queued behind it as a
-        chain — an interrupted Update-all should pick up where it stopped,
+        chain: an interrupted Update-all should pick up where it stopped,
         not just its first collection. States that will never be resumable
         (their collection is gone, or they're older than the resume window)
         are deleted rather than left to accumulate forever."""
@@ -436,7 +436,7 @@ class IndexerService:
                 resumable.append(state)
             elif state.collection not in known or state.files_completed >= state.total_files:
                 # Dead weight: a collection that no longer exists, or a run
-                # that actually finished. Age alone isn't enough to delete —
+                # that actually finished. Age alone isn't enough to delete:
                 # a stale-but-valid state is still the record of where a run
                 # got to, and a manual Update reads it.
                 with contextlib.suppress(Exception):
@@ -558,7 +558,7 @@ class IndexerService:
             self._app._search.searcher = Searcher(index_dir=self._app._index_dir)
         except (FileNotFoundError, RuntimeError, ValueError):
             self._app._search.searcher = None
-        # A rebuild may have added a new file-type kind — drop the present-kinds
+        # A rebuild may have added a new file-type kind: drop the present-kinds
         # cache so the file-type filter recomputes on the next panel refresh.
         self._app._scope.invalidate_present_kinds_cache()
         # And take that refresh now. The facets are index-derived, so without

@@ -1,7 +1,7 @@
 """Auto-resume covers every collection, not one named ``default``.
 
 ``maybe_resume`` used to load exactly ``default.state.toml``. Anyone whose
-collections are all named — the normal case — had the "Auto-resume on launch"
+collections are all named (the normal case) had the "Auto-resume on launch"
 toggle read as on while doing nothing, and their interrupted runs left state
 files that were never resumed and never cleaned up.
 """
@@ -163,7 +163,7 @@ def test_completed_state_is_cleaned_up(tmp_path: Path, monkeypatch: pytest.Monke
 def test_opt_out_still_sweeps_but_never_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Indexing is heavy: with auto-resume off nothing may start — but the
+    """Indexing is heavy: with auto-resume off nothing may start, but the
     dead state file is still tidied."""
     cfg = _cfg(["Reading"], auto_resume=False)
     save_state(tmp_path / "Reading.state.toml", _state("Reading", done=3, total=97))

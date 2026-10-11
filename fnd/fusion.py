@@ -8,11 +8,11 @@ complementary; the search layer can use either.
 
 Auto-derived sub-queries:
 
-* ``phrase`` — the user's query wrapped in quotes (weight 2.0). Only emitted
+* ``phrase``: the user's query wrapped in quotes (weight 2.0). Only emitted
   for multi-word queries (a phrase pass on a single word is identical to
   the lex pass and would just inflate the RRF score for everything).
-* ``lex`` — the literal user query (weight 1.0). Implicit AND across terms.
-* ``syn`` — synonym-expanded version of the query (weight 0.6). Only emitted
+* ``lex``: the literal user query (weight 1.0). Implicit AND across terms.
+* ``syn``: synonym-expanded version of the query (weight 0.6). Only emitted
   when the expansion actually changes the query string.
 
 A ``stem`` sub-query is omitted: the body field is already analysed with
@@ -52,17 +52,17 @@ if TYPE_CHECKING:
 
     from fnd.tag_query import TagFilter
 
-# A field qualifier (``kind:pdf``, ``c:papers``) anywhere in the query — phrase
+# A field qualifier (``kind:pdf``, ``c:papers``) anywhere in the query, phrase
 # wrapping such a query would quote the qualifier and produce a junk phrase.
 _FIELD_SYNTAX_RE: Final = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*:")
-# Explicit operator syntax — boolean keywords, ``+``/``-`` required/prohibited
+# Explicit operator syntax: boolean keywords, ``+``/``-`` required/prohibited
 # prefixes, wildcard/fuzzy chars, or a ``/regex/`` token. Quoting such a query as
 # a phrase destroys its meaning (``"crypto* -wallet"`` becomes the phrase "crypto
 # wallet" and re-admits the very doc the ``-`` excluded). The lex pass already
 # honours it exactly via the boolean AST compiler, so the phrase pass stands down.
 # ``/`` matches only as a delimited ``/regex/`` token, so plain slashes in paths
 # or ``TCP/IP`` don't suppress the phrase pass. Parens and ``^`` (grouping /
-# boost) also count as structure — ``(cross entropy)`` and ``foo^2`` already
+# boost) also count as structure: ``(cross entropy)`` and ``foo^2`` already
 # carry intent in the lex pass and shouldn't get an auto-phrase pass.
 _OPERATOR_SYNTAX_RE: Final = re.compile(
     r"\b(?:AND|OR|NOT)\b|[*?~^()]|(?:^|\s)[+\-]\S|(?:^|\s)/[^/\s]+/(?:\s|$)"
@@ -210,7 +210,7 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     Multi-word queries get a ``phrase`` + ``lex`` pair; single-word queries
     only get ``lex`` (a phrase of one word is identical to a term query
     and would just dilute the RRF math). A ``syn`` pass is appended only
-    when synonym expansion actually rewrites the query — otherwise it
+    when synonym expansion actually rewrites the query, otherwise it
     would issue an identical Tantivy round-trip for nothing.
 
     The syn pass, like the phrase pass, stands down for any structured query
@@ -218,7 +218,7 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     grafts an ``(a OR b)`` disjunction into the string, which strands a
     proximity brace (``{20}("a b" OR c)``) or mangles the operator the lex
     pass already honours. Tradeoff: ``kind:pdf threat intelligence`` no longer
-    auto-expands ``ti`` — synonym widening only applies to plain bag-of-words
+    auto-expands ``ti``, synonym widening only applies to plain bag-of-words
     queries.
     """
     q = query.strip()
@@ -228,8 +228,8 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # Skip the auto-phrase pass when the query already encodes phrase intent in
     # the lex pass: a user-supplied quote (Tantivy parses ``"a b c"`` as a
     # PhraseQuery directly) or proximity (``{N} …`` / ``a NEAR/N b`` expand to
-    # ``"a b"~N`` downstream). Re-wrapping either would double-quote — ``""a b""``
-    # or ``""a b"~N`` — and crash the parser. Also skip when the query carries a
+    # ``"a b"~N`` downstream). Re-wrapping either would double-quote (``""a b""``
+    # or ``""a b"~N``) and crash the parser. Also skip when the query carries a
     # field qualifier (``kind:pdf``, ``c:papers``): a phrase over the raw qualifier
     # text is meaningless and quoting it mangles the qualifier.
     carries_field_syntax = bool(_FIELD_SYNTAX_RE.search(q))
@@ -297,7 +297,7 @@ def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> MultiInput
     A ``phrase:`` value that isn't already quoted is wrapped in quotes so
     the Tantivy parser sees it as a phrase query.
     A ``syn:`` value is expanded against the supplied table at parse time.
-    An ``intent:`` line is captured separately — it does NOT produce a
+    An ``intent:`` line is captured separately; it does NOT produce a
     sub-query, but is returned on the :class:`MultiInput` so callers can
     pass it to :func:`fnd.layered.search_layered`. Last-write-wins if
     multiple intent lines appear (matches QMD's "at most one intent
@@ -413,7 +413,7 @@ def fusion_search(
         if sub.source == "lex":
             # The lex pass carries the user's literal query: reuse the regime
             # probe's result when supplied, else issue it. A syntax error here is
-            # the user's to fix, so it must propagate — the Searcher safety-net
+            # the user's to fix, so it must propagate: the Searcher safety-net
             # and the TUI's inline notice both rely on malformed queries raising.
             pool = precomputed_lex if precomputed_lex is not None else _issue(sub.query)
             rankings.append(pool.hits)

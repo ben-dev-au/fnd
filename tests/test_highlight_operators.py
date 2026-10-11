@@ -1,4 +1,4 @@
-"""Highlighting must mark exactly the words the search surfaced — across every
+"""Highlighting must mark exactly the words the search surfaced: across every
 operator. Regression guard for the wildcard/regex/fuzzy highlight expansion
 (``MatchSpec`` carries prefix/regex patterns and uses OSA fuzzy, mirroring the
 search-side resolvers).
@@ -24,7 +24,7 @@ def _highlighted(query: str, text: str) -> set[str]:
 
 
 def _coloured(query: str, text: str) -> list[tuple[str, str]]:
-    """Return (substring, 'Y'|'O') spans — Y = yellow match, O = orange variance.
+    """Return (substring, 'Y'|'O') spans: Y = yellow match, O = orange variance.
     Captures the convention: matching/literal chars yellow, fuzzy/wildcard-filled
     chars orange."""
     spec = MatchSpec.from_query(query, auto_fuzzy=True, min_term_chars=0)
@@ -74,7 +74,7 @@ def test_wildcard_excludes_non_prefix() -> None:
     ("query", "text", "expected"),
     [
         # wildcard with another term: the all-orange regression is gone, and each
-        # term gets its own colour — strategy(slot 0 Y), discoun(slot 1 C) + t(O).
+        # term gets its own colour: strategy(slot 0 Y), discoun(slot 1 C) + t(O).
         (
             "strategy discoun*",
             "the strategy gave a discount",
@@ -128,13 +128,13 @@ def test_per_term_colours() -> None:
 
 
 def test_field_qualifier_does_not_consume_a_colour_slot() -> None:
-    """`kind:pdf` is a filter, not a body term — the real term keeps slot-0
+    """`kind:pdf` is a filter, not a body term; the real term keeps slot-0
     yellow instead of being pushed to a later colour by `kind`/`pdf`."""
     assert _coloured("kind:pdf strategy", "a strategy doc") == [("strategy", "Y")]
 
 
 def test_excluded_terms_are_not_highlighted() -> None:
-    """`-x` / `NOT x` are prohibited — they must never highlight."""
+    """`-x` / `NOT x` are prohibited: they must never highlight."""
     for q in ("crypto -wallet", "crypto NOT wallet"):
         spec = MatchSpec.from_query(q)
         assert word_matches("crypto", spec)
@@ -142,7 +142,7 @@ def test_excluded_terms_are_not_highlighted() -> None:
 
 
 def test_negated_group_terms_are_not_highlighted() -> None:
-    """`NOT (a OR b)` / `-(a OR b)` excludes the whole group — none of its terms
+    """`NOT (a OR b)` / `-(a OR b)` excludes the whole group: none of its terms
     highlight (a single-token negation flag would leak everything past the first)."""
     for q in ("crypto NOT (wallet OR purse)", "crypto -(wallet OR purse)"):
         spec = MatchSpec.from_query(q)
@@ -157,7 +157,7 @@ def test_negated_group_terms_are_not_highlighted() -> None:
 
 
 def test_field_group_value_is_not_highlighted() -> None:
-    """A scoped field group (`title:(a OR b)`) is a filter — its values must not
+    """A scoped field group (`title:(a OR b)`) is a filter; its values must not
     highlight in the body or consume a colour slot, even split across tokens."""
     spec = MatchSpec.from_query("networks title:(wallet OR purse)")
     assert word_matches("networks", spec)
@@ -166,7 +166,7 @@ def test_field_group_value_is_not_highlighted() -> None:
 
 
 def test_regex_metacharacters_are_not_corrupted() -> None:
-    """A `/regex/` is kept verbatim — lowercasing would flip `\\D`→`\\d` etc. —
+    """A `/regex/` is kept verbatim: lowercasing would flip `\\D`→`\\d` etc.
     and matched case-insensitively against the (lowercased) doc word."""
     spec = MatchSpec.from_query(r"/\D+/")  # non-digits
     assert word_matches("abc", spec)

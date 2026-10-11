@@ -1,4 +1,4 @@
-"""W8 prototype — render md chunks to styled flat lines.
+"""W8 prototype: render md chunks to styled flat lines.
 
 Renders each chunk's ``body_md`` (or falls back to ``body_text``) via
 ``rich.markdown.Markdown`` to width-wrapped styled lines, then bakes

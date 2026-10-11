@@ -29,7 +29,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 @pytest.mark.asyncio
 async def test_preview_pane_has_no_focus_within_rule(built_index: Path) -> None:
     """The pane's applicable styles must NOT include any ``:focus-within``
-    pseudo-class — otherwise Textual reapplies CSS across the entire
+    pseudo-class, otherwise Textual reapplies CSS across the entire
     preview subtree on every focus change.
     """
     app = FNDApp(index_dir=built_index)
@@ -50,17 +50,17 @@ async def test_preview_focused_class_toggles_with_focus(built_index: Path) -> No
     async with app.run_test() as pilot:
         await pilot.pause()
         pane = app.query_one("#preview_pane")
-        # Focus elsewhere — class should be absent.
+        # Focus elsewhere: class should be absent.
         app.query_one("#results_pane", Tree).focus()
         await pilot.pause()
         assert "-focused" not in pane.classes
 
-        # Focus the preview pane — class should appear.
+        # Focus the preview pane: class should appear.
         pane.focus()
         await pilot.pause()
         assert "-focused" in pane.classes
 
-        # Move focus back out — class should clear.
+        # Move focus back out: class should clear.
         app.query_one("#results_pane", Tree).focus()
         await pilot.pause()
         assert "-focused" not in pane.classes
@@ -68,8 +68,8 @@ async def test_preview_focused_class_toggles_with_focus(built_index: Path) -> No
 
 @pytest.mark.asyncio
 async def test_focus_border_class_moves_between_panes(built_index: Path) -> None:
-    """The accent border (``-focused``) follows focus across every pane —
-    not just the preview — and only the focused pane wears it."""
+    """The accent border (``-focused``) follows focus across every pane,
+    not just the preview, and only the focused pane wears it."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -92,7 +92,7 @@ async def test_focus_border_survives_terminal_blur(built_index: Path) -> None:
     """The accent border must NOT drop when the terminal loses focus.
 
     Textual clears widget focus on ``AppBlur`` (``app_focus = False`` →
-    ``screen.set_focus(None)``) and only restores it on the next keypress —
+    ``screen.set_focus(None)``) and only restores it on the next keypress,
     which made the border vanish on tab-away and reappear a beat late. The
     persistent ``-focused`` class is driven by descendant *focus*, never
     cleared on blur, so it (and the border) stays put across the blur/refocus
@@ -122,7 +122,7 @@ async def test_focus_change_does_not_walk_preview_subtree(built_index: Path) -> 
     """The pane's ``watch_has_focus`` override must not walk the subtree.
 
     The stock ``Widget.watch_has_focus`` calls ``update_node_styles``,
-    which walks every descendant and reapplies CSS — the dominant cost
+    which walks every descendant and reapplies CSS: the dominant cost
     of focus transitions on large documents. The override on
     ``MatchAwareScroll`` applies CSS only to the pane itself.
     """

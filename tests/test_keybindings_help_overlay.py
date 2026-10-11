@@ -3,7 +3,7 @@
 Items (6)-(8) from the app-routing branch fix queue:
 
 * (6) ``?`` pushes Keybindings ON TOP of the current screen, ``?`` again
-  or ``Esc`` pops back to that same screen — not the main app.
+  or ``Esc`` pops back to that same screen, not the main app.
 * (6) The hint resolved from the calling screen surfaces the matching
   section right after Global.
 * (7) The inner list body is a ``VerticalScroll`` so 30+ rows scroll.
@@ -65,7 +65,7 @@ async def test_question_mark_from_source_form_returns_to_source_form(
     built_index: Path, fixtures_dir: Path
 ) -> None:
     """The whole point of the fix: ``?`` must not drop the SourceFormScreen
-    when toggling off — the user is in the middle of editing a source."""
+    when toggling off: the user is in the middle of editing a source."""
     app = FNDApp(index_dir=built_index, config=_seed_cfg(fixtures_dir))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -136,7 +136,7 @@ async def test_hint_section_class_lands_on_header_and_body_rows(
 ) -> None:
     """(8) The header for the resolved hint section and every body row
     under it (until the next header) carry the ``-hint-section`` CSS
-    class — that's the hook the CSS rule paints from."""
+    class: that's the hook the CSS rule paints from."""
     app = FNDApp(index_dir=built_index, config=_seed_cfg(fixtures_dir))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -194,7 +194,7 @@ async def test_no_hint_means_no_hint_section_class_anywhere(
     app = FNDApp(index_dir=built_index, config=_seed_cfg(fixtures_dir))
     async with app.run_test() as pilot:
         await pilot.pause()
-        # Main app, default focus — _keybindings_context_hint returns None.
+        # Main app, default focus: _keybindings_context_hint returns None.
         # Drop focus explicitly so no pane wins.
         try:
             app.set_focus(None)

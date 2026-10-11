@@ -138,7 +138,7 @@ def shutdown_pool() -> None:
     finalisers actually close the pipe FDs. The previous ``wait=False``
     plus no GC raced the next ``_get_pool()`` and left stale FDs
     visible to ``_posixsubprocess.fork_exec`` in the new worker spawn
-    ("bad value(s) in fds_to_keep") — the exact symptom of the
+    ("bad value(s) in fds_to_keep"): the exact symptom of the
     chained-extraction bug.
     """
     import gc
@@ -161,7 +161,7 @@ def _kill_pool_workers(pool: ProcessPoolExecutor) -> None:
     # a quirky look-up is much smaller than the cost of writing our
     # own pool. ``getattr`` with default keeps the call site safe if
     # the attribute name ever changes upstream. ``Process.kill`` is
-    # cross-platform (SIGKILL on POSIX, TerminateProcess on Windows) —
+    # cross-platform (SIGKILL on POSIX, TerminateProcess on Windows):
     # ``os.kill(pid, SIGKILL)`` would raise/no-op on Windows.
     procs = getattr(pool, "_processes", {}) or {}
     for proc in list(procs.values()):

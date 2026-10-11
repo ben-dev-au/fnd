@@ -34,7 +34,7 @@ def extract(path: Path) -> Iterator[Chunk]:
             continue
         # 1-based line of the chunk's first character. Counting newlines
         # in ``text[:start]`` is O(start) per chunk and O(len(text)^2 /
-        # step) total — fine for the ≤ few-MB plain-text files this
+        # step) total, fine for the ≤ few-MB plain-text files this
         # extractor sees in practice; revisit if huge logs land in the
         # corpus.
         start_line = text.count("\n", 0, start) + 1

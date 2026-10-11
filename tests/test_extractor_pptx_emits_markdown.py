@@ -47,7 +47,7 @@ def _make_deck_with_bullets_and_table(out: Path) -> Path:
     table.cell(1, 0).text = "alpha"
     table.cell(1, 1).text = "scaffolding"
 
-    # Slide 3: speaker notes only — confirms blockquote path.
+    # Slide 3: speaker notes only, confirms blockquote path.
     s3 = prs.slides.add_slide(blank)
     s3.shapes.title.text = "Notes Slide"  # type: ignore[union-attr]
     s3.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(2)).text_frame.text = "body text"
@@ -103,7 +103,7 @@ def test_per_slide_chunk_seq_unchanged(deck: Path) -> None:
 
 
 def test_body_struct_remains_plain_text(deck: Path) -> None:
-    """Snippet pipeline reads body_struct — markdown markers in body_md
+    """Snippet pipeline reads body_struct: markdown markers in body_md
     must not leak into block.text."""
     for chunk in extract(deck):
         for block in chunk.body_struct:
@@ -112,7 +112,7 @@ def test_body_struct_remains_plain_text(deck: Path) -> None:
 
 def test_no_change_to_existing_simple_deck_extraction(tmp_path: Path) -> None:
     """A deck that's just title + flat-level body (the legacy fixture
-    shape) keeps producing the same searchable body — no regression on
+    shape) keeps producing the same searchable body: no regression on
     existing test_pptx_anchor_attributes_to_correct_slide."""
     prs = Presentation()
     blank = prs.slide_layouts[5]

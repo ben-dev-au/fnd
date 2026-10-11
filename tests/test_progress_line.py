@@ -45,8 +45,8 @@ _LABEL_STYLE = RichStyle(color="green")
 def split(width: int, fraction: float, label: str = "") -> tuple[int, int]:
     """(filled cells, track cells).
 
-    Fill and track are drawn with the SAME glyph — they differ only in
-    colour — so the painted text cannot tell them apart. Classify by style
+    Fill and track are drawn with the SAME glyph (they differ only in
+    colour) so the painted text cannot tell them apart. Classify by style
     instead, which is what actually carries the distinction on screen.
     """
     segments = progress_line_segments(
@@ -87,7 +87,7 @@ def test_a_complete_line_is_all_fill() -> None:
 
 def test_any_progress_at_all_shows_at_least_one_cell() -> None:
     """1% of a 200-cell line rounds to 2 cells, but 1% of a 40-cell line
-    rounds to 0 — and a bar that reads as empty while work is happening is
+    rounds to 0, and a bar that reads as empty while work is happening is
     the complaint, not the fix."""
     assert split(40, 0.001)[0] >= 1
 
@@ -299,7 +299,7 @@ def test_open_still_drives_a_determinate_bar() -> None:
 async def test_the_mounted_widget_renders_a_full_width_line(
     fixtures_dir: Path, tmp_index_dir: Path
 ) -> None:
-    """The pure function is tested above; this covers the part it cannot —
+    """The pure function is tested above; this covers the part it cannot:
     resolving the component styles from CSS and sizing to the real pane
     width. Asserts on the widget's own render output rather than the
     screen: a headless compositor paints blank regardless."""
@@ -441,7 +441,7 @@ def test_the_watchdog_is_disarmed_on_a_normal_clear() -> None:
 
 def test_an_active_session_never_paints_a_full_line() -> None:
     """A full line means finished. A session whose phases have all eased out
-    is not finished, so it must still show a gap — otherwise a stall there
+    is not finished, so it must still show a gap, otherwise a stall there
     looks identical to a stall in the clear."""
     facility, bar, clock = make_facility()
     facility.begin(ONE_PHASE, sampler=lambda _s: True)
@@ -485,7 +485,7 @@ SLOW_PHASE = OperationPlan(
 def test_an_unchanged_frame_costs_nothing() -> None:
     """``fraction`` is a Textual reactive, so assigning it repaints the row.
     On a slow phase the eased value changes by a fraction of a percent per
-    tick — the same cells — so painting unconditionally spent 20 repaints a
+    tick (the same cells) so painting unconditionally spent 20 repaints a
     second drawing the identical thing, event-loop work during exactly the
     navigation this line exists to smooth. Measured on a real 3 s session:
     61 repaints before this guard, 11 after."""
@@ -527,7 +527,7 @@ def test_the_stall_cap_retires_before_the_watchdog() -> None:
     """The tick loop is the normal retirement path; the watchdog only covers a
     tick loop that is gone. With the watchdog set below the stall cap it beat
     the loop to every retirement, so the stall branch was dead code and every
-    case went through _force_clear — a superseded retirement, which skips both
+    case went through _force_clear: a superseded retirement, which skips both
     the completion animation and the calibration sample."""
     from fnd.tui.progress import facility as facility_mod
 
@@ -547,7 +547,7 @@ def test_the_stall_cap_retires_before_the_watchdog() -> None:
 
 
 def test_the_watchdog_survives_a_widget_it_cannot_resolve() -> None:
-    """query_one fails whenever a modal screen is on top — which is exactly
+    """query_one fails whenever a modal screen is on top, which is exactly
     what a background index sits behind. Dropping the backstop there would
     retire it for the rest of the session, since only real progress re-arms
     it and a stalled session makes none."""
@@ -556,7 +556,7 @@ def test_the_watchdog_survives_a_widget_it_cannot_resolve() -> None:
     facility.begin(ONE_PHASE, sampler=lambda _s: True)
 
     def no_widget(_selector: object) -> object:
-        raise RuntimeError("NoMatches — a modal is on top")
+        raise RuntimeError("NoMatches: a modal is on top")
 
     app.query_one = no_widget  # type: ignore[method-assign]
     before = len(app.watchdogs)
@@ -608,7 +608,7 @@ def test_a_background_run_gets_the_line_back_after_a_navigation() -> None:
     With one slot, ``begin`` was last-writer-wins: every navigation retired
     the running index permanently. A reindex spans hundreds of navigations,
     so in practice the line showed it until the user's first keypress and
-    then never again — and at launch the initial query beat it to that.
+    then never again, and at launch the initial query beat it to that.
     """
     facility, bar, clock = make_facility()
     index = facility.begin(AMBIENT_PLAN, label="Work · 3 of 40 files", sampler=lambda _s: True)
@@ -625,7 +625,7 @@ def test_a_background_run_gets_the_line_back_after_a_navigation() -> None:
 
 def test_a_background_run_that_ended_unseen_does_not_come_back() -> None:
     """Sampled before it repaints, so a run that finished while the line was
-    busy elsewhere neither flashes a stale bar nor announces itself late —
+    busy elsewhere neither flashes a stale bar nor announces itself late:
     the same rule as one that ends while still suspended, which is what
     keeps the two indistinguishable to the user."""
     facility, bar, clock = make_facility()
@@ -656,7 +656,7 @@ def test_a_background_run_finishing_unseen_does_not_steal_the_completion() -> No
 
 def test_a_background_run_outlasts_a_burst_of_navigation() -> None:
     """The stall cap counts silence, and a suspended session is silent by
-    construction — so resuming has to forgive the gap it did not cause."""
+    construction, so resuming has to forgive the gap it did not cause."""
     facility, bar, clock = make_facility()
     index = facility.begin(AMBIENT_PLAN, label="Work", sampler=lambda _s: True)
     for _ in range(30):

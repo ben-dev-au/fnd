@@ -1,7 +1,7 @@
 """A preview being staged must not move the scrollbar of the one on screen.
 
-A container built behind ``-pre-reveal`` is in the layout — that is how the pane
-scrolls to its match before it is revealed — so its rows land in the pane's
+A container built behind ``-pre-reveal`` is in the layout (that is how the pane
+scrolls to its match before it is revealed) so its rows land in the pane's
 ``virtual_size`` and, uncorrected, in the bar's. The thumb then shrinks for the
 two frames a swap takes and snaps back: a blink in the gutter on every
 navigation.
@@ -90,7 +90,7 @@ class _EmptyPaneApp(App[None]):
 @pytest.mark.asyncio
 async def test_the_thumb_survives_a_swap_and_then_describes_the_revealed_file() -> None:
     """Revealing changes ``opacity`` only, and ``preview/visibility.py`` keeps
-    that free of layout on purpose — so a staged-row count taken during the
+    that free of layout on purpose, so a staged-row count taken during the
     arrange is never told what it counts has been revealed. On the swap's own
     ordering (hide the outgoing, then reveal) the stale count is the whole
     document, which subtracts the bar down to nothing: measured as the thumb
@@ -129,7 +129,7 @@ async def test_the_thumb_survives_a_swap_and_then_describes_the_revealed_file() 
 async def test_a_scroll_into_the_staged_preview_does_not_pin_the_thumb() -> None:
     """The swap scrolls into the staged container before revealing it. Correcting
     the bar's extent while the reader's position sits past the corrected end
-    leaves the ratio clamped at 1.0 — the thumb hard against the bottom of a
+    leaves the ratio clamped at 1.0: the thumb hard against the bottom of a
     track it is nowhere near the end of.
     """
     app = _EmptyPaneApp()
@@ -149,7 +149,7 @@ async def test_a_scroll_into_the_staged_preview_does_not_pin_the_thumb() -> None
         assert size > 0, "no thumb to place"
         assert top is not None
         assert top + size < _HEIGHT - 1, (
-            f"thumb sits at {top}..{top + size} of {_HEIGHT} — pinned to the end of "
+            f"thumb sits at {top}..{top + size} of {_HEIGHT}: pinned to the end of "
             f"the track while the reader is at row 150 of 200"
         )
 
@@ -157,7 +157,7 @@ async def test_a_scroll_into_the_staged_preview_does_not_pin_the_thumb() -> None
 @pytest.mark.asyncio
 async def test_staging_does_not_give_a_short_preview_a_thumb() -> None:
     """A preview shorter than the viewport has nothing to scroll, so it has no
-    thumb — and staging the next file behind it must not conjure one. The
+    thumb, and staging the next file behind it must not conjure one. The
     correction has to treat "shorter than the window" as fitting; a predicate
     that only asks whether the position is below the corrected end quietly
     excludes every such preview, which is the same gutter blink on short files.
@@ -184,7 +184,7 @@ async def test_staging_does_not_give_a_short_preview_a_thumb() -> None:
 @pytest.mark.asyncio
 async def test_a_reveal_reaches_the_bar_though_it_causes_no_layout() -> None:
     """Revealing changes ``opacity`` only, which ``preview/visibility.py`` keeps
-    free of layout on purpose — so nothing re-runs ``arrange``. With the outgoing
+    free of layout on purpose, so nothing re-runs ``arrange``. With the outgoing
     preview left on screen the reveal genuinely lengthens the document, and a
     staged-row count that waits for a layout keeps describing the shorter one.
     """

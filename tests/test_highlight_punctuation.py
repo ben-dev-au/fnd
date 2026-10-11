@@ -4,7 +4,7 @@ The document side extracts words with ``re.finditer(r"\\w+")`` (no
 punctuation). ``_terms_from_query`` split the query on whitespace only,
 so a term like ``3.`` or ``Monitoring,`` kept its trailing punctuation;
 its stem (``3.`` / ``monitoring,``) then never equalled the clean
-doc-word stem (``3`` / ``monitor``) — so those words were silently left
+doc-word stem (``3`` / ``monitor``), so those words were silently left
 un-highlighted while neighbouring clean words lit up.
 """
 
@@ -28,7 +28,7 @@ def test_punctuated_unquoted_terms_match_doc_words() -> None:
     """Unquoted terms with adjacent punctuation still highlight doc-wide.
 
     (For a *quoted* phrase the words highlight via the phrase span, not
-    document-wide — covered in test_phrase_matching.)"""
+    document-wide: covered in test_phrase_matching.)"""
     spec = MatchSpec.from_query("3. Monitoring, segmentation depth", auto_fuzzy=True)
     # The tokens that sat before punctuation.
     assert word_matches("Monitoring", spec)

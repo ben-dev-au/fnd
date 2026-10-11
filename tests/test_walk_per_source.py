@@ -52,7 +52,7 @@ def test_frontmatter_filter_excludes_non_matching_md(tmp_path: Path) -> None:
 
 
 def test_frontmatter_filter_only_applies_to_md(tmp_path: Path) -> None:
-    """A filter on a source that contains pdf files leaves the pdfs alone —
+    """A filter on a source that contains pdf files leaves the pdfs alone:
     the filter is md-only by design (no other format has YAML frontmatter)."""
     root = tmp_path / "mixed"
     _touch(root / "a.md", "---\nProject: Other\n---\nbody\n")
@@ -87,7 +87,7 @@ def test_excludes_still_apply_under_filter(tmp_path: Path) -> None:
 
 def test_invalid_frontmatter_excludes_file(tmp_path: Path) -> None:
     """Per spec: frontmatter parse errors fail closed (filter returns False)
-    so a typo in one note doesn't kill the index — but it's also not
+    so a typo in one note doesn't kill the index, but it's also not
     silently included."""
     root = tmp_path / "notes"
     _touch(root / "bad.md", "---\nfoo:\n  nested: not allowed\n---\nbody\n")

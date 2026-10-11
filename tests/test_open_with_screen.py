@@ -48,7 +48,7 @@ def test_eligible_apps_for_md_lists_md_capable() -> None:
             "system": True,
             "obsidian": True,
             "vscode": True,
-            "skim": True,  # not eligible — handles only pdf
+            "skim": True,  # not eligible: handles only pdf
         },
     )
     ids = [r.id for r in rows]
@@ -78,7 +78,7 @@ def test_letter_shortcuts_unique_first_letters() -> None:
     keys = letter_shortcuts(rows)
     assert keys["skim"] == "s"
     assert keys["preview"] == "p"
-    # System Default — 's' taken by skim, walk to next letter.
+    # System Default: 's' taken by skim, walk to next letter.
     assert keys["system"] != "s"
     assert keys["system"] != "p"
 
@@ -262,7 +262,7 @@ async def test_modal_arrow_keys_move_cursor_and_enter_fires_highlighted(
 
     assert len(captured) == 1
     argv = captured[0]
-    # Whichever app sits below skim must have fired — NOT skim.
+    # Whichever app sits below skim must have fired, NOT skim.
     assert not (argv[0] == "open" and argv[1].startswith("skim://")), (
         f"expected ↓+Enter to fire a non-skim app; got {argv}"
     )
