@@ -30,18 +30,18 @@ def test_run_indexer_applies_configured_frontmatter_keys(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """run_indexer sources tag settings from config internally; a configured
-    Course key must become a filterable namespaced tag."""
+    Project key must become a filterable namespaced tag."""
     from fnd import config as config_mod
     from fnd.index_runner import run_indexer
 
-    # Point config loading at a file that opts the Course key in.
+    # Point config loading at a file that opts the Project key in.
     cfg_path = tmp_path / "config.toml"
-    cfg_path.write_text('[defaults]\ntag_frontmatter_keys = ["Course"]\n', encoding="utf-8")
+    cfg_path.write_text('[defaults]\ntag_frontmatter_keys = ["Project"]\n', encoding="utf-8")
     monkeypatch.setattr(config_mod, "default_config_path", lambda: cfg_path)
 
     root = tmp_path / "corpus"
     root.mkdir()
-    (root / "a.md").write_text("---\nCourse: Algebra\n---\n\n# A\n\nsaffron\n", encoding="utf-8")
+    (root / "a.md").write_text("---\nProject: Kitchen\n---\n\n# A\n\nsaffron\n", encoding="utf-8")
     index_dir = tmp_path / "idx"
     cc = CollectionConfig(sources=[SourceConfig(path=root)])
 
@@ -55,8 +55,8 @@ def test_run_indexer_applies_configured_frontmatter_keys(
 
     # The configured key produced the namespaced tag; without threading this
     # would be empty.
-    assert _tagged_files(index_dir, "course/algebra") == {"a.md"}
-    assert _tagged_files(index_dir, "course") == {"a.md"}
+    assert _tagged_files(index_dir, "project/kitchen") == {"a.md"}
+    assert _tagged_files(index_dir, "project") == {"a.md"}
 
 
 def test_run_indexer_defaults_without_config(
@@ -72,7 +72,7 @@ def test_run_indexer_defaults_without_config(
     root = tmp_path / "corpus"
     root.mkdir()
     (root / "a.md").write_text(
-        "---\ntags: [recipe]\nCourse: Algebra\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
+        "---\ntags: [recipe]\nProject: Kitchen\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
     )
     index_dir = tmp_path / "idx"
     cc = CollectionConfig(sources=[SourceConfig(path=root)])
@@ -89,5 +89,5 @@ def test_run_indexer_defaults_without_config(
     s = index.searcher()
     q = tantivy.Query.term_query(build_schema(), F_TAGS_FM, "recipe")
     assert len(s.search(q, 5).hits) == 1  # plain tag indexed
-    # Course NOT opted in by default → no namespaced tag.
-    assert _tagged_files(index_dir, "course") == set()
+    # Project NOT opted in by default → no namespaced tag.
+    assert _tagged_files(index_dir, "project") == set()

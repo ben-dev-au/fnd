@@ -103,15 +103,15 @@ def _cfg(names: list[str], *, auto_resume: bool = True) -> Config:
 
 
 def test_named_collection_resumes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = _cfg(["COMP"])
-    save_state(tmp_path / "COMP.state.toml", _state("COMP", done=3, total=97))
+    cfg = _cfg(["Reading"])
+    save_state(tmp_path / "Reading.state.toml", _state("Reading", done=3, total=97))
     monkeypatch.setattr("fnd.index_runner.state_dir", lambda: tmp_path)
     monkeypatch.setattr("fnd.config.load", lambda *_a, **_k: cfg)
 
     svc = _service(tmp_path, cfg)
     svc.maybe_resume()
-    assert svc._app.started == ["COMP"]
-    assert "COMP" in svc._app.notices[0]
+    assert svc._app.started == ["Reading"]
+    assert "Reading" in svc._app.notices[0]
 
 
 def test_remaining_collections_queue_behind_the_first(
@@ -119,8 +119,8 @@ def test_remaining_collections_queue_behind_the_first(
 ) -> None:
     """An interrupted Update-all should pick up where it stopped, not just
     resume its first collection and drop the rest."""
-    cfg = _cfg(["COMP", "ALGO", "SEC"])
-    for name in ("COMP", "ALGO", "SEC"):
+    cfg = _cfg(["Reading", "Work", "Home"])
+    for name in ("Reading", "Work", "Home"):
         save_state(tmp_path / f"{name}.state.toml", _state(name, done=1, total=50))
     monkeypatch.setattr("fnd.index_runner.state_dir", lambda: tmp_path)
     monkeypatch.setattr("fnd.config.load", lambda *_a, **_k: cfg)
@@ -129,15 +129,15 @@ def test_remaining_collections_queue_behind_the_first(
     svc.maybe_resume()
     assert len(svc._app.started) == 1
     assert svc.chain_total == 3
-    assert sorted([*svc._app.started, *svc.chain_remaining]) == ["ALGO", "COMP", "SEC"]
+    assert sorted([*svc._app.started, *svc.chain_remaining]) == ["Home", "Reading", "Work"]
 
 
 def test_state_for_a_deleted_collection_is_cleaned_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = _cfg(["COMP"])
-    ghost = tmp_path / "OldCourse.state.toml"
-    save_state(ghost, _state("OldCourse", done=2, total=40))
+    cfg = _cfg(["Reading"])
+    ghost = tmp_path / "OldProject.state.toml"
+    save_state(ghost, _state("OldProject", done=2, total=40))
     monkeypatch.setattr("fnd.index_runner.state_dir", lambda: tmp_path)
     monkeypatch.setattr("fnd.config.load", lambda *_a, **_k: cfg)
 
@@ -148,9 +148,9 @@ def test_state_for_a_deleted_collection_is_cleaned_up(
 
 
 def test_completed_state_is_cleaned_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = _cfg(["COMP"])
-    finished = tmp_path / "COMP.state.toml"
-    save_state(finished, _state("COMP", done=97, total=97))
+    cfg = _cfg(["Reading"])
+    finished = tmp_path / "Reading.state.toml"
+    save_state(finished, _state("Reading", done=97, total=97))
     monkeypatch.setattr("fnd.index_runner.state_dir", lambda: tmp_path)
     monkeypatch.setattr("fnd.config.load", lambda *_a, **_k: cfg)
 
@@ -165,8 +165,8 @@ def test_opt_out_still_sweeps_but_never_starts(
 ) -> None:
     """Indexing is heavy: with auto-resume off nothing may start — but the
     dead state file is still tidied."""
-    cfg = _cfg(["COMP"], auto_resume=False)
-    save_state(tmp_path / "COMP.state.toml", _state("COMP", done=3, total=97))
+    cfg = _cfg(["Reading"], auto_resume=False)
+    save_state(tmp_path / "Reading.state.toml", _state("Reading", done=3, total=97))
     ghost = tmp_path / "Gone.state.toml"
     save_state(ghost, _state("Gone", done=1, total=5))
     monkeypatch.setattr("fnd.index_runner.state_dir", lambda: tmp_path)
@@ -176,4 +176,4 @@ def test_opt_out_still_sweeps_but_never_starts(
     svc.maybe_resume()
     assert svc._app.started == []
     assert not ghost.exists()
-    assert (tmp_path / "COMP.state.toml").exists(), "a resumable state must survive"
+    assert (tmp_path / "Reading.state.toml").exists(), "a resumable state must survive"

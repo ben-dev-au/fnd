@@ -85,6 +85,23 @@ commit message. Architecture rationale lives in the module docstring once, and
 functions point at it rather than restating it. Function docstrings and tests
 get one line stating the contract.
 
+**Examples and test data follow one made-up person.** They are a software
+developer who keeps everything in fnd, so a reader can picture the same use
+for their own files:
+
+- Collections: `work` (meeting notes, plans), `reading` (books and articles),
+  `learning` (course notes, talk slides), `home` (recipes, trips, bills), and
+  `Book Club` where a name needs a space.
+- Frontmatter: `Project` (`Website`, `Mobile App`, `Garden`), `Type`
+  (`Meeting`, `Idea`, `Reading List`), `Status`, `Year`, `tags`.
+- Search words a non-developer would type: `invoice`, `holiday budget`,
+  `"follow up email"`.
+
+A test builds its own corpus in `tmp_path` from these. Nothing comes from a
+real collection, file, tag or note. A test that guards against leaking
+someone's setup checks the shape (the starter config's paths start at `~`,
+and its only collection is `default`), never a list of real names.
+
 ## Writing tests against the TUI
 
 Almost every flaky test here was one mistake: treating a number of event-loop

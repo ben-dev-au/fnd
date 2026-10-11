@@ -3156,8 +3156,8 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
             label="Extra frontmatter tag keys",
             description=(
                 "Frontmatter fields to treat as tags beyond tags:, "
-                "comma-separated, e.g. Course, Notes_Type, Topic. Values are "
-                "grouped under the key in the Tags pane (course/algebra), so "
+                "comma-separated, e.g. Project, Type, Topic. Values are "
+                "grouped under the key in the Tags pane (project/kitchen), so "
                 "they never collide with a plain tag. Matched "
                 "case-insensitively. Changing them leaves collections with "
                 "outdated tags, shown with ↻ on their rows: tags are read when a "
@@ -3165,10 +3165,10 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
             ),
             kind=KIND_SCALAR,
             setting_path="defaults.tag_frontmatter_keys",
-            hint="Course, Notes_Type, Topic",
+            hint="Project, Type, Topic",
             coerce=_coerce_str_list,
             value_getter=_get_str_list_default("tag_frontmatter_keys"),
-            keywords=("tag", "tags", "frontmatter", "key", "course", "custom"),
+            keywords=("tag", "tags", "frontmatter", "key", "project", "custom"),
         ),
         header("What a search returns", level=2),
         MenuItem(

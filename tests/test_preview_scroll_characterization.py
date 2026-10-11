@@ -198,7 +198,7 @@ async def test_section_to_section_navigation_scrolls_each_match(
 
 
 def _coldnav_file(label: str) -> str:
-    """A multi-chunk structural md shaped after a real course note: an
+    """A multi-chunk structural md shaped after a long project note: an
     early-middle section whose match is a prose line a few rows below its
     heading, preceded by varied content (tables, code) so chunk heights are
     non-trivial. The query term ``quartzfin`` is UNIQUE to that prose line and

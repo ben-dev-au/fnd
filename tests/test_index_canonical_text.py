@@ -202,8 +202,8 @@ def test_a_deep_link_line_counts_lines_as_an_editor_does(tmp_path: Path, sep: st
 def test_a_filter_literal_meets_a_value_spelt_the_other_way(literal: str, value: str) -> None:
     from fnd.filter_dsl import compile_filter
 
-    assert compile_filter(f"Course == '{literal}'")({"Course": value})
-    assert compile_filter(f"Course in ['{literal}']")({"Course": value})
+    assert compile_filter(f"Project == '{literal}'")({"Project": value})
+    assert compile_filter(f"Project in ['{literal}']")({"Project": value})
 
 
 @pytest.mark.parametrize("raw", [f"x\nThe {NFD} line\n".encode(), b"x\nThe caf\xe9 line\n"])
@@ -220,9 +220,9 @@ def test_frontmatter_is_read_from_the_head_alone(tmp_path: Path) -> None:
     from fnd.frontmatter import read_frontmatter_from_file
 
     doc = tmp_path / "a.md"
-    head = f"---\nCourse: {NFC}\n---\n".encode()
+    head = f"---\nProject: {NFC}\n---\n".encode()
     doc.write_bytes(head + b"body line\n" * 20_000 + b"\xff\n" * 50)
-    assert read_frontmatter_from_file(doc) == {"Course": NFC}
+    assert read_frontmatter_from_file(doc) == {"Project": NFC}
 
 
 def test_a_name_that_is_not_utf8_keeps_the_failure_log(

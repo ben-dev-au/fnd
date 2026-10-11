@@ -68,17 +68,17 @@ class TestOrCaptureRegression:
 
 class TestScope:
     def test_frontmatter_rule_skips_a_file_without_one(self, tmp_path: Path) -> None:
-        """Strict-null would fail ``Course`` on a PDF, and on a plain .txt."""
-        rule = rule_from_text("Course == 'DevOps'", needs_frontmatter=True)
+        """Strict-null would fail ``Project`` on a PDF, and on a plain .txt."""
+        rule = rule_from_text("Project == 'Website'", needs_frontmatter=True)
         assert rule.passes(_facts(tmp_path, "paper.pdf")) is True
         assert rule.passes(_facts(tmp_path, "plain.txt", "just text")) is True
 
     def test_frontmatter_rule_judges_a_file_that_has_one(self, tmp_path: Path) -> None:
         """Whatever its extension: frontmatter is not Markdown-only."""
-        rule = rule_from_text("Course == 'DevOps'", needs_frontmatter=True)
-        yes = _facts(tmp_path, "n.md", "---\nCourse: DevOps\n---\n")
-        no = _facts(tmp_path, "o.md", "---\nCourse: Other\n---\n")
-        txt = _facts(tmp_path, "n.txt", "---\nCourse: DevOps\n---\n")
+        rule = rule_from_text("Project == 'Website'", needs_frontmatter=True)
+        yes = _facts(tmp_path, "n.md", "---\nProject: Website\n---\n")
+        no = _facts(tmp_path, "o.md", "---\nProject: Other\n---\n")
+        txt = _facts(tmp_path, "n.txt", "---\nProject: Website\n---\n")
         assert rule.passes(yes) is True
         assert rule.passes(no) is False
         assert rule.passes(txt) is True
@@ -86,9 +86,9 @@ class TestScope:
     def test_a_rule_naming_frontmatter_scopes_itself(self, tmp_path: Path) -> None:
         """A rule naming a frontmatter key is answerable only by a file that
         can carry one. Judging everything, a mixed rule like
-        `Course == 'X' OR file.size < 10` drops every PDF: the frontmatter half
+        `Project == 'X' OR file.size < 10` drops every PDF: the frontmatter half
         strict-nulls and takes the whole clause with it."""
-        rule = rule_from_text("Course == 'DevOps'")
+        rule = rule_from_text("Project == 'Website'")
         assert rule.passes(_facts(tmp_path, "paper.pdf")) is True
 
     def test_a_rule_naming_only_file_facts_still_applies_everywhere(self, tmp_path: Path) -> None:

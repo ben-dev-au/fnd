@@ -350,7 +350,7 @@ class ScopeController:
 
         ``all`` (any case) is the pseudo-name for every configured
         collection. Otherwise the shared vocabulary canonicalises the value
-        (so ``algo2`` reaches the index as ``ALGO2``) and unknown names are
+        (so ``work2`` reaches the index as ``Work2``) and unknown names are
         dropped — the CLI has already offered the user a correction by the
         time a value gets here. With no config loaded, the raw value is
         trusted.
@@ -1235,10 +1235,10 @@ class ScopeController:
         """Render one level of the tag tree.
 
         ``namespaces`` are values that came from a configured frontmatter KEY
-        (``Course``, ``Notes_Type``) rather than a tag the user wrote. They
+        (``Project``, ``Type``) rather than a tag the user wrote. They
         name a field, not a tag, so they render as plain headers: no marker,
-        not selectable. Nested tag parents like ``project`` in
-        ``project/alpha`` stay selectable — that one IS a real tag.
+        not selectable. Nested tag parents like ``trip`` in
+        ``trip/lisbon`` stay selectable: that one IS a real tag.
         """
         for node in nodes:
             is_namespace = depth == 0 and node.value in namespaces
@@ -1281,7 +1281,7 @@ class ScopeController:
         """Normalised tag values that are really frontmatter FIELD names.
 
         Mirrors the namespacing fnd.tags applies at index time, so the pane
-        can tell ``course`` (a field) from ``project`` (a genuine tag).
+        can tell ``project`` (a field) from ``urgent`` (a genuine tag).
         """
         cfg = self._app._config
         if cfg is None:

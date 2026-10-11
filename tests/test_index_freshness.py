@@ -54,7 +54,7 @@ def test_an_index_filter_needs_an_update(tmp_path: Path) -> None:
 def test_an_extra_tag_key_needs_a_rebuild(tmp_path: Path) -> None:
     """Tags are read when a file is indexed, and an Update skips unchanged files."""
     cfg = _config(tmp_path)
-    verdict = compare(_now(cfg, tag_frontmatter_keys=["Course"]), _now(cfg))
+    verdict = compare(_now(cfg, tag_frontmatter_keys=["Project"]), _now(cfg))
     assert verdict.state is State.NEEDS_REBUILD
     assert verdict.reasons == ("Extra frontmatter tag keys",)
 
@@ -62,8 +62,8 @@ def test_an_extra_tag_key_needs_a_rebuild(tmp_path: Path) -> None:
 def test_a_tag_key_differing_only_in_case_is_no_change(tmp_path: Path) -> None:
     """Keys match case-insensitively, so case alone changes nothing indexed."""
     cfg = _config(tmp_path)
-    before = _now(cfg, tag_frontmatter_keys=["course"])
-    assert compare(_now(cfg, tag_frontmatter_keys=["Course"]), before).state is State.CURRENT
+    before = _now(cfg, tag_frontmatter_keys=["project"])
+    assert compare(_now(cfg, tag_frontmatter_keys=["Project"]), before).state is State.CURRENT
 
 
 def test_a_tag_source_turned_on_needs_a_rebuild(tmp_path: Path) -> None:

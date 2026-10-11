@@ -111,7 +111,7 @@ def test_a_bare_file_of_any_such_kind_fails_a_frontmatter_rule(tmp_path: Path, s
     """The bug itself, over every extension it could hide behind."""
     path = tmp_path / f"bare{suffix}"
     path.write_text("no block here\n", encoding="utf-8")
-    rule = dimension("frontmatter").rule("Course == 'Unstructured Data'")
+    rule = dimension("frontmatter").rule("Project == 'Newsletter'")
 
     assert rule is not None
     assert not rule.passes(FileFacts(path, root=tmp_path)), suffix
@@ -119,9 +119,9 @@ def test_a_bare_file_of_any_such_kind_fails_a_frontmatter_rule(tmp_path: Path, s
 
 def test_and_a_pdf_is_still_not_judged(tmp_path: Path) -> None:
     """The control this whole scope exists to protect."""
-    path = tmp_path / "lecture.pdf"
+    path = tmp_path / "talk.pdf"
     path.write_bytes(b"%PDF-1.4\n")
-    rule = dimension("frontmatter").rule("Course == 'Unstructured Data'")
+    rule = dimension("frontmatter").rule("Project == 'Newsletter'")
 
     assert rule is not None
     assert rule.passes(FileFacts(path, root=tmp_path))

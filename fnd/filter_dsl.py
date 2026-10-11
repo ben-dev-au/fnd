@@ -234,7 +234,7 @@ def _consume_in_after_not(text: str, pos: int) -> int:
 
 @dataclass(slots=True, frozen=True)
 class Compare:
-    """A field-vs-value comparison: ``Course == 'DevOps'``."""
+    """A field-vs-value comparison: ``Project == 'Website'``."""
 
     field: str
     op: str  # one of ==, !=, <, >, <=, >=, ~~
@@ -243,7 +243,7 @@ class Compare:
 
 @dataclass(slots=True, frozen=True)
 class In:
-    """Membership test: ``'course' in tags``. ``negated=True`` for ``not in``."""
+    """Membership test: ``'project' in tags``. ``negated=True`` for ``not in``."""
 
     value: object
     field: str

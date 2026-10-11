@@ -324,11 +324,11 @@ class TestCollectionAddWritesTheCurrentShape:
 
         src = tmp_path / "src"
         src.mkdir()
-        (src / "a.md").write_text("---\nCourse: X\n---\nhi\n")
-        _run(tmp_path, "collection", "add", "n", "--source", str(src), "--filter", "Course == 'X'")
+        (src / "a.md").write_text("---\nProject: X\n---\nhi\n")
+        _run(tmp_path, "collection", "add", "n", "--source", str(src), "--filter", "Project == 'X'")
         raw = tomllib.loads((tmp_path / "d" / "fnd" / "config.toml").read_text(encoding="utf-8"))
         source = raw["collections"]["n"]["sources"][0]
-        assert source["filters"]["frontmatter"] == "Course == 'X'"
+        assert source["filters"]["frontmatter"] == "Project == 'X'"
         assert "frontmatter_filter" not in source, "a new write must not use the deprecated key"
 
     def test_a_missing_path_is_called_out(self, tmp_path: Path) -> None:

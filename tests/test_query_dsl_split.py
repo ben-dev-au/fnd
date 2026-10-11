@@ -12,21 +12,21 @@ def test_no_brackets_returns_query_unchanged() -> None:
 
 
 def test_brackets_at_start() -> None:
-    q, m = split_metadata_filter("[Course == 'DevOps'] strategy pattern")
+    q, m = split_metadata_filter("[Project == 'Website'] strategy pattern")
     assert q == "strategy pattern"
-    assert m == "Course == 'DevOps'"
+    assert m == "Project == 'Website'"
 
 
 def test_brackets_at_end() -> None:
-    q, m = split_metadata_filter("strategy pattern [Course == 'DevOps']")
+    q, m = split_metadata_filter("strategy pattern [Project == 'Website']")
     assert q == "strategy pattern"
-    assert m == "Course == 'DevOps'"
+    assert m == "Project == 'Website'"
 
 
 def test_brackets_in_middle() -> None:
-    q, m = split_metadata_filter("foo [Course == 'DevOps'] bar")
+    q, m = split_metadata_filter("foo [Project == 'Website'] bar")
     assert q == "foo bar"
-    assert m == "Course == 'DevOps'"
+    assert m == "Project == 'Website'"
 
 
 def test_brackets_inside_quoted_phrase_left_alone() -> None:
@@ -83,15 +83,15 @@ def test_field_range_left_in_lexical(q: str) -> None:
 
 
 def test_field_range_and_metadata_filter_coexist() -> None:
-    lex, meta = split_metadata_filter('page:[1 TO 9] [Course == "X"]')
+    lex, meta = split_metadata_filter('page:[1 TO 9] [Project == "X"]')
     assert lex == "page:[1 TO 9]"
-    assert meta == 'Course == "X"'
+    assert meta == 'Project == "X"'
 
 
 # ── Nested brackets inside a filter (in [...] lists) ─────────────────────
 
 
 def test_nested_in_list_filter() -> None:
-    lex, meta = split_metadata_filter('[Notes_Type in ["Lecture", "Tutorial"]]')
+    lex, meta = split_metadata_filter('[Type in ["Meeting", "Idea"]]')
     assert lex == ""
-    assert meta == 'Notes_Type in ["Lecture", "Tutorial"]'
+    assert meta == 'Type in ["Meeting", "Idea"]'

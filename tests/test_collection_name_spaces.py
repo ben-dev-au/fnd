@@ -1,7 +1,7 @@
 """Round-trip tests for collection names that contain spaces and other
 non-bare TOML characters. Covers the relaxation that landed alongside
 the collection-reindex freeze fix: validate_collection_name now allows display
-strings like 'Compiler Theory Books' as long as they're safe for TOML keys,
+strings like 'Book Club' as long as they're safe for TOML keys,
 the per-collection state file path, and the c:"…" DSL shorthand.
 """
 
@@ -28,7 +28,7 @@ def test_spaced_name_round_trips_through_toml(
     # The writer auto-discovers ~/Library/Application Support/fnd via
     # default_config_path, so steer it at tmp_path with an explicit arg.
     cfg = tmp_path / "config.toml"
-    name = "Compiler Theory Books"
+    name = "Book Club"
     src = SourceConfig(path=tmp_path, includes=["**/*.md"])
     write_collection_source(config_path=cfg, collection_name=name, source=src)
 
@@ -69,12 +69,12 @@ def test_state_file_path_handles_spaced_name() -> None:
     to the filename. macOS / Linux accept spaces in filenames; the only
     risk would be path-component injection (``/``), which the validator
     blocks."""
-    p = state_file_for("Compiler Theory Books")
-    assert p.name == "Compiler Theory Books.state.toml"
+    p = state_file_for("Book Club")
+    assert p.name == "Book Club.state.toml"
 
 
 def test_spaced_name_validates_and_dsl_round_trips() -> None:
-    name = "Compiler Theory Books"
+    name = "Book Club"
     validate_collection_name(name)  # would raise if not accepted
     out = preprocess(f'c:"{name}" tdd')
     assert out == f'collection:"{name}" tdd'

@@ -20,26 +20,26 @@ def test_new_sources_shape_loads(tmp_path: Path) -> None:
     p = _write_config(
         tmp_path / "c.toml",
         """
-        [[collections.coursework.sources]]
+        [[collections.learning.sources]]
         path     = "~/Notes"
         includes = ["**/*.md"]
         excludes = ["**/.trash/**"]
-        frontmatter_filter = "Course == 'DevOps'"
+        frontmatter_filter = "Project == 'Website'"
 
-        [[collections.coursework.sources]]
-        path     = "~/Course/DevOps"
+        [[collections.learning.sources]]
+        path     = "~/Projects/Website"
         includes = ["**/*.pdf"]
     """,
     )
     cfg = load(p)
-    coursework = cfg.collection("coursework")
-    assert len(coursework.sources) == 2
-    assert isinstance(coursework.sources[0], SourceConfig)
-    assert coursework.sources[0].includes == ["**/*.md"]
-    assert coursework.sources[0].frontmatter_filter == "Course == 'DevOps'"
-    assert coursework.sources[1].filters is not None
-    assert coursework.sources[1].filters.kinds == ["pdf"]
-    assert coursework.sources[1].frontmatter_filter is None
+    learning = cfg.collection("learning")
+    assert len(learning.sources) == 2
+    assert isinstance(learning.sources[0], SourceConfig)
+    assert learning.sources[0].includes == ["**/*.md"]
+    assert learning.sources[0].frontmatter_filter == "Project == 'Website'"
+    assert learning.sources[1].filters is not None
+    assert learning.sources[1].filters.kinds == ["pdf"]
+    assert learning.sources[1].frontmatter_filter is None
 
 
 def test_legacy_flat_shape_normalised_to_one_source(tmp_path: Path) -> None:
@@ -85,7 +85,7 @@ def test_invalid_filter_dsl_raises_at_load(tmp_path: Path) -> None:
         """
         [[collections.x.sources]]
         path = "~/x"
-        frontmatter_filter = "Course =="
+        frontmatter_filter = "Project =="
     """,
     )
     with pytest.raises(ValidationError) as exc:

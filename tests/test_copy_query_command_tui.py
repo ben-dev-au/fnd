@@ -32,8 +32,8 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
             [defaults]
             tag_sources = ["frontmatter"]
 
-            [[collections.cellar.sources]]
-            path = "/tmp/cellar"
+            [[collections.home.sources]]
+            path = "/tmp/home"
         """),
         encoding="utf-8",
     )
@@ -42,15 +42,15 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 
 
 @pytest.fixture
-def cellar_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    root = tmp_path / "cellar"
-    _write(root / "Cabernet.md", "# Cabernet\n\nCabernet aging notes.\n")
-    build_index(roots=[root], index_dir=tmp_index_dir, collection="cellar")
+def home_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    root = tmp_path / "home"
+    _write(root / "Risotto.md", "# Risotto\n\nRisotto recipe notes.\n")
+    build_index(roots=[root], index_dir=tmp_index_dir, collection="home")
     return tmp_index_dir
 
 
 @pytest.mark.asyncio
-async def test_launch_filters_seed_scope(cfg: Config, cellar_index: Path) -> None:
+async def test_launch_filters_seed_scope(cfg: Config, home_index: Path) -> None:
     """`fnd tui`'s filter flags populate the live scope on startup."""
     launch = LaunchScope(
         created="week",
@@ -60,11 +60,11 @@ async def test_launch_filters_seed_scope(cfg: Config, cellar_index: Path) -> Non
         not_tags=("draft",),
         tag_match_all=False,
     )
-    app = FNDApp(index_dir=cellar_index, config=cfg, collection="cellar", launch_filters=launch)
+    app = FNDApp(index_dir=home_index, config=cfg, collection="home", launch_filters=launch)
     async with app.run_test() as pilot:
         await pilot.pause()
         s = app._scope
-        assert s.collections == ["cellar"]
+        assert s.collections == ["home"]
         assert s.filter_created == "week"
         assert s.filter_date == "month"
         assert s.filter_kinds == ["pdf"]
@@ -74,7 +74,7 @@ async def test_launch_filters_seed_scope(cfg: Config, cellar_index: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_seed_then_snapshot_round_trips(cfg: Config, cellar_index: Path) -> None:
+async def test_seed_then_snapshot_round_trips(cfg: Config, home_index: Path) -> None:
     """Hydrate ← serialize are inverses: seed a scope from a LaunchScope,
     snapshot it, and recover the same LaunchScope."""
     launch = LaunchScope(
@@ -85,7 +85,7 @@ async def test_seed_then_snapshot_round_trips(cfg: Config, cellar_index: Path) -
         not_tags=("draft",),
         tag_match_all=False,
     )
-    app = FNDApp(index_dir=cellar_index, config=cfg, collection="cellar", launch_filters=launch)
+    app = FNDApp(index_dir=home_index, config=cfg, collection="home", launch_filters=launch)
     async with app.run_test() as pilot:
         await pilot.pause()
         snap = app._scope.snapshot("q")
@@ -102,54 +102,54 @@ async def test_seed_then_snapshot_round_trips(cfg: Config, cellar_index: Path) -
 
 @pytest.mark.asyncio
 async def test_action_copies_expected_command(
-    cfg: Config, cellar_index: Path, monkeypatch: pytest.MonkeyPatch
+    cfg: Config, home_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: list[str] = []
     monkeypatch.setattr("fnd.tui.clipboard.copy_text", lambda text: captured.append(text))
     app = FNDApp(
-        index_dir=cellar_index,
+        index_dir=home_index,
         config=cfg,
-        collection="cellar",
-        initial_query="cabernet aging",
+        collection="home",
+        initial_query="risotto recipe",
         launch_filters=LaunchScope(created="week", kinds=("pdf",)),
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._search.current_query == "cabernet aging"
+        assert app._search.current_query == "risotto recipe"
         app.action_copy_query_command()
         await pilot.pause()
-        expected = "fnd 'cabernet aging' -c cellar --created week --kind pdf"
+        expected = "fnd 'risotto recipe' -c home --created week --kind pdf"
         assert captured == [expected]
         # The action and the serializer agree on the live snapshot.
         assert (
             expected
-            == LaunchCommandSerializer(app._scope.snapshot("cabernet aging")).serialize().command
+            == LaunchCommandSerializer(app._scope.snapshot("risotto recipe")).serialize().command
         )
 
 
 @pytest.mark.asyncio
 async def test_ctrl_y_fires_from_query_bar(
-    cfg: Config, cellar_index: Path, monkeypatch: pytest.MonkeyPatch
+    cfg: Config, home_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: list[str] = []
     monkeypatch.setattr("fnd.tui.clipboard.copy_text", lambda text: captured.append(text))
-    app = FNDApp(index_dir=cellar_index, config=cfg, collection="cellar", initial_query="cabernet")
+    app = FNDApp(index_dir=home_index, config=cfg, collection="home", initial_query="risotto")
     async with app.run_test() as pilot:
         await pilot.pause()
         app.query_one("#query_bar", Input).focus()
         await pilot.pause()
         await pilot.press("ctrl+y")
         await pilot.pause()
-        assert captured == ["fnd cabernet -c cellar"]
+        assert captured == ["fnd risotto -c home"]
 
 
 @pytest.mark.asyncio
 async def test_nothing_to_copy_skips_clipboard(
-    cfg: Config, cellar_index: Path, monkeypatch: pytest.MonkeyPatch, saved_empty_scope: Path
+    cfg: Config, home_index: Path, monkeypatch: pytest.MonkeyPatch, saved_empty_scope: Path
 ) -> None:
     calls: list[str] = []
     monkeypatch.setattr("fnd.tui.clipboard.copy_text", lambda text: calls.append(text))
-    app = FNDApp(index_dir=cellar_index, config=cfg)  # no scope, no query, no filters
+    app = FNDApp(index_dir=home_index, config=cfg)  # no scope, no query, no filters
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_copy_query_command()
@@ -158,11 +158,11 @@ async def test_nothing_to_copy_skips_clipboard(
 
 
 @pytest.mark.asyncio
-async def test_tag_fanned_across_sources_counts_once(cfg: Config, cellar_index: Path) -> None:
+async def test_tag_fanned_across_sources_counts_once(cfg: Config, home_index: Path) -> None:
     """A source-agnostic `--tag` seeds into every source, but the search treats
     it as one OR-ed term — the active-filter count must not double it. Reopening
-    `fnd Tree -c ALGO --tag strategy-pattern` used to report 2 tags active."""
-    app = FNDApp(index_dir=cellar_index, config=cfg, collection="cellar")
+    `fnd Tree -c Work --tag strategy-pattern` used to report 2 tags active."""
+    app = FNDApp(index_dir=home_index, config=cfg, collection="home")
     async with app.run_test() as pilot:
         await pilot.pause()
         s = app._scope

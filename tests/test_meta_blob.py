@@ -14,7 +14,7 @@ def test_empty_dict_roundtrip() -> None:
 
 
 def test_string_int_float_roundtrip() -> None:
-    fm = {"Course": "DevOps", "priority": 3, "weight": 1.5}
+    fm = {"Project": "Website", "priority": 3, "weight": 1.5}
     assert decode(encode(fm)) == fm
 
 
@@ -28,7 +28,7 @@ def test_bool_and_none_roundtrip() -> None:
 
 
 def test_list_roundtrip() -> None:
-    fm = {"tags": ["course", "active"], "vals": [1, 2.5, True, None]}
+    fm = {"tags": ["project", "active"], "vals": [1, 2.5, True, None]}
     assert decode(encode(fm)) == fm
 
 

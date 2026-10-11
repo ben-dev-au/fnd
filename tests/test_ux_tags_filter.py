@@ -376,7 +376,7 @@ def cfg_with_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg_path.write_text(
         textwrap.dedent("""
             [defaults]
-            tag_frontmatter_keys = ["Course"]
+            tag_frontmatter_keys = ["Project"]
 
             [[collections.papers.sources]]
             path = "/tmp/papers"
@@ -392,14 +392,14 @@ def keyed_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     root = tmp_path / "papers"
     root.mkdir(parents=True, exist_ok=True)
     (root / "a.md").write_text(
-        "---\ntags: [project/alpha, solo]\nCourse: Algebra\n---\n\n# A\n\nsaffron\n",
+        "---\ntags: [trip/lisbon, solo]\nProject: Kitchen\n---\n\n# A\n\nsaffron\n",
         encoding="utf-8",
     )
     build_index(
         roots=[root],
         index_dir=tmp_index_dir,
         collection="papers",
-        tag_frontmatter_keys=["Course"],
+        tag_frontmatter_keys=["Project"],
     )
     return tmp_index_dir
 
@@ -408,7 +408,7 @@ def keyed_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_frontmatter_key_namespace_is_not_selectable(
     cfg_with_keys: Config, keyed_index: Path
 ) -> None:
-    """`course` names a field, not a tag — pressing Enter must do nothing."""
+    """`project` names a field, not a tag; pressing Enter must do nothing."""
     app = FNDApp(index_dir=keyed_index, config=cfg_with_keys)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -419,27 +419,27 @@ async def test_frontmatter_key_namespace_is_not_selectable(
         fm.expand()
         await pilot.pause()
 
-        course = _descend(fm, "course")
-        assert "○" not in str(course.label), "field header must carry no toggle marker"
-        tree.select_node(course)
+        field = _descend(fm, "project")
+        assert "○" not in str(field.label), "field header must carry no toggle marker"
+        tree.select_node(field)
         await pilot.pause()
         assert app._scope.tag_include == {}
         assert app._scope.tag_exclude == {}
 
         # Its child is a real, selectable tag.
-        course.expand()
+        field.expand()
         await pilot.pause()
-        algebra = _descend(course, "algebra")
-        tree.select_node(algebra)
+        kitchen = _descend(field, "kitchen")
+        tree.select_node(kitchen)
         await pilot.pause()
-        assert "course/algebra" in app._scope.tag_include.get("frontmatter", set())
+        assert "project/kitchen" in app._scope.tag_include.get("frontmatter", set())
 
 
 @pytest.mark.asyncio
 async def test_real_nested_tag_parent_stays_selectable(
     cfg_with_keys: Config, keyed_index: Path
 ) -> None:
-    """`project` in `project/alpha` IS a tag the user wrote, unlike `course`."""
+    """`trip` in `trip/lisbon` IS a tag the user wrote, unlike `project`."""
     app = FNDApp(index_dir=keyed_index, config=cfg_with_keys)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -449,11 +449,11 @@ async def test_real_nested_tag_parent_stays_selectable(
         fm = _descend(tags, "Frontmatter")
         fm.expand()
         await pilot.pause()
-        project = _descend(fm, "project")
-        assert "○" in str(project.label)
-        tree.select_node(project)
+        trip = _descend(fm, "trip")
+        assert "○" in str(trip.label)
+        tree.select_node(trip)
         await pilot.pause()
-        assert "project" in app._scope.tag_include.get("frontmatter", set())
+        assert "trip" in app._scope.tag_include.get("frontmatter", set())
 
 
 @pytest.mark.asyncio

@@ -62,10 +62,10 @@ def test_current_line_shows_the_ordinary_file_when_nothing_is_being_fetched() ->
     from fnd.tui.indexer_modal import _format_current_line
 
     out = _format_current_line(
-        wait=None, current_path="/a/b/Week 7 Notes.md", stuck_suffix=""
+        wait=None, current_path="/a/b/Team Meeting.md", stuck_suffix=""
     ).plain
     assert "Current:" in out
-    assert "Week 7 Notes.md" in out
+    assert "Team Meeting.md" in out
     assert "Fetching" not in out
 
 
@@ -78,7 +78,7 @@ def test_current_line_names_the_provider_and_wait_while_fetching() -> None:
     from fnd.tui.indexer_modal import _format_current_line
 
     wait = FetchWait(
-        path="/a/b/Week 7 Notes.md",
+        path="/a/b/Team Meeting.md",
         provider="iCloud Drive",
         started_monotonic=time.monotonic() - 9.0,
     )
@@ -86,7 +86,7 @@ def test_current_line_names_the_provider_and_wait_while_fetching() -> None:
         wait=wait, current_path="/a/b/other.md", stuck_suffix="   · stuck 3s"
     ).plain
     assert "Fetching from iCloud Drive" in out
-    assert "Week 7 Notes.md" in out
+    assert "Team Meeting.md" in out
     assert "waiting 9s" in out
     # The fetch owns the line — the unrelated per-page stall tag would be
     # misleading while the extractor hasn't even been handed the file.

@@ -41,25 +41,25 @@ class TestLaziness:
         assert reader.calls == 0
 
     def test_frontmatter_key_reads_once(self, tmp_path: Path) -> None:
-        reader = _CountingReader({"Course": "DevOps"})
+        reader = _CountingReader({"Project": "Website"})
         facts = _facts(tmp_path, read_frontmatter=reader)
-        assert facts["Course"] == "DevOps"
-        assert facts["Course"] == "DevOps"
+        assert facts["Project"] == "Website"
+        assert facts["Project"] == "Website"
         assert reader.calls == 1
 
     def test_contains_then_getitem_reads_once(self, tmp_path: Path) -> None:
         """``Mapping.__contains__`` falls through to ``__getitem__``; the
         evaluator does both for every field, so the cache is load-bearing."""
-        reader = _CountingReader({"Course": "DevOps"})
+        reader = _CountingReader({"Project": "Website"})
         facts = _facts(tmp_path, read_frontmatter=reader)
-        assert "Course" in facts
-        assert facts["Course"] == "DevOps"
+        assert "Project" in facts
+        assert facts["Project"] == "Website"
         assert reader.calls == 1
 
     def test_predicate_short_circuits_before_the_expensive_fact(self, tmp_path: Path) -> None:
-        reader = _CountingReader({"Course": "DevOps"})
+        reader = _CountingReader({"Project": "Website"})
         facts = _facts(tmp_path, name="a.txt", read_frontmatter=reader)
-        assert compile_filter("file.ext == '.md' AND Course == 'DevOps'")(facts) is False
+        assert compile_filter("file.ext == '.md' AND Project == 'Website'")(facts) is False
         assert reader.calls == 0
 
 
@@ -74,8 +74,8 @@ class TestTotalGetitem:
 
         facts = _facts(tmp_path, read_frontmatter=boom)
         with pytest.raises(KeyError):
-            _ = facts["Course"]
-        assert compile_filter("Course == 'x'")(facts) is False
+            _ = facts["Project"]
+        assert compile_filter("Project == 'x'")(facts) is False
 
     def test_unreadable_file_yields_unknown_size(self, tmp_path: Path) -> None:
         facts = FileFacts(tmp_path / "gone.md", root=tmp_path)
@@ -94,7 +94,7 @@ class TestTotalGetitem:
         facts = _facts(tmp_path)
         assert facts.is_unknown("file.created") is True
         assert facts.is_unknown("file.modified") is False
-        assert facts.is_unknown("Course") is False  # absent, not unknown
+        assert facts.is_unknown("Project") is False  # absent, not unknown
 
 
 class TestFactValues:
@@ -148,8 +148,8 @@ class TestFactValues:
 
 class TestMappingContract:
     def test_iter_and_len_include_both_namespaces(self, tmp_path: Path) -> None:
-        facts = _facts(tmp_path, read_frontmatter=_CountingReader({"Course": "DevOps"}))
+        facts = _facts(tmp_path, read_frontmatter=_CountingReader({"Project": "Website"}))
         keys = set(facts)
         assert RESERVED_FACTS <= keys
-        assert "Course" in keys
+        assert "Project" in keys
         assert len(facts) == len(RESERVED_FACTS) + 1

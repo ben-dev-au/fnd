@@ -193,7 +193,7 @@ def test_every_field_answers_setting_error() -> None:
     """A field with no Field() constraints crashed the edit bar."""
     from fnd.config_types import setting_error
 
-    assert setting_error(("defaults", "tag_frontmatter_keys"), ["Course"]) == ""
+    assert setting_error(("defaults", "tag_frontmatter_keys"), ["Project"]) == ""
     assert setting_error(("defaults", "fuzzy_enabled"), True) == ""
     assert setting_error(("defaults", "result_limit"), 5000) == "outside 1-1000"
 
@@ -229,7 +229,7 @@ def test_the_startup_rewrite_names_a_composed_collection(tmp_path: Path) -> None
     assert list(load(cfg_path).collections) == ["caf\N{LATIN SMALL LETTER E WITH ACUTE}"]
 
 
-@pytest.mark.parametrize("name", ["all", "Compiler Theory Books", "x" * 80, "Études"])
+@pytest.mark.parametrize("name", ["all", "Book Club", "x" * 80, "Études"])
 def test_a_legacy_name_that_breaks_nothing_still_loads(name: str) -> None:
     """Style rules stay write-side, so an older hand-written config keeps loading."""
     cfg = Config.model_validate({"collections": {name: {"sources": [{"path": "/tmp"}]}}})
@@ -248,28 +248,30 @@ def test_a_tag_that_normalises_to_nothing_is_dropped() -> None:
     cfg = Config.model_validate(
         {
             "defaults": {
-                "tag_frontmatter_keys": ["", "Course"],
+                "tag_frontmatter_keys": ["", "Project"],
                 "filters": {"include_tags": ["#", "x"]},
             }
         }
     )
     assert cfg.defaults.filters.include_tags == ["x"]
-    assert cfg.defaults.tag_frontmatter_keys == ["Course"]
+    assert cfg.defaults.tag_frontmatter_keys == ["Project"]
 
 
-@pytest.mark.parametrize("key", [" #Course ", "COURSE", "Course"])
+@pytest.mark.parametrize("key", [" #Project ", "PROJECT", "Project"])
 def test_every_reader_folds_a_frontmatter_tag_key_one_way(key: str) -> None:
     from fnd.index_freshness import indexed_with
     from fnd.tags import FrontmatterTagProvider, TagContext
 
     typed = Config.model_validate({"defaults": {"tag_frontmatter_keys": [key]}, **_coll()})
-    plain = Config.model_validate({"defaults": {"tag_frontmatter_keys": ["course"]}, **_coll()})
+    plain = Config.model_validate({"defaults": {"tag_frontmatter_keys": ["project"]}, **_coll()})
     assert (
         indexed_with(typed.collections["notes"], typed.defaults)["extraction"]
         == indexed_with(plain.collections["notes"], plain.defaults)["extraction"]
     )
-    ctx = TagContext(path=Path("/x.md"), frontmatter={"Course": "Algebra"})
-    assert "course/algebra" in FrontmatterTagProvider(typed.defaults.tag_frontmatter_keys).read(ctx)
+    ctx = TagContext(path=Path("/x.md"), frontmatter={"Project": "Kitchen"})
+    assert "project/kitchen" in FrontmatterTagProvider(typed.defaults.tag_frontmatter_keys).read(
+        ctx
+    )
 
 
 # ── Globs (finding 32) ───────────────────────────────────────────────

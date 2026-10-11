@@ -105,11 +105,11 @@ def test_wikilink_inside_inline_code_is_left_literal() -> None:
 
 
 def test_tag_keeps_its_text_and_gains_a_style() -> None:
-    plain = "filed under #uni/web today"
+    plain = "filed under #work/website today"
     edits = collect_edits(plain, protected=set(), spec=EMPTY, list_item=False)
     out = apply_edits(Content(plain), edits)
     assert out.plain == plain
-    assert [(s.start, s.end, str(s.style)) for s in out.spans] == [(12, 20, TAG_STYLE)]
+    assert [(s.start, s.end, str(s.style)) for s in out.spans] == [(12, 25, TAG_STYLE)]
 
 
 def test_heading_marker_prefix_is_not_a_tag() -> None:

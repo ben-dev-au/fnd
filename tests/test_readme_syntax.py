@@ -15,36 +15,36 @@ from fnd.schema import F_BODY, build_schema
 # (documented input, expected DSL translation). Time-relative forms (mtime
 # tokens / ISO compares) are covered separately in test_query_dsl.
 DOCUMENTED_TRANSLATIONS = [
-    ("{5} cross entropy", '"cross entropy"~5'),
-    ("cross NEAR/5 entropy", '"cross entropy"~5'),
-    ("{20} man in the middle attack", '"man in the middle attack"~20'),
-    ("{60} buffer overflow exploit", '"buffer overflow exploit"~60'),
-    ("{500} race condition mitigations", '"race condition mitigations"~500'),
+    ("{5} project deadline", '"project deadline"~5'),
+    ("project NEAR/5 deadline", '"project deadline"~5'),
+    ("{20} cancel the gym membership", '"cancel the gym membership"~20'),
+    ("{60} lost luggage claim", '"lost luggage claim"~60'),
+    ("{500} kitchen renovation quote", '"kitchen renovation quote"~500'),
     # Worked example (README composing section): proximity stops at the qualifier.
-    ("{10} buffer overflow exploit kind:pdf", '"buffer overflow exploit"~10 kind:pdf'),
-    ("c:security attack", 'collection:"security" attack'),
-    ("c:notes,papers transformer", '(collection:"notes" OR collection:"papers") transformer'),
+    ("{10} lost luggage claim kind:pdf", '"lost luggage claim"~10 kind:pdf'),
+    ("c:work deadline", 'collection:"work" deadline'),
+    ("c:work,home budget", '(collection:"work" OR collection:"home") budget'),
     ("page:>20", f"page:[21 TO {query_dsl.FAR_FUTURE}]"),
     ("slide:<5", "slide:[1 TO 4]"),
 ]
 
 # Documented inputs Tantivy/our DSL pass through unchanged.
 DOCUMENTED_NATIVE = [
-    "entropy",
-    "cross entropy loss",
-    '"cross entropy loss"',
-    "cross OR entropy",
-    "entropy NOT regression",
-    "(loss OR cost) AND function",
-    "mitochondira~1",
-    "kubernates~2",
-    "title:transformer",
+    "invoice",
+    "holiday budget plan",
+    '"follow up email"',
+    "holiday OR vacation",
+    "budget NOT tax",
+    "(flight OR train) AND booking",
+    "recieve~1",
+    "accomodation~2",
+    "title:invoice",
     'heading_path:"chapter 4"',
-    "author:dijkstra",
+    "author:austen",
     "kind:pdf",
-    "path_tokens:thesis",
+    "path_tokens:taxes",
     "page:[10 TO 20]",
-    "crypto*",
+    "garden*",
 ]
 
 

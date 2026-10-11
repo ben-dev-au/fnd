@@ -18,25 +18,25 @@ def test_only_matching_md_files_indexed(tmp_path: Path, tmp_index_dir: Path) -> 
     notes = tmp_path / "notes"
     _touch(
         notes / "in_scope.md",
-        "---\nCourse: DevOps\n---\n# Note\npenguin sandwich\n",
+        "---\nProject: Website\n---\n# Note\npenguin sandwich\n",
     )
     _touch(
         notes / "out_of_scope.md",
-        "---\nCourse: Algorithms\n---\n# Other\npenguin sandwich\n",
+        "---\nProject: Budget\n---\n# Other\npenguin sandwich\n",
     )
     cc = CollectionConfig(
         sources=[
             SourceConfig(
                 path=notes,
                 includes=["**/*.md"],
-                frontmatter_filter="Course == 'DevOps'",
+                frontmatter_filter="Project == 'Website'",
             )
         ]
     )
-    written = build_index_from_config(config=cc, collection="coursework", index_dir=tmp_index_dir)
+    written = build_index_from_config(config=cc, collection="learning", index_dir=tmp_index_dir)
     assert written >= 1
     s = Searcher(index_dir=tmp_index_dir)
-    hits = s.search("penguin sandwich", limit=10, collection="coursework")
+    hits = s.search("penguin sandwich", limit=10, collection="learning")
     paths = {Path(h.path).name for h in hits}
     assert "in_scope.md" in paths
     assert "out_of_scope.md" not in paths

@@ -252,7 +252,7 @@ def parse(text: str) -> FilterSpec:
             tags = _merge_tags(tags, value)  # type: ignore[arg-type]
         elif name in ("frontmatter", "expression"):
             # Arbitrary text, so two recognised clauses are two conjuncts of one
-            # rule; assigning would keep only the tag half of `Course == 'X' AND
+            # rule; assigning would keep only the tag half of `Project == 'X' AND
             # NOT ('private' in tags)`, widening the source to the whole vault.
             updates[name] = _and_join(updates.get(name), value)  # type: ignore[arg-type]
         elif name in updates:

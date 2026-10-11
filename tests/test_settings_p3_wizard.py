@@ -385,11 +385,11 @@ class TestTheWizardShowsWhatWillBeIndexed:
         from fnd.config import Config, DefaultFilters, Defaults
 
         config = Config(
-            defaults=Defaults(filters=DefaultFilters(kinds=["md"], frontmatter="Course == 'A'"))
+            defaults=Defaults(filters=DefaultFilters(kinds=["md"], frontmatter="Project == 'A'"))
         )
         rows = await self._rows(config)
         assert rows["wiz.filters"] == "inherited", rows["wiz.filters"]
-        assert rows["wiz.frontmatter"] == "Course == 'A' (inherited)", rows["wiz.frontmatter"]
+        assert rows["wiz.frontmatter"] == "Project == 'A' (inherited)", rows["wiz.frontmatter"]
 
     @pytest.mark.asyncio
     async def test_without_defaults_it_still_reads_plainly(self) -> None:

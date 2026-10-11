@@ -27,7 +27,7 @@ def test_schema_accepts_meta_blob_bytes() -> None:
     build_schema()
     doc = Document()
     # Should not raise — the field is declared and accepts bytes.
-    doc.add_bytes(F_META_BLOB, b'{"Course": "DevOps"}')
+    doc.add_bytes(F_META_BLOB, b'{"Project": "Website"}')
 
 
 def test_old_index_sidecar_refuses_load(tmp_path: Path) -> None:

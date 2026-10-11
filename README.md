@@ -113,8 +113,8 @@ Reports from Linux and Windows are valuable, "it worked fine" included.
 ## Quick start
 
 ```sh
-fnd index ~/Documents/papers      # ad-hoc index a folder into the default collection
-fnd search "diffusion model"      # search from the terminal
+fnd index ~/Documents/Notes       # ad-hoc index a folder into the default collection
+fnd search "holiday budget"       # search from the terminal
 fnd                               # launch the interactive TUI
 ```
 
@@ -322,14 +322,14 @@ Press `:` to open Settings, move to **Collections**, then:
 
 ```sh
 # Create a collection with one source (repeat --source for more folders)
-fnd collection add papers --source ~/Documents/Research
+fnd collection add reading --source ~/Documents/Books
 
 # Narrow it with globs, or a markdown frontmatter filter
 fnd collection add notes --source ~/Notes --include "**/*.md" --exclude "drafts/**"
 fnd collection add notes --source ~/Vault --filter "NOT ('private' in tags)"
 
 fnd collection list             # show what's configured
-fnd collection reindex papers   # build/update the index (--rebuild to start fresh)
+fnd collection reindex reading  # build/update the index (--rebuild to start fresh)
 ```
 
 ### From the config file
@@ -544,63 +544,63 @@ markdown frontmatter filters. They compose freely.
 
 ### The basics
 
-| You type                      | What it does                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------ |
-| `entropy`                     | One term. Searches body, title, headings, and filename. Stemmed (`entropy` = `entropies`). |
-| `cross entropy loss`          | Several terms, ranked. Docs matching more terms rank higher; all-term docs reach the top.  |
-| `cross AND entropy`           | Require both terms.                                                                        |
-| `"cross entropy loss"`        | Exact phrase, in order. Also matches `cross-entropy loss`.                                 |
-| `cross OR entropy`            | Either term.                                                                               |
-| `entropy NOT regression`      | Has `entropy`, excludes `regression`.                                                      |
-| `+rust -python`               | `+` require, `-` exclude (shorthand for `AND` / `NOT`).                                    |
-| `rust -(python OR java)`      | A sign applies to a whole group: excludes both.                                            |
-| `(loss OR cost) AND function` | Group with parentheses, to any depth.                                                      |
+| You type                        | What it does                                                                              |
+| ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `invoice`                       | One term. Searches body, title, headings, and filename. Stemmed (`invoice` = `invoices`). |
+| `holiday budget plan`           | Several terms, ranked. Docs matching more terms rank higher; all-term docs reach the top. |
+| `holiday AND budget`            | Require both terms.                                                                       |
+| `"follow up email"`             | Exact phrase, in order. Also matches `follow-up email`.                                   |
+| `holiday OR vacation`           | Either term.                                                                              |
+| `budget NOT tax`                | Has `budget`, excludes `tax`.                                                             |
+| `+recipe -dessert`              | `+` require, `-` exclude (shorthand for `AND` / `NOT`).                                   |
+| `recipe -(dessert OR cake)`     | A sign applies to a whole group: excludes both.                                           |
+| `(flight OR train) AND booking` | Group with parentheses, to any depth.                                                     |
 
 ### Phrases
 
 Quoting is the biggest precision win. Quote any common phrase:
 
-| You type              | Matches                                                              |
-| --------------------- | -------------------------------------------------------------------- |
-| `man in the middle`   | The four words anywhere in a chunk. Noisy.                           |
-| `"man in the middle"` | The four words together, in order. Also matches `man-in-the-middle`. |
+| You type                 | Matches                                                                  |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `return on investment`   | The words anywhere in a chunk. Noisy.                                    |
+| `"return on investment"` | The three words together, in order. Also matches `return-on-investment`. |
 
 ### Proximity
 
 Find terms near each other, in any order. `{N}` and `NEAR/N` are equivalent:
 
-| You type                           | Means                                        |
-| ---------------------------------- | -------------------------------------------- |
-| `{5} cross entropy`                | The two terms within 5 tokens of each other. |
-| `cross NEAR/5 entropy`             | Same.                                        |
-| `{20} man in the middle attack`    | All five words within ~one line of text.     |
-| `{60} buffer overflow exploit`     | Within ~a few lines.                         |
-| `{500} race condition mitigations` | Within ~one page.                            |
+| You type                         | Means                                        |
+| -------------------------------- | -------------------------------------------- |
+| `{5} project deadline`           | The two terms within 5 tokens of each other. |
+| `project NEAR/5 deadline`        | Same.                                        |
+| `{20} cancel the gym membership` | All four words within ~one line of text.     |
+| `{60} lost luggage claim`        | Within ~a few lines.                         |
+| `{500} kitchen renovation quote` | Within ~one page.                            |
 
 - **Scale:** `5` ≈ very near, `20` ≈ a line, `60` ≈ a few lines, `500` ≈ a page.
-- **Order doesn't matter.** Quote (`"cross entropy"`) when it does.
+- **Order doesn't matter.** Quote (`"project deadline"`) when it does.
 - `{N}` covers the words right after it, up to the first operator, `(`, or
-  filter, so `{10} buffer overflow kind:pdf` slops only `buffer overflow`.
+  filter, so `{10} lost luggage kind:pdf` slops only `lost luggage`.
 - Can't cross a chunk boundary; if terms are far apart, drop the `{N}`.
 - `NEAR/N` takes exactly two words.
-- A word may carry `*` or `~N` (`{5} cryptography~ keys`).
+- A word may carry `*` or `~N` (`{5} insurance~ claim`).
 
 ### Fuzzy matching for typos and variants
 
 Suffix `~1` or `~2` to allow that many edits per term. An adjacent transposition
-(`ir` ↔ `ri`) counts as one edit:
+(`ie` ↔ `ei`) counts as one edit:
 
-| You type         | Matches                               |
-| ---------------- | ------------------------------------- |
-| `mitochondira~1` | `mitochondria` (one swap).            |
-| `kubernates~2`   | `kubernetes` and near spellings.      |
+| You type         | Matches                             |
+| ---------------- | ----------------------------------- |
+| `recieve~1`      | `receive` (one swap).               |
+| `accomodation~2` | `accommodation` and near spellings. |
 
-Works on a single term or alongside others (`powerhouse mitochondira~1`). Use
+Works on a single term or alongside others (`parcel recieve~1`). Use
 sparingly on short terms: `cat~2` matches almost everything. A typed `~N` may
-change the first letter (`kryptography~1` finds `cryptography`); automatic
+change the first letter (`kalendar~1` finds `calendar`); automatic
 fuzzy keeps it, and a plain misspelling is respelt instead.
 
-- A word no file holds is respelt, and the line under the query names it: "Also searched polymorphsim as polymorphism."
+- A word no file holds is respelt, and the line under the query names it: "Also searched restuarant as restaurant."
 - `Shift+Esc` or `Ctrl+T` searches as typed instead (`fnd search --as-typed`); a quoted word is never respelt.
 
 ### Field qualifiers
@@ -610,15 +610,15 @@ boost), so you can combine it with search terms to constrain them.
 
 | You type                   | What it does                                           |
 | -------------------------- | ------------------------------------------------------ |
-| `title:transformer`        | Only documents whose title contains `transformer`.     |
+| `title:invoice`            | Only documents whose title contains `invoice`.         |
 | `heading_path:"chapter 4"` | Only sections under that heading path.                 |
-| `author:dijkstra`          | Only documents with that author metadata.              |
+| `author:austen`            | Only documents with that author metadata.              |
 | `kind:pdf`                 | Only a file type (`pdf`, `docx`, `pptx`, `md`, `txt`). |
-| `path_tokens:thesis`       | Only paths containing `thesis`.                        |
-| `title:(rust OR golang)`   | Group alternatives within one field.                   |
+| `path_tokens:taxes`        | Only paths containing `taxes`.                         |
+| `title:(recipe OR menu)`   | Group alternatives within one field.                   |
 | `has:author`               | Only documents that have a non-empty `author` field.   |
 
-Combine with terms to constrain them: `kind:pdf "diffusion model"` finds the
+Combine with terms to constrain them: `kind:pdf "travel insurance"` finds the
 phrase in **PDFs only**.
 
 ### Collections
@@ -626,10 +626,10 @@ phrase in **PDFs only**.
 fnd organises sources into named collections. The shorthand `c:` scopes a
 search to one or more:
 
-| You type                     | What it does                       |
-| ---------------------------- | ---------------------------------- |
-| `c:security attack`              | Search the `security` collection only. |
-| `c:notes,papers transformer` | Search two collections.            |
+| You type             | What it does                       |
+| -------------------- | ---------------------------------- |
+| `c:work deadline`    | Search the `work` collection only. |
+| `c:work,home budget` | Search two collections.            |
 
 Without `c:` the active collection (settings menu) is used.
 
@@ -650,19 +650,19 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 
 ### Wildcards and regex
 
-| You type                 | Matches                                      |
-| ------------------------ | -------------------------------------------- |
-| `crypto*`                | Words starting with `crypto`.                |
-| `*ization`               | Words ending in `ization`.                   |
-| `crypt*aphy`             | `cryptography`.                              |
-| `gr?y`                   | `?` = exactly one character: `gray`, `grey`. |
-| `/cryptograph(y\|ic)/`   | A regular expression over whole words.       |
+| You type     | Matches                                                   |
+| ------------ | --------------------------------------------------------- |
+| `garden*`    | Words starting with `garden`.                             |
+| `*ship`      | Words ending in `ship`.                                   |
+| `photo*aphy` | `photography`.                                            |
+| `gr?y`       | `?` = exactly one character: `gray`, `grey`.              |
+| `/colou?r/`  | A regular expression over whole words: `color`, `colour`. |
 
 Wildcards and regexes match words as written (accents folded, any case), not
 their stems.
 
-You rarely need `*`: search already matches word variants (`entropy` finds
-`entropies`). Wildcards, fuzzy, regex, and phrases all work inside
+You rarely need `*`: search already matches word variants (`invoice` finds
+`invoices`). Wildcards, fuzzy, regex, and phrases all work inside
 `AND` / `OR` / `NOT` / `()`.
 
 ### Markdown frontmatter filter
@@ -672,16 +672,16 @@ expression is a source's `filters.frontmatter`, editable from its **Frontmatter
 rule** row. **String values use single quotes**; double quotes mark a field name
 with spaces (`"Due Date"`):
 
-| You type                                                | What it does                                          |
-| ------------------------------------------------------- | ----------------------------------------------------- |
-| `mitm [Course == 'Distributed Systems']`               | Notes where the `Course` field equals that value.     |
-| `[Notes_Type == 'Lecture' OR Notes_Type == 'Tutorial']` | Either value (there are no list literals, use `OR`). |
-| `[Notes_Type == 'Cheat Sheet']`                         | Also matches a list holding it, as Obsidian writes a list property. |
-| `entropy [Course == 'ML' AND Year >= 2024]`             | Compound predicate.                                   |
-| `['urgent' in tags]`                                    | `urgent` is an element of the `tags` list.            |
-| `[NOT ('private' in tags)]`                             | Exclude a tag, **keeping notes that have no `tags:`**. |
-| `[Course ~~ 'Data *']`                                | Glob a string value (not the body-search `~N` fuzzy). |
-| `["Due Date" < 2026-01-01]`                             | A field name with a space, double-quoted.             |
+| You type                                        | What it does                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------- |
+| `deadline [Project == 'Website']`               | Notes where the `Project` field equals that value.                  |
+| `[Type == 'Meeting' OR Type == 'Idea']`         | Either value (there are no list literals, use `OR`).                |
+| `[Type == 'Reading List']`                      | Also matches a list holding it, as Obsidian writes a list property. |
+| `budget [Project == 'Garden' AND Year >= 2024]` | Compound predicate.                                                 |
+| `['urgent' in tags]`                            | `urgent` is an element of the `tags` list.                          |
+| `[NOT ('private' in tags)]`                     | Exclude a tag, **keeping notes that have no `tags:`**.              |
+| `[Project ~~ 'Home *']`                         | Glob a string value (not the body-search `~N` fuzzy).               |
+| `["Due Date" < 2026-01-01]`                     | A field name with a space, double-quoted.                           |
 
 Operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields), `in` /
 `not in` (list membership), `AND`, `OR`, `NOT`, parentheses. Values are
@@ -704,26 +704,26 @@ out. A rule on its own, with no search words, lists every note it admits.
 ### Composing: worked examples
 
 ```text
-"buffer overflow"                                  # exact phrase
-{10} buffer overflow exploit kind:pdf              # three terms within 10 tokens, PDFs only
-c:notes mitm [Course == 'Distributed Systems']    # term + collection scope + frontmatter filter
-title:"chapter 4" heading_path:proof               # constrain to one chapter's proofs
-kind:pptx slide:>10 attention                      # later-half slides mentioning attention
-mtime:month crypto*                                # recently-modified docs mentioning crypto-anything
-crypto* AND wallet                                 # a wildcard required inside a boolean
-(loss OR cost) AND function~1                      # grouping with a fuzzy term
-"defence in depth" OR diverse                      # an exact phrase OR a loose term
+"birthday party"                        # exact phrase
+{10} lost luggage claim kind:pdf        # three terms within 10 tokens, PDFs only
+c:work deadline [Project == 'Website']  # term + collection scope + frontmatter filter
+title:"user guide" heading_path:setup   # constrain to one guide's setup section
+kind:pptx slide:>10 roadmap             # later slides mentioning the roadmap
+mtime:month garden*                     # recently modified docs mentioning garden-anything
+garden* AND budget                      # a wildcard required inside a boolean
+(flight OR train) AND tiket~1           # grouping with a fuzzy term
+"out of office" OR holiday              # an exact phrase OR a loose term
 ```
 
 ### A few common pitfalls
 
-- **Quoting a single word does nothing useful.** `"entropy"` is the same as
-  `entropy`. Quotes only help for multi-word phrases.
+- **Quoting a single word does nothing useful.** `"invoice"` is the same as
+  `invoice`. Quotes only help for multi-word phrases.
 - **`OR` and `AND` are case-sensitive.** Lowercase `or` / `and` are treated
   as ordinary terms. Always uppercase boolean operators.
-- **Standalone stopwords are dropped.** `the man` searches just `man`; common
+- **Standalone stopwords are dropped.** `the invoice` searches just `invoice`; common
   words (`the`, `in`, `of`, …) are removed from unquoted queries. To match a
-  phrase that includes them, quote it: `"man in the middle"`.
+  phrase that includes them, quote it: `"return on investment"`.
 - **Proximity is per-chunk.** A phrase or `{N}` query can't span a chunk
   boundary. If the terms are paragraphs apart, drop to a loose multi-term query.
 

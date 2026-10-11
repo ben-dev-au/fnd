@@ -35,6 +35,6 @@ async def test_several_still_say_how_many(tmp_index_dir: Path) -> None:
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.pause()
-        label = await _confirm_label(app, pilot, ["papers", "notes", "cellar"])
+        label = await _confirm_label(app, pilot, ["papers", "notes", "home"])
 
     assert "3 collections" in label, label

@@ -55,7 +55,7 @@ class TestDottedIdents:
         assert parse("a < 2026-01-01") == Compare("a", "<", dt.date(2026, 1, 1))
 
     def test_frontmatter_key_still_bare(self) -> None:
-        assert parse("Course == 'DevOps'") == Compare("Course", "==", "DevOps")
+        assert parse("Project == 'Website'") == Compare("Project", "==", "Website")
 
 
 class TestFieldInList:

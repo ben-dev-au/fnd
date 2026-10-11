@@ -336,7 +336,7 @@ class DefaultFilters(_ConfigModel):
 
     frontmatter: str | None = None
     """Filter expression over a note's YAML frontmatter, e.g.
-    `Course == 'Data Structures'`. A note with no frontmatter block matches no
+    `Project == 'Home Renovation'`. A note with no frontmatter block matches no
     field test."""
 
     expression: str | None = None
@@ -790,8 +790,8 @@ class Defaults(_ConfigModel):
     re-adding one leaves collections with outdated tags until a rebuild re-reads them."""
 
     tag_frontmatter_keys: TagList = []
-    """Extra frontmatter keys treated as tags, e.g. `Course:`. Values namespace
-    under the key (course/algebra). Changing them leaves tags outdated until a
+    """Extra frontmatter keys treated as tags, e.g. `Project:`. Values namespace
+    under the key (project/kitchen). Changing them leaves tags outdated until a
     rebuild."""
 
     result_limit: int = Field(default=DEFAULT_RESULT_LIMIT, ge=1, le=1000)
@@ -1016,7 +1016,7 @@ _COLLECTION_NAME_MAX = 64
 # the ``c:<a>,<b>`` DSL list separator (a name containing ``,`` would be
 # ambiguous in the bare form); control characters and DEL are never
 # useful. Spaces are deliberately allowed; users want collection names
-# like "Compiler Theory Books", and the DSL parser supports the quoted form
+# like "Book Club", and the DSL parser supports the quoted form
 # ``c:"name with spaces"`` to reference them.
 _COLLECTION_NAME_FORBIDDEN: frozenset[str] = (
     frozenset({"/", "\\", '"', "'", "`", ","})
