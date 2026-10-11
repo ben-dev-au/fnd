@@ -13,7 +13,15 @@ from __future__ import annotations
 import re
 import unicodedata
 
-__all__ = ["canonical", "decode", "fold", "quote_view"]
+__all__ = [
+    "DOUBLE_QUOTES",
+    "SINGLE_QUOTES",
+    "canonical",
+    "decode",
+    "fold",
+    "is_apostrophe",
+    "quote_view",
+]
 
 # The line model of an editor and of markdown-it: only CR and CRLF end a line,
 # so a deep-link line number and a preview section match the file as opened.
@@ -24,12 +32,15 @@ _SEPARATOR = re.compile(r"[\v\f\x1c-\x1e\x85\u2028\u2029]")
 # ASCII letters and digits. Full-width punctuation stays, it is CJK typography.
 _PRESENTATION = re.compile(r"[\ufb00-\ufb06\uff10-\uff19\uff21-\uff3a\uff41-\uff5a]")
 
-# Typographic and full-width quotes. ``’`` and ``＇`` between two letters or digits
-# are apostrophes (``Ben’s``, ``O＇Neil``), not quotes.
-_DOUBLE_QUOTES = "\u201c\u201d\u201e\u201f\uff02"
+# Quote families, ASCII first. ``’`` and ``＇`` between two letters or digits are
+# apostrophes (``Ben’s``, ``O＇Neil``), not quotes.
+SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b\uff07"
+DOUBLE_QUOTES = '"\u201c\u201d\u201e\u201f\uff02'
+_WORD = r"[^\W_]"
 _QUOTE_MARK = re.compile(
-    f"[{_DOUBLE_QUOTES}\u2018\u201a\u201b]|(?<![^\\W_])[\u2019\uff07]|[\u2019\uff07](?![^\\W_])"
+    f"[{DOUBLE_QUOTES[1:]}\u2018\u201a\u201b]|(?<!{_WORD})[\u2019\uff07]|[\u2019\uff07](?!{_WORD})"
 )
+_APOSTROPHE = re.compile(f"(?<={_WORD})['\u2019\uff07](?={_WORD})")
 
 # Every Cc and Cf character (Unicode 15.1) but tab, newline, and the ZWNJ and ZWJ
 # that shape a script. One class, not a per-character category lookup: measured
@@ -54,7 +65,12 @@ def quote_view(text: str) -> str:
     """``text`` with each typographic or full-width quote as its ASCII quote, and
     every other character, apostrophes included, in place: same length, so a
     position found in the view slices the original."""
-    return _QUOTE_MARK.sub(lambda m: '"' if m.group() in _DOUBLE_QUOTES else "'", text)
+    return _QUOTE_MARK.sub(lambda m: '"' if m.group() in DOUBLE_QUOTES else "'", text)
+
+
+def is_apostrophe(text: str, i: int) -> bool:
+    """``text[i]`` is ``'``, ``’`` or ``＇`` between two letters or digits."""
+    return _APOSTROPHE.match(text, i) is not None
 
 
 _BOMS = (

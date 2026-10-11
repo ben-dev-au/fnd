@@ -32,7 +32,7 @@ from enum import Enum, auto
 from typing import Any
 
 from fnd.globs import PathGlob
-from fnd.text_canon import canonical
+from fnd.text_canon import DOUBLE_QUOTES, SINGLE_QUOTES, canonical, is_apostrophe
 
 
 class TokenKind(Enum):
@@ -122,31 +122,110 @@ def _scan_string(text: str, start: int, quote: str) -> tuple[str, int] | None:
     return None
 
 
-def quote_positions(text: str) -> list[int]:
-    """Where ``text``'s strings and quoted names open and close, and the quotes
-    escaped inside them, read as :func:`_scan_string` reads them."""
-    found: list[int] = []
+def with_ascii_quotes(text: str) -> str:
+    """``text`` with the typographic or full-width quotes that delimit its strings
+    and quoted names as ASCII, and every value's characters as typed. A rule that
+    parses with ASCII quotes alone keeps its meaning."""
+    out: list[str] = []
     i = 0
     while i < len(text):
-        quote = text[i]
-        if quote not in ('"', "'"):
+        family = SINGLE_QUOTES if text[i] in SINGLE_QUOTES else DOUBLE_QUOTES
+        if text[i] not in family or (text[i] != family[0] and is_apostrophe(text, i)):
+            out.append(text[i])
             i += 1
             continue
-        for escaping in (True, False):
-            marks, j = [i], i + 1
-            while j < len(text) and text[j] != quote:
-                if escaping and text[j] == "\\" and text[j + 1 : j + 2] in (quote, "\\"):
-                    marks += [j + 1] if text[j + 1] == quote else []
-                    j += 2
-                    continue
-                j += 1
-            if j < len(text):
-                found += [*marks, j]
-                i = j + 1
-                break
+        quote = family[0]
+        typographic = text[i] != quote
+        closed = (_typographic_close if typographic else _ascii_close)(text, i, family)
+        if closed is None:
+            out.append(text[i:])
+            break
+        end, value = closed
+        out.append(quote + value.replace("\\", "\\\\").replace(quote, "\\" + quote) + quote)
+        i = end + 1
+    return "".join(out)
+
+
+def _ends_value(text: str, k: int) -> bool:
+    return k == len(text) or text[k].isspace() or text[k] in "),]"
+
+
+def _opens_string(text: str, j: int) -> bool:
+    """The quote at ``j`` starts the next string rather than ending this one, so
+    ``\u2018the \u201990s\u2019`` is refused, never read as a value running into the next clause."""
+    before = text[j - 1] if j else ""
+    return (
+        bool(before) and (before.isspace() or before in "([,=<>!~") and not _ends_value(text, j + 1)
+    )
+
+
+def _ascii_close(text: str, start: int, family: str) -> tuple[int, str] | None:
+    """Where an ASCII string closes and its value, read as :func:`_scan_string` reads
+    one: at its quote, or at the last value end before a quote opening the next string
+    (``'Meeting’ or X == 'y'``). None leaves the text to the parser as typed."""
+    quote = family[0]
+    for escaping in (True, False):
+        parts: list[str] = []
+        ending: tuple[int, str] | None = None
+        first: tuple[int, str] | None = None
+        j = start + 1
+        while j < len(text):
+            if escaping and text[j] == "\\" and text[j + 1 : j + 2] in (quote, "\\"):
+                if text[j + 1] == quote and _ends_value(text, j + 2):
+                    ending = (j + 1, "".join(parts) + "\\")
+                parts.append(text[j + 1])
+                j += 2
+                continue
+            if text[j] in family and (text[j] == quote or not is_apostrophe(text, j)):
+                if _opens_string(text, j):
+                    return ending
+                if text[j] == quote:
+                    return j, "".join(parts)
+                if _ends_value(text, j + 1):
+                    ending = (j, "".join(parts))
+                    first = first or ending
+            parts.append(text[j])
+            j += 1
+        if first is not None:
+            return first
+    return None
+
+
+def _typographic_close(text: str, start: int, family: str) -> tuple[int, str] | None:
+    """Where a typographic string closes, and its value read as :func:`_scan_string`
+    reads one: at the first quote that ends a value (``’`` in ``‘students’’`` is the
+    value's), at the last before one that opens the next string, else at the first."""
+    for escaping in (True, False):
+        parts: list[str] = []
+        first: tuple[int, int] | None = None
+        last: tuple[int, int] | None = None
+        j = start + 1
+        while j < len(text):
+            if (
+                escaping
+                and text[j] == "\\"
+                and text[j + 1 : j + 2]
+                and text[j + 1] in family + "\\"
+            ):
+                parts.append(text[j + 1])
+                j += 2
+                continue
+            if text[j] in family:
+                if not is_apostrophe(text, j):
+                    if _ends_value(text, j + 1):
+                        return j, "".join(parts)
+                    if _opens_string(text, j):
+                        if last is not None:
+                            return last[0], "".join(parts[: last[1]])
+                        break
+                    first = first or (j, len(parts))
+                last = (j, len(parts))
+            parts.append(text[j])
+            j += 1
         else:
-            return [*found, i]
-    return found
+            if first is not None:
+                return first[0], "".join(parts[: first[1]])
+    return None
 
 
 def tokenize(text: str) -> list[Token]:

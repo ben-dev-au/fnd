@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 
 from fnd.extract._limits import LIMIT_QUERY_BOOLEAN_TOKENS, LIMIT_QUERY_BYTES
-from fnd.filter_dsl import quote_positions
+from fnd.filter_dsl import with_ascii_quotes
 from fnd.query_dsl import check_proximity, preprocess, split_metadata_filter
 from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
 from fnd.query_spans import literal_spans, without_literals
@@ -37,16 +37,6 @@ def search_text(lexical: str) -> str:
     syntax as ASCII."""
     text = quote_view(lexical).translate(_ASCII_SYNTAX)
     return _FULL_WIDTH_RANGE.sub(lambda m: m.group(0).translate(_RANGE_ENDS), text)
-
-
-def _ascii_delimiters(rule: str) -> str:
-    """``rule`` with the quotes that delimit its strings and quoted names as ASCII,
-    read in :func:`~fnd.text_canon.quote_view`; every other character, an
-    apostrophe or a quote inside a value, stays as typed."""
-    view, out = quote_view(rule), list(rule)
-    for at in quote_positions(view):
-        out[at] = view[at]
-    return "".join(out)
 
 
 def enforce_query_bounds(query: str) -> None:
@@ -115,7 +105,7 @@ class QueryPlan:
         lexical = search_text(lexical)
         _refuse_unclosed_quote(lexical)
         if metadata_filter is not None:
-            metadata_filter = _ascii_delimiters(metadata_filter)
+            metadata_filter = with_ascii_quotes(metadata_filter)
         # Validate proximity against the expanded form (well-formed {N} a b is
         # already "a b"~N, so a surviving brace is a real mistake).
         check_proximity(preprocess(lexical))

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from fnd.filter_dsl import compile_filter
+from fnd.filter_dsl import FilterError, compile_filter
 from fnd.filters.model import FilterSpec
 from fnd.filters.text_form import parse, render
 from fnd.index import build_index
@@ -33,9 +33,33 @@ def test_brackets_inside_any_quotes_stay_search_text(typed: str) -> None:
         ("[Type == ‘Meeting’]", {"Type": "Meeting"}),
         ("[Type == 'Meeting’]", {"Type": "Meeting"}),
         ("[Author == 'O＇Neil']", {"Author": "O＇Neil"}),
+        ("[Title == 'students’']", {"Title": "students’"}),
+        ("[Title == '’tis']", {"Title": "’tis"}),
+        ("[Title == 'x＇']", {"Title": "x＇"}),
+        ("[Title == ‘students’’]", {"Title": "students’"}),
+        ("[Title == 'rock ‘n’ roll']", {"Title": "rock ‘n’ roll"}),
+        ("[Title == ‘O'Neil’]", {"Title": "O'Neil"}),
+        ("[Type == 'Meeting’ and Status == ‘Done’]", {"Type": "Meeting", "Status": "Done"}),
         ("[Title == 'the “best” plan']", {"Title": "the “best” plan"}),
         ("[“Due Date” < 2026-01-01]", {"Due Date": dt.date(2025, 6, 1)}),
-        (r"[Title == ‘it\’s’]", {"Title": "it's"}),
+        (r"[Title == ‘it\’s’]", {"Title": "it’s"}),
+        (r"[Path == ‘C:\dir\’ or Title == ‘x’]", {"Path": "C:\\dir\\", "Title": "y"}),
+        ("[Title==‘a’or Title==‘b’]", {"Title": "b"}),
+        ("[Title==’a’or Title==’b’]", {"Title": "b"}),
+        (r"[Path == ‘C:\dir\’ or Title == ’x’]", {"Path": "C:\\dir\\", "Title": "y"}),
+        (
+            "[Type == 'Meeting’ or Status == ‘Done’ or Owner == 'Sam']",
+            {"Type": "Idea", "Status": "Done", "Owner": "Kim"},
+        ),
+        ("[Type == 'Meeting’ or Status == ‘Done']", {"Type": "Idea", "Status": "Done"}),
+        (
+            r"[Path == 'C:\dir\' or Title == ‘x’ or Owner == 'Sam']",
+            {"Path": "C:\\dir\\", "Title": "y", "Owner": "Kim"},
+        ),
+        ("[Type == 'Meeting’ or Status == 'Done']", {"Type": "Idea", "Status": "Done"}),
+        ("[Type == 'Meeting’ and Status == 'Done’]", {"Type": "Meeting", "Status": "Done"}),
+        ("[Title == 'the students’ notes']", {"Title": "the students’ notes"}),
+        (r"[Path == 'C:\dir\’ or Title == 'x']", {"Path": "C:\\dir\\", "Title": "y"}),
         (r"[Title == ‘C:\dir\’]", {"Title": "C:\\dir\\"}),
     ],
 )
@@ -45,6 +69,13 @@ def test_a_query_filter_reads_quotes_and_keeps_its_value_as_typed(
     rule = QueryPlan.from_user_text(typed).metadata_filter
     assert rule is not None
     assert compile_filter(rule)(fields)
+
+
+@pytest.mark.parametrize("typed", ["[Title == ‘the ’90s’]", "[Title == ‘rock ‘n’ roll’]"])
+def test_a_quote_that_could_open_the_next_value_is_refused(typed: str) -> None:
+    """A value never runs on into the next clause: an ambiguous quote is an error."""
+    with pytest.raises(FilterError):
+        compile_filter(QueryPlan.from_user_text(typed).metadata_filter or "")
 
 
 def test_a_config_rule_keeps_ascii_quote_syntax() -> None:
