@@ -137,7 +137,9 @@ def _maximal() -> conf.Config:
                         follow_symlinks=True,
                         # `clears` exists only on a source, so the shared
                         # `filters` dict cannot carry it.
-                        filters=conf.SourceFilters(**filters, clears=["min_size"]),
+                        filters=conf.SourceFilters(
+                            **filters, exclude_dirs=["archive"], clears=["min_size"]
+                        ),
                         app="obsidian",
                         app_for={"md": "obsidian"},
                         app_params={"vault": "Main"},
@@ -192,7 +194,7 @@ class TestTheWholeSurfaceRoundTrips:
 
         check(config, "Config")
         check(config.defaults, "Defaults")
-        check(config.defaults.filters, "DefaultFilters")
+        check(config.defaults.filters, "DefaultFilters", skip=conf.PER_SOURCE_ONLY)
         source = config.collections["notes"].sources[0]
         check(source, "SourceConfig")
         assert source.filters is not None

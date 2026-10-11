@@ -288,6 +288,7 @@ def _example_block(table: str, model: BaseModel) -> list[str]:
 
 def render_config(config: Config, *, preserved: str = "", version: int | None = None) -> str:
     from fnd.config import (
+        PER_SOURCE_ONLY,
         DefaultFilters,
         RankingProfileConfig,
         SourceConfig,
@@ -327,7 +328,10 @@ def render_config(config: Config, *, preserved: str = "", version: int | None = 
         "table overrides these field by field."
     )
     lines += ["", "[defaults.filters]", ""]
-    lines += _model_body(config.defaults.filters, tuple(DefaultFilters.model_fields))
+    lines += _model_body(
+        config.defaults.filters,
+        tuple(n for n in DefaultFilters.model_fields if n not in PER_SOURCE_ONLY),
+    )
 
     lines += _divider("Collections")
     lines += _comment(

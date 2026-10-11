@@ -73,6 +73,7 @@ def sample_source(
     walk: Iterator[Path] | None = None,
     ignore_names: Sequence[str] | None = None,
     excludes: Sequence[str] | None = None,
+    exclude_dirs: Sequence[str] | None = None,
     gate: FileGate | None = None,
 ) -> SourceSample:
     """Sample ``root`` for the values its filter pickers should offer.
@@ -98,7 +99,12 @@ def sample_source(
     paths = (
         walk
         if walk is not None
-        else walk_files(roots=[root], ignore_names=names, excludes=list(excludes or ()) or None)
+        else walk_files(
+            roots=[root],
+            ignore_names=names,
+            excludes=list(excludes or ()) or None,
+            exclude_dirs=list(exclude_dirs or ()) or None,
+        )
     )
 
     for path in paths:

@@ -83,6 +83,7 @@ def indexed_with(collection: CollectionConfig, defaults: Defaults) -> dict[str, 
                 **s.effective_filters.model_dump(mode="json"),
                 # Order never changes what the walk prunes.
                 "excludes": sorted(set(s.effective_filters.excludes)),
+                "exclude_dirs": sorted(set(s.effective_filters.exclude_dirs)),
                 "legacy_frontmatter": s.legacy_frontmatter or "",
             },
         }
@@ -130,6 +131,7 @@ def _as_today(source: dict[str, Any]) -> dict[str, Any]:
     filters = dict(source.get("filters") or {})
     filters.setdefault("excludes", source.get("excludes") or [])
     filters["excludes"] = sorted(set(filters["excludes"]))
+    filters.setdefault("exclude_dirs", [])
     return {**{k: v for k, v in source.items() if k != "excludes"}, "filters": filters}
 
 

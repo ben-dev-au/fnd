@@ -272,3 +272,27 @@ def test_each_state_reads_as_a_state() -> None:
     assert (
         three.summary == "Outdated: Path, Excludes and Index filters changed since the last index"
     )
+
+
+def test_changing_the_excluded_folders_reads_as_an_index_filters_change(tmp_path: Path) -> None:
+    """The next update prunes them, so the ledger must say the filters moved."""
+    before = _now(_config(tmp_path, filters={"exclude_dirs": ["a"]}))
+    after = _now(_config(tmp_path, filters={"exclude_dirs": ["a", "b"]}))
+    verdict = compare(after, before)
+    assert verdict.state is State.NEEDS_UPDATE
+    assert verdict.reasons == ("Index filters",)
+
+
+def test_reordering_the_excluded_folders_is_no_change(tmp_path: Path) -> None:
+    """Order never changes what the walk prunes."""
+    one = _now(_config(tmp_path, filters={"exclude_dirs": ["a", "b"]}))
+    two = _now(_config(tmp_path, filters={"exclude_dirs": ["b", "a"]}))
+    assert compare(two, one).state is State.CURRENT
+
+
+def test_a_record_from_before_the_field_is_no_change(tmp_path: Path) -> None:
+    """Upgrading alone must not mark every index outdated."""
+    recorded = _now(_config(tmp_path))
+    for source in recorded["selection"]["sources"]:
+        source["filters"].pop("exclude_dirs", None)
+    assert compare(_now(_config(tmp_path)), recorded).state is State.CURRENT

@@ -286,6 +286,19 @@ def _known_kinds(values: list[str] | None) -> list[str] | None:
     return values
 
 
+#: Filter fields that only make sense on a source; [defaults.filters] must leave them empty.
+PER_SOURCE_ONLY: Final = frozenset({"exclude_dirs"})
+
+
+def _normalised_dirs(value: list[str] | None) -> list[str] | None:
+    if value is None:
+        return None
+    from fnd.filters.dir_tree import fold as fold_dirs
+    from fnd.filters.dir_tree import normalise_dir
+
+    return list(fold_dirs(normalise_dir(v) for v in value))
+
+
 class DefaultFilters(_ConfigModel):
     """``[defaults.filters]``; every field concrete, so it can be the base a
     per-source override resolves against."""
@@ -303,6 +316,10 @@ class DefaultFilters(_ConfigModel):
     excludes: list[Glob] = Field(default_factory=lambda: list(EXCLUDES_PRESETS["hidden"]["globs"]))
     """Glob patterns whose files are never indexed; a folder a `name/**` glob
     covers is pruned unopened. Every source inherits these unless it sets its own."""
+
+    exclude_dirs: list[str] = Field(default_factory=list)
+    """Folders under a source's root that are never indexed, e.g. ["archive", "notes/drafts"].
+    Per source: set it on a source's filters, and leave it empty here."""
 
     include_tags: TagSelection = Field(default_factory=list)
     """Index only files carrying one of these tags. Empty means no tag is needed."""
@@ -354,6 +371,11 @@ class DefaultFilters(_ConfigModel):
     def _validate_kinds(cls, v: list[str] | None) -> list[str] | None:
         return _known_kinds(v)
 
+    @field_validator("exclude_dirs")
+    @classmethod
+    def _validate_exclude_dirs(cls, v: list[str]) -> list[str]:
+        return _normalised_dirs(v) or []
+
 
 #: Fields with no value meaning "nothing". A list clears with `[]`, a string
 #: with `""` and a bool with `false`; for these `None` already means inherit.
@@ -372,6 +394,7 @@ class SourceFilters(_ConfigModel):
     respect_gitignore: bool | None = None
     respect_fndignore: bool | None = None
     excludes: list[Glob] | None = None
+    exclude_dirs: list[str] | None = None
     include_tags: TagSelection | None = None
     exclude_tags: TagSelection | None = None
     kinds: list[str] | None = None
@@ -390,6 +413,11 @@ class SourceFilters(_ConfigModel):
     TOML has no null and `None` means inherit, so clearing a bound means
     naming it.
     """
+
+    @field_validator("exclude_dirs")
+    @classmethod
+    def _validate_exclude_dirs(cls, v: list[str] | None) -> list[str] | None:
+        return _normalised_dirs(v)
 
     @field_validator("clears")
     @classmethod
@@ -513,6 +541,11 @@ class SourceConfig(_ConfigModel):
     def excludes(self) -> list[str]:
         """The excludes this source walks with: its own, or the inherited ones."""
         return list(self.effective_filters.excludes)
+
+    @property
+    def exclude_dirs(self) -> list[str]:
+        """The folders under this source's root that the walk never enters."""
+        return list(self.effective_filters.exclude_dirs)
 
     @model_validator(mode="after")
     def _absorb_type_globs(self) -> SourceConfig:
@@ -879,8 +912,16 @@ class Defaults(_ConfigModel):
     "dist"]`` skips any ``build/`` or ``dist/`` subtree."""
 
     filters: DefaultFilters = Field(default_factory=DefaultFilters)
+
     """Index-time filters every source inherits. A source's own filters table
     overrides these per field."""
+
+    @field_validator("filters")
+    @classmethod
+    def _folders_are_per_source(cls, v: DefaultFilters) -> DefaultFilters:
+        if v.exclude_dirs:
+            raise ValueError("exclude_dirs is per source; set it on a source's filters")
+        return v
 
 
 class Config(_ConfigModel):

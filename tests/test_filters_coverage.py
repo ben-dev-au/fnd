@@ -17,7 +17,14 @@ from typing import Any, ClassVar
 
 import pytest
 
-from fnd.config import CLEARABLE, DefaultFilters, SourceConfig, SourceFilters, resolve_filters
+from fnd.config import (
+    CLEARABLE,
+    PER_SOURCE_ONLY,
+    DefaultFilters,
+    SourceConfig,
+    SourceFilters,
+    resolve_filters,
+)
 from fnd.tui.settings_screen import _source_filters_or_none
 from fnd.walk import walk_sources
 
@@ -52,8 +59,8 @@ class TestEveryFieldResolves:
         """Closed over the schema: a new filter field fails here until it is
         given values, rather than silently going untested. `clears` is not a
         filter but the mechanism for dropping one, and has its own tests."""
-        assert set(VALUES) == set(SourceFilters.model_fields) - {"clears"}
-        assert set(VALUES) == set(DefaultFilters.model_fields)
+        assert set(VALUES) == set(SourceFilters.model_fields) - {"clears"} - PER_SOURCE_ONLY
+        assert set(VALUES) == set(DefaultFilters.model_fields) - PER_SOURCE_ONLY
 
     @pytest.mark.parametrize("field", sorted(CLEARABLE))
     def test_a_clearable_field_drops_the_inherited_value(self, field: str) -> None:
@@ -170,7 +177,7 @@ class TestEveryFieldFilters:
         """Every field is behaviourally tested somewhere: by a real file here,
         or against stubbed timestamps in TestDateFieldsFilter."""
         real = {f for f, (_, removed) in REMOVES.items() if removed}
-        assert real | set(DATE_REMOVES) == set(DefaultFilters.model_fields)
+        assert real | set(DATE_REMOVES) == set(DefaultFilters.model_fields) - PER_SOURCE_ONLY
 
     @pytest.mark.parametrize("field", sorted(f for f, (_, r) in REMOVES.items() if r))
     def test_the_default_removes_its_file(self, field: str, tmp_path: Path) -> None:

@@ -120,6 +120,7 @@ def spec_from_resolved(resolved: object) -> FilterSpec:
         expression=resolved.expression or "",  # type: ignore[attr-defined]
         frontmatter=resolved.frontmatter or "",  # type: ignore[attr-defined]
         excludes=tuple(getattr(resolved, "excludes", None) or ()),
+        exclude_dirs=tuple(getattr(resolved, "exclude_dirs", None) or ()),
     )
 
 
@@ -149,6 +150,7 @@ class FilterSpec:
     expression: str = ""
     # Pruned by the walk before any file is read, so the text form never shows them.
     excludes: tuple[str, ...] = ()
+    exclude_dirs: tuple[str, ...] = ()
     raw: tuple[str, ...] = ()
 
     @property

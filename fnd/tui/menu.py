@@ -1884,6 +1884,8 @@ def _narrowing_dimensions(f: Any) -> list[str]:
     named = []
     if f.excludes:
         named.append("excludes")
+    if f.exclude_dirs:
+        named.append("excluded folders")
     if f.include_tags or f.exclude_tags:
         named.append("tags")
     if f.min_size is not None or f.max_size is not None:
@@ -2430,6 +2432,7 @@ def _filters_defaults(app: FNDApp) -> Any:
 def _open_filter_browser(app: FNDApp) -> None:
     """The defaults, as branches rather than a column of text boxes."""
     from fnd.config import (
+        PER_SOURCE_ONLY,
         ConfigChangedError,
         config_fingerprint,
         default_config_path,
@@ -2465,6 +2468,7 @@ def _open_filter_browser(app: FNDApp) -> None:
             values={
                 ("defaults", "filters", name): (None if value == "" else value)
                 for name, value in values.items()
+                if name not in PER_SOURCE_ONLY
             },
         )
         app._config = load()  # type: ignore[attr-defined]
@@ -2556,6 +2560,8 @@ def _summary_index_filters(app: FNDApp) -> str:
         bits.append("dates")
     if f.excludes:
         bits.append("excluded paths")
+    if f.exclude_dirs:
+        bits.append("excluded folders")
     if f.frontmatter or f.expression:
         bits.append("custom")
     return " · ".join(bits) if bits else "off"

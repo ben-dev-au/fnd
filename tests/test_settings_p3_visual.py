@@ -772,4 +772,5 @@ class TestTheCustomGlobPromptSaysWhatAGlobDoes:
         from fnd.tui.settings_screen import _GLOB_HINT, GlobTextScreen
 
         assert "/**" in _GLOB_HINT
-        assert "_GLOB_HINT" in inspect.getsource(GlobTextScreen.compose)
+        assert GlobTextScreen.HINT == _GLOB_HINT
+        assert "self.HINT" in inspect.getsource(GlobTextScreen.compose)

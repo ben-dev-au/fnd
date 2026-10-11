@@ -5,7 +5,8 @@ Includes/excludes precedence:
 1. A path is in scope only if it lives under one of ``roots``.
 2. If ``includes`` is set, the path must match at least one ``includes`` glob.
 3. If the path matches **any** ``excludes`` glob, it is dropped, even if it
-   matched an ``includes``.
+   matched an ``includes``. A folder listed in ``exclude_dirs`` is skipped
+   unopened the same way.
 4. Hidden files (``.foo``) are excluded by default. Only an include glob that
    names a dot-prefixed component admits one, and only the paths that glob
    itself matches; ``**/*.md`` alongside it does not widen the exception.
@@ -28,7 +29,10 @@ from __future__ import annotations
 
 import os
 import sys
+import time
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,6 +85,7 @@ def walk(
     roots: Iterable[Path],
     includes: list[str] | None = None,
     excludes: list[str] | None = None,
+    exclude_dirs: Iterable[str] | None = None,
     follow_symlinks: bool = False,
     skip_dirs: frozenset[str] | None = None,
     ignore_names: Sequence[str] = (),
@@ -112,6 +117,7 @@ def walk(
     inc = GlobSet.parse(includes)
     exc = GlobSet.parse(excludes)
     hidden_inc = _hidden_includes(list(includes or []))
+    skip_paths = frozenset(exclude_dirs or ())
 
     for root in roots:
         original = root.expanduser()
@@ -142,6 +148,7 @@ def walk(
             hidden_inc=hidden_inc,
             follow_symlinks=follow_symlinks,
             skip_dirs=skip_dirs,
+            exclude_dirs=skip_paths,
             ignore_names=ignore_names,
             on_unreadable=on_unreadable,
         )
@@ -181,6 +188,7 @@ def _scandir_walk(
     hidden_inc: GlobSet,
     follow_symlinks: bool,
     skip_dirs: frozenset[str],
+    exclude_dirs: frozenset[str] = frozenset(),
     ignore_names: Sequence[str] = (),
     on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[Path]:
@@ -259,8 +267,10 @@ def _scandir_walk(
                 child = Path(entry.path)
                 if scope and scope.ignored(child, is_dir=True):
                     continue
-                if exc and exc.covers_dir(child.relative_to(root).as_posix()):
-                    continue
+                if exclude_dirs or exc:
+                    rel_dir = child.relative_to(root).as_posix()
+                    if rel_dir in exclude_dirs or (exc and exc.covers_dir(rel_dir)):
+                        continue
                 stack.append((child, scope))
                 continue
 
@@ -298,6 +308,72 @@ def _scandir_walk(
                 continue
 
             yield entry_path
+
+
+#: A tree past this many folders is unreadable as a picker; a typed path reaches the rest.
+_LIST_MAX_DIRS = 500
+_LIST_BUDGET_S = 0.8
+
+
+@dataclass(frozen=True, slots=True)
+class DirListing:
+    """Folders under a root, root-relative, with the ones whose children were all listed."""
+
+    dirs: tuple[str, ...]
+    read: frozenset[str]
+    truncated: bool
+
+
+def list_dirs(
+    root: Path,
+    *,
+    skip_dirs: frozenset[str],
+    excludes: Sequence[str] = (),
+    follow_symlinks: bool = False,
+    max_dirs: int = _LIST_MAX_DIRS,
+    budget_s: float = _LIST_BUDGET_S,
+) -> DirListing:
+    """The folders the walk could enter, breadth first, within ``max_dirs`` and ``budget_s``."""
+    exc = GlobSet.parse(list(excludes) or None)
+    deadline = time.monotonic() + budget_s
+    queue: deque[str] = deque([""])
+    dirs: list[str] = []
+    read: set[str] = set()
+    truncated = False
+    while queue:
+        if time.monotonic() > deadline:
+            truncated = True
+            break
+        rel = queue.popleft()
+        try:
+            with os.scandir(root / rel if rel else root) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            truncated = True
+            continue
+        children: list[str] = []
+        for entry in entries:
+            try:
+                is_dir = entry.is_dir(follow_symlinks=follow_symlinks)
+            except OSError:
+                continue
+            name = entry.name
+            if not is_dir or name.startswith(".") or name in skip_dirs or _is_index_dir(entry.path):
+                continue
+            child = f"{rel}/{name}" if rel else name
+            if not exc.covers_dir(child):
+                children.append(child)
+        room = max_dirs - len(dirs)
+        if len(children) > room:
+            children = children[:room]
+            truncated = True
+        else:
+            read.add(rel)
+        dirs.extend(children)
+        queue.extend(children)
+    return DirListing(tuple(dirs), frozenset(read), truncated)
 
 
 def _resolved_root(path: Path) -> Path:
@@ -381,6 +457,7 @@ def walk_sources(
             roots=[source.path],
             includes=source.includes or None,
             excludes=source.excludes or None,
+            exclude_dirs=source.exclude_dirs or None,
             follow_symlinks=source.follow_symlinks,
             skip_dirs=skip_dirs,
             ignore_names=names,

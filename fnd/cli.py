@@ -686,6 +686,12 @@ def collection_add(
         "--exclude",
         help="Glob to exclude. Repeatable. Replaces the app-wide excludes (System files by default).",
     ),
+    exclude_dir: list[str] = typer.Option(
+        [],
+        "--exclude-dir",
+        help="Folder under --source to leave out, e.g. archive or notes/drafts. Repeatable. "
+        "Keeps the app-wide excludes.",
+    ),
     filter: str | None = typer.Option(
         None,
         "--filter",
@@ -732,17 +738,30 @@ def collection_add(
     # The current shape, not a source-level `excludes` or `frontmatter_filter`:
     # a new write should not create something the next migration has to move.
     try:
-        own = SourceFilters(frontmatter=filter or None, excludes=list(exclude) or None)
+        own = SourceFilters(
+            frontmatter=filter or None,
+            excludes=list(exclude) or None,
+            exclude_dirs=list(exclude_dir) or None,
+        )
         new_source = SourceConfig(
             path=source[0],  # pyright: ignore[reportArgumentType]
             includes=list(include),
             follow_symlinks=follow_symlinks,
-            filters=own if filter or exclude else None,
+            filters=own if filter or exclude or exclude_dir else None,
         )
     except ValidationError as e:
         first = e.errors()[0]
         echo(f"invalid {'.'.join(map(str, first['loc'])) or 'source'}: {first['msg']}", err=True)
         raise typer.Exit(code=1) from e
+    from fnd.filters.dir_tree import exists_exactly
+
+    for folder in own.exclude_dirs or []:
+        if not exists_exactly(Path(source[0]).expanduser(), folder):
+            echo(
+                f"warning: {folder!r} is not a folder under the source (names match "
+                "exactly, case included); it excludes nothing until one exists",
+                err=True,
+            )
     # Read before the write: the sibling set is what the new source is being
     # compared against, and after the write it contains the new source itself.
     from fnd.config import load as _load
