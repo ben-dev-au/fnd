@@ -179,6 +179,8 @@ class PreviewPresenter:
         self.mount_phase: str | None = None
         self.init_coverage_state()
         self._stale_strip_repair: asyncio.Task[None] | None = None
+        self._unlaid_refreeze: asyncio.Task[None] | None = None
+        self._freeze_generation = 0
         # Per-chunk captures, filled by coverage and read by every mount path.
         # Separate from the document store because this one is SPARSE: it holds
         # the matches scattered through a file, which a contiguous document
@@ -2468,7 +2470,12 @@ class PreviewPresenter:
         return start
 
     async def _freeze_chunks_outside_window(
-        self, container: PreviewContainer, chunks: list[FileChunk], win_start: int, win_end: int
+        self,
+        container: PreviewContainer,
+        chunks: list[FileChunk],
+        win_start: int,
+        win_end: int,
+        retries: int | None = None,
     ) -> None:
         """Swap every background-filled chunk for its frozen capture.
 
@@ -2501,6 +2508,15 @@ class PreviewPresenter:
 
         if _os.environ.get("_FND_NO_FREEZE") == "1":
             return
+        # The newest window wins: a retry, or an overlapping sweep, holding an older
+        # one would freeze the chunk a later navigation keeps live.
+        pending = self._unlaid_refreeze
+        if pending is not None and pending is not asyncio.current_task() and not pending.done():
+            pending.cancel()
+        first_pass = retries is None
+        retries = tuning.FREEZE_UNLAID_RETRIES if retries is None else retries
+        self._freeze_generation += 1
+        generation = self._freeze_generation
         await self.await_settled()
         if self.active is not container:
             return
@@ -2522,7 +2538,7 @@ class PreviewPresenter:
             pane_width = self.capture_width(self._app.query_one("#preview_pane", VerticalScroll))
         except Exception:
             pane_width = 0
-        frozen = 0
+        frozen = unlaid = 0
         sweep_started = time.perf_counter()
         slice_start = sweep_started
         for index, chunk in enumerate(chunks):
@@ -2549,6 +2565,7 @@ class PreviewPresenter:
                 continue
             captured = freeze(widget, chunk.chunk_seq)
             if captured is None:
+                unlaid += widget.size.height == 0
                 continue
             view = FrozenChunkView(captured)
             try:
@@ -2593,15 +2610,38 @@ class PreviewPresenter:
             # sweep is measured for how long it holds the loop.
             with contextlib.suppress(Exception):
                 self._app.call_after_refresh(self._app._match_nav.on_preview_scrolled)
-        self.diag_log(
-            f"mount served={container.served_chunks} built={container.built_chunks} "
-            f"parent={container.parent_doc_id[:8]}"
-        )
+        if first_pass:
+            self.diag_log(
+                f"mount served={container.served_chunks} built={container.built_chunks} "
+                f"parent={container.parent_doc_id[:8]}"
+            )
         if frozen:
             self.diag_log(
                 f"backfill froze={frozen} chunks in "
                 f"{(time.perf_counter() - sweep_started) * 1000:.0f}ms"
             )
+        if (
+            unlaid
+            and retries > 0
+            and generation == self._freeze_generation
+            and self.active is container
+            and is_live(container)
+        ):
+            # In the background: the navigation that called this must not wait.
+            self._unlaid_refreeze = asyncio.create_task(
+                self._refreeze_unlaid(container, chunks, win_start, win_end, retries - 1)
+            )
+
+    async def _refreeze_unlaid(
+        self,
+        container: PreviewContainer,
+        chunks: list[FileChunk],
+        win_start: int,
+        win_end: int,
+        retries: int,
+    ) -> None:
+        await asyncio.sleep(tuning.FREEZE_UNLAID_RETRY_SECONDS)
+        await self._freeze_chunks_outside_window(container, chunks, win_start, win_end, retries)
 
     def stop_background_work(self) -> None:
         """Cancel everything this presenter runs in the background.
@@ -2612,7 +2652,7 @@ class PreviewPresenter:
         real corpus: 0.49s to quit with coverage off against 1.09s with it on,
         of which pacing the captures recovered about half and this the rest.
         """
-        for task in (self._coverage_task, self._stale_strip_repair):
+        for task in (self._coverage_task, self._stale_strip_repair, self._unlaid_refreeze):
             if task is not None and not task.done():
                 task.cancel()
 
