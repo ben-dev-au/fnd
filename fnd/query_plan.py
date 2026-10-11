@@ -14,36 +14,28 @@ import re
 from dataclasses import dataclass
 
 from fnd.extract._limits import LIMIT_QUERY_BOOLEAN_TOKENS, LIMIT_QUERY_BYTES
+from fnd.filter_dsl import with_ascii_quotes
 from fnd.query_dsl import check_proximity, preprocess, split_metadata_filter
 from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
 from fnd.query_spans import literal_spans, without_literals
-from fnd.text_canon import canonical
+from fnd.text_canon import canonical, quote_view
 
-# Typographic quotes, typed or pasted where the ASCII quote syntax is meant.
-_ASCII_QUOTES = str.maketrans(
-    dict.fromkeys("\u201c\u201d\u201e\u201f", '"') | dict.fromkeys("\u2018\u2019\u201a\u201b", "'")
-)
-# Full-width forms (CJK input methods type ``＊（）：``) as their ASCII syntax, in
-# search text only: a frontmatter value keeps its ``：``. ``［］`` stay text unless
-# they open a range after ``:``, or a bracketed word would become a filter.
+# Quotes (:func:`~fnd.text_canon.quote_view`) and full-width forms (``＊（）：``) as
+# ASCII syntax, in search text only: a frontmatter value keeps them as typed.
+# ``［］`` stay text unless they open a range after ``:``, else a word becomes a filter.
 _ASCII_SYNTAX = str.maketrans(
     {0xFF01 + i: 0x21 + i for i in range(0x5E) if 0xFF01 + i not in (0xFF3B, 0xFF3D)}
-    | {0x3000: " "}
+    | {0x3000: " ", 0x2019: "'"}
 )
 # A range may mix bounds (``[lo TO hi}``), and ``｛｝`` are already ASCII here.
 _FULL_WIDTH_RANGE = re.compile(r"(?<=:)([［{])([^［］{}\[\]]*)([］}])")
 _RANGE_ENDS = str.maketrans("［］", "[]")
 
 
-def query_text(raw: str) -> str:
-    """``raw`` as the query language reads it: :func:`~fnd.text_canon.canonical`,
-    with typographic quotes as their ASCII syntax."""
-    return canonical(raw).translate(_ASCII_QUOTES)
-
-
 def search_text(lexical: str) -> str:
-    """``lexical`` (search text, no ``[…]`` filter) with full-width syntax as ASCII."""
-    text = lexical.translate(_ASCII_SYNTAX)
+    """``lexical`` (search text, no ``[…]`` filter) with typographic and full-width
+    syntax as ASCII."""
+    text = quote_view(lexical).translate(_ASCII_SYNTAX)
     return _FULL_WIDTH_RANGE.sub(lambda m: m.group(0).translate(_RANGE_ENDS), text)
 
 
@@ -103,15 +95,17 @@ class QueryPlan:
         Raises :class:`QueryTooLargeError` (size/complexity) or
         :class:`QuerySyntaxError` (unbalanced brackets, malformed proximity).
         """
-        raw = query_text(raw)
+        raw = canonical(raw)
         enforce_query_bounds(raw)
-        _refuse_unclosed_quote(raw)
+        _refuse_unclosed_quote(quote_view(raw))
         try:
             lexical, metadata_filter = split_metadata_filter(raw)
         except ValueError as e:
             raise QuerySyntaxError(str(e), hint="check that [ ] brackets are balanced") from e
         lexical = search_text(lexical)
         _refuse_unclosed_quote(lexical)
+        if metadata_filter is not None:
+            metadata_filter = with_ascii_quotes(metadata_filter)
         # Validate proximity against the expanded form (well-formed {N} a b is
         # already "a b"~N, so a surviving brace is a real mistake).
         check_proximity(preprocess(lexical))

@@ -315,7 +315,7 @@ its rules.
 |---|---|---|
 | Extracted text | `extract/_bound.py::bounded` | chunk size bound; every text field `text_canon.canonical` |
 | File bytes | `text_canon.decode` | BOM honoured; UTF-8, or Windows-1252 for a legacy file |
-| Query text | `QueryPlan` (`query_plan.py`) | canonical, curly quotes straightened, bounded, escaped for tantivy |
+| Query text | `QueryPlan` (`query_plan.py`) | canonical, bounded, escaped for tantivy; curly and full-width quotes are quote syntax, a filter value keeps them as typed |
 | Config values | the field types in `config_types.py` | cleaned and checked at load, whichever surface wrote them |
 | File names | `extract.base.file_parent_id`, index path tokens | hashable whatever their bytes; searched canonical, stored raw |
 

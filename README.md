@@ -675,7 +675,8 @@ with spaces (`"Due Date"`):
 | You type                                        | What it does                                                        |
 | ----------------------------------------------- | ------------------------------------------------------------------- |
 | `deadline [Project == 'Website']`               | Notes where the `Project` field equals that value.                  |
-| `[Type == 'Meeting' OR Type == 'Idea']`         | Either value (there are no list literals, use `OR`).                |
+| `[Type == 'Meeting' OR Type == 'Idea']`         | Either value.                                                       |
+| `[Type in ['Meeting', 'Idea']]`                 | Any value in the list; a list field matches if it holds one.        |
 | `[Type == 'Reading List']`                      | Also matches a list holding it, as Obsidian writes a list property. |
 | `budget [Project == 'Garden' AND Year >= 2024]` | Compound predicate.                                                 |
 | `['urgent' in tags]`                            | `urgent` is an element of the `tags` list.                          |

@@ -134,9 +134,10 @@ def search_layered(
     Tantivy round-trip per non-bypass query. ``as_typed`` respells nothing
     (:mod:`fnd.typos`).
     """
-    from fnd.query_plan import query_text, search_text
+    from fnd.query_plan import search_text
+    from fnd.text_canon import canonical
 
-    query = search_text(query_text(query))
+    query = search_text(canonical(query))
     typed = query
     if not query.strip() and metadata_filter:
         # A frontmatter rule alone lists the notes it admits.
