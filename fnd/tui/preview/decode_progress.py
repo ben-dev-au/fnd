@@ -1,7 +1,7 @@
 """Live unit count for the flat-preview decode.
 
 The flat path (PDF, TXT) builds its whole document in one worker call, so
-from the outside it is a single opaque step — and its duration varies by
+from the outside it is a single opaque step, and its duration varies by
 more than an order of magnitude (measured on a real corpus: p25 226 ms,
 median 1081 ms, p75 3135 ms). Nothing observable at dispatch predicts
 that: file size scales the duration by roughly its fourth root, because
@@ -13,7 +13,7 @@ and reports as it goes.
 
 Same shape as :mod:`fnd.tui.live_progress`, which does this for PDF page
 extraction: the worker writes, the UI polls a snapshot. Deliberately not
-a callback into the app — this runs on a worker thread, and marshalling
+a callback into the app: this runs on a worker thread, and marshalling
 per line would cost more than the work being measured.
 """
 

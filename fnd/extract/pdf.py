@@ -2,7 +2,7 @@
 
 Flow:
 
-1. Try ``doc.get_toc()`` first — if the PDF has an embedded outline, that's
+1. Try ``doc.get_toc()`` first, if the PDF has an embedded outline, that's
    ~100% accurate; map each page to the nearest preceding TOC entry.
 2. Else fall back to local font-size clustering (``_font_clustering_heading``).
 3. Apply sanity gates and bail to ``heading_path = ""`` when:
@@ -54,14 +54,14 @@ from fnd.extract.recovery import (
 from fnd.fsmeta import read_file_times
 
 # Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
-# at module load — cheap; just a spec lookup. The actual import happens
+# at module load: cheap; just a spec lookup. The actual import happens
 # inside _extract_page_md() to keep import-time cost zero for users
 # who haven't opted in (NF7 invariant).
 #
 # Note: ``find_spec`` only tests importability, not functional
 # readiness. A half-uninstalled pymupdf4llm whose namespace directory
 # survives but whose ``to_markdown`` is gone will still pass this
-# check. ``_extract_page_md`` is defensive — its outer try/except
+# check. ``_extract_page_md`` is defensive: its outer try/except
 # catches the AttributeError that surfaces from such a state and
 # returns "" (the page falls through to flat extraction). The TUI's
 # Status row uses the stricter ``fnd.extras.is_package_installed``
@@ -71,7 +71,7 @@ _HAS_PYMUPDF4LLM: bool = importlib.util.find_spec("pymupdf4llm") is not None
 
 # Runtime override for the structured-extraction path. The indexer sets
 # this to True for a single Update index run when the user has toggled
-# "Update cache at index time" Off — extract() still consults the cache
+# "Update cache at index time" Off: extract() still consults the cache
 # on hit, but on miss it runs only the flat path (no pymupdf4llm,
 # no docling) and skips the cache write. Used for fast battery-friendly
 # flat-text refreshes. Default False keeps existing behaviour.
@@ -93,12 +93,12 @@ def set_skip_structure_extraction(skip: bool) -> None:
 # extraction-logic change). Minor refactors, flag documentation, and
 # patch-level dependency bumps must NOT bump it. Rebuild keys off this
 # version: entries below it read as outdated and re-texturise.
-# v2: invisible-text scanned-page recovery (Bug E) — the layered recovery
+# v2: invisible-text scanned-page recovery (Bug E); the layered recovery
 # pipeline meaningfully changes texturised output corpus-wide, so prior
 # textures read as outdated and re-texturise under the new engine.
-# v3: two recovery tiers added. Ligature repair — the layout engine emits
+# v3: two recovery tiers added. Ligature repair: the layout engine emits
 # U+FFFD for ff/fi/fl glyphs in ToUnicode-less fonts; the repair tier
-# rewrites them from the flat layer. Flat-fallback — the layout parser drops
+# rewrites them from the flat layer. Flat-fallback: the layout parser drops
 # whole prose blocks on graphically-complex born-digital pages
 # (infographic/multi-column reports); the fallback tier backfills them from
 # the flat layer. Both change texturised output corpus-wide, so affected
@@ -114,8 +114,8 @@ def texture_signature() -> str:
 
 
 # Run-scoped "Rebuild" flag. When True, extract() bypasses the texture
-# cache entirely — it re-extracts every PDF fresh and overwrites the cache
-# entry — so a Rebuild genuinely re-texturises all PDFs under the current
+# cache entirely (it re-extracts every PDF fresh and overwrites the cache
+# entry) so a Rebuild genuinely re-texturises all PDFs under the current
 # engine, not just the ones missing a current-signature entry. When False
 # (default), extract() reuses a current-signature entry and falls back to
 # any prior entry for the same content, making texturising durable across
@@ -158,7 +158,7 @@ def _margin_integers(page: pymupdf.Page) -> list[int]:
     cross-page resolver in :func:`_resolve_page_labels` decides which
     candidate (if any) is actually the printed page number.
 
-    We're permissive on purpose — a header like ``"Chapter 5    291"``
+    We're permissive on purpose: a header like ``"Chapter 5    291"``
     yields both ``5`` and ``291`` here, and the cross-page sequence
     check then picks ``291`` because that's the integer that ticks up
     by 1 across consecutive pages. The same logic naturally rejects
@@ -206,7 +206,7 @@ def _resolve_page_labels(
 
     Two-stage:
 
-    1. Pages whose ``meta_labels[i]`` is non-empty keep that — the
+    1. Pages whose ``meta_labels[i]`` is non-empty keep that: the
        PDF declared an explicit label, which is exact.
     2. For the rest we scan ``margin_candidates`` for the longest
        *consecutive* sequence: pages ``i, i+1, ..., i+k`` whose
@@ -365,7 +365,7 @@ _WORD_RE: Final = re.compile(r"[^\W_]+")
 
 
 def _word_sequence(text: str) -> list[str]:
-    """Lowercased words in order — the comparable form of a line."""
+    """Lowercased words in order: the comparable form of a line."""
     return _WORD_RE.findall(text.lower())
 
 
@@ -388,7 +388,7 @@ def _mirror_body_into_md(chunk: Chunk) -> Chunk:
     slices that markdown at ATX headings, so everything recovered lands in
     whichever slice happens to be last while the other sections keep the
     impoverished text the layout parser gave them. On a book-index page that
-    left a chunk rendering 51 characters of a 628-character page — searchable in
+    left a chunk rendering 51 characters of a 628-character page: searchable in
     full, all but invisible in the preview.
 
     Applied at YIELD time, like the heading fold, so it also repairs chunks
@@ -397,7 +397,7 @@ def _mirror_body_into_md(chunk: Chunk) -> Chunk:
 
     A line counts as present only when its words appear CONTIGUOUSLY in the
     markdown. Asking whether its tokens appear anywhere let dispersed terms
-    stand in for a phrase — ``body`` of "virtual memory" against a ``body_md``
+    stand in for a phrase: ``body`` of "virtual memory" against a ``body_md``
     holding "virtual address" and "physical memory" appended nothing, and a
     phrase query then matched the chunk with no contiguous rendered text to
     highlight. That is the very failure this repair exists to prevent.
@@ -426,7 +426,7 @@ def _mirror_body_into_md(chunk: Chunk) -> Chunk:
 def _largest_font_headings(page: pymupdf.Page) -> set[str]:
     """Stripped text of every visual line at the page's single largest
     font, or ``set()`` when the font-clustering sanity gates trip (≤1
-    distinct size, or >30% of lines are heading-sized — both signal that
+    distinct size, or >30% of lines are heading-sized: both signal that
     clustering is unreliable). Span text is clean here (no layout-mode
     ligature loss), so it's safe to match against the page's rendered
     reading-order text."""
@@ -454,7 +454,7 @@ def _largest_font_headings(page: pymupdf.Page) -> set[str]:
     # The split tier must sit *above* the modal body size. When the page's
     # largest font IS the body font (e.g. only footnotes are smaller),
     # every body line would otherwise read as a heading and shatter the
-    # page — the cause of the worst over-fragmentation case observed.
+    # page: the cause of the worst over-fragmentation case observed.
     if largest <= body_size:
         return set()
     heads = [
@@ -481,7 +481,7 @@ def _split_page_sections(
     Detection authority is font-size clustering on clean span text
     (:func:`_largest_font_headings`); the page's sorted (reading-order)
     text is then partitioned at those headings so each section's
-    searchable ``body`` holds only its own prose — the consecutive-heading
+    searchable ``body`` holds only its own prose; the consecutive-heading
     merge bug was the whole page sharing the *first* heading. When
     ``body_md`` carries one ATX heading per detected section its slices
     feed the preview (keeps tables / bold); otherwise a plain markdown
@@ -489,8 +489,8 @@ def _split_page_sections(
 
     Splits only when ≥2 headings are detected, so single-heading and
     headingless pages stay one chunk and prose PDFs don't fragment. The
-    leading (pre-first-heading) section inherits ``carry_heading`` — the
-    deepest heading carried over from the previous page — so a section
+    leading (pre-first-heading) section inherits ``carry_heading`` (the
+    deepest heading carried over from the previous page) so a section
     that continues across a page break keeps its attribution.
     """
     heads = _largest_font_headings(page)
@@ -575,7 +575,7 @@ def _mute_fd(fd: int) -> Generator[None]:
 
 def _try_docling_fallback(pdf_path: str, page_index: int) -> str:
     """Try to extract one page via the docling daemon. Returns "" on
-    any failure — caller keeps whatever pymupdf4llm produced."""
+    any failure: caller keeps whatever pymupdf4llm produced."""
     try:
         from fnd.extract._docling_daemon import DoclingDaemon
     except Exception:
@@ -614,7 +614,7 @@ def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
     a `==> picture omitted <==` marker where it couldn't decode an
     image-rendered table; docling recovers the table but drops the
     formatting. docling only earns its place when pymupdf4llm *missed* a
-    table — so:
+    table, so:
 
     - docling found no table (the marker is a genuine figure/chart):
       keep pymupdf4llm verbatim. No table to gain, so don't pay the
@@ -623,7 +623,7 @@ def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
       keep pymupdf4llm. The marker is a redundant image of a table it
       already has; splicing docling's copy would duplicate it. (Rare
       limitation: a page where pymupdf got table A but missed table B
-      behind the marker keeps only A — measured as not occurring.)
+      behind the marker keeps only A, measured as not occurring.)
     - pymupdf4llm has no table and docling found one per marker:
       replace each marker line (and the ``**`` wrapper pymupdf4llm puts
       it in) with its table, in reading order. Line-based, so no index
@@ -649,7 +649,7 @@ def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
 def _strip_picture_markers(md: str) -> str:
     """Drop pymupdf4llm's `==> picture [W x H] intentionally omitted <==`
     placeholders from the user-facing preview. Run only AFTER the docling
-    splice — markers it used to place tables are already replaced, so this
+    splice: markers it used to place tables are already replaced, so this
     removes just the leftovers on dedup / figure / non-routed pages and
     never disturbs a recovered table."""
     kept: list[str] = []
@@ -672,10 +672,10 @@ def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
 
     Triggers in two cases:
     1. Sum of "picture intentionally omitted" rectangles exceeds
-       `_FALLBACK_AREA_RATIO` of the page area — most likely a big
+       `_FALLBACK_AREA_RATIO` of the page area: most likely a big
        borderless / image-rendered table.
     2. A picture-omitted marker appears alongside a "TABLE" / "Table"
-       label on the same page — catches small image-rendered tables
+       label on the same page: catches small image-rendered tables
        (the HBR p99 case: a 324x70 pt = ~5% region that's clearly a
        table per its adjacent "TABLE 5-2" heading).
     """
@@ -726,7 +726,7 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     except Exception:
         # pymupdf4llm has stricter input validation than vanilla
         # pymupdf and can reject pages that the rest of the pipeline
-        # accepts. Fall through to empty md — caller treats this as
+        # accepts. Fall through to empty md: caller treats this as
         # "structured mode unavailable for this page" and the chunk
         # still ships its flat body.
         return ""
@@ -758,7 +758,7 @@ def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
     mode, recovering invisible OCR text the layout parser discards.
 
     Toggles the process-global ``use_layout`` False for the call and
-    restores its prior value in ``finally`` — a worker process handles
+    restores its prior value in ``finally``: a worker process handles
     one file's pages sequentially, so the toggle never races. Mutes both
     stdout and stderr (the non-layout path is chattier than production).
     """
@@ -799,7 +799,7 @@ def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
 
 
 def _flat_text_blocks(page: pymupdf.Page) -> list[str]:
-    """Flat text blocks in reading order — the gap-fill source for the
+    """Flat text blocks in reading order: the gap-fill source for the
     flat-fallback tier. ``sort=True`` orders top-to-bottom, left-to-right;
     image blocks (type 1) are dropped, leaving the page's text runs."""
     blocks = cast(list[tuple[Any, ...]], page.get_text("blocks", sort=True))
@@ -835,9 +835,9 @@ def _finalise_body_md(ctx: ExtractionContext, body_md: str) -> str:
     """Post-recovery assembly for one structured page, in order:
 
     1. born-digital docling fallback (image-rendered tables pymupdf4llm
-       missed) — unchanged detection/splice logic;
+       missed): unchanged detection/splice logic;
     2. strip leftover picture-omitted markers;
-    3. flat-fallback LAST — backfill prose still missing after every
+    3. flat-fallback LAST: backfill prose still missing after every
        structured step, so nothing downstream can discard it and the
        docling decision in step 1 never sees flat-appended text.
     """
@@ -946,7 +946,7 @@ def texture_reusable(
 
 
 def _has_docling() -> bool:
-    """Cached check for docling CLI presence — used by signature only."""
+    """Cached check for docling CLI presence: used by signature only."""
     import shutil
 
     return shutil.which("docling") is not None
@@ -978,7 +978,7 @@ def extract(
 
     On miss: runs the normal extraction, then writes the result back
     to the cache before yielding (so a Ctrl+C *after* the put is
-    safe — next reindex will hit).
+    safe, next reindex will hit).
 
     ``on_heartbeat`` receives per-page ("page", index) tuples plus a
     ("total", N) opener and ("file-start", path) reset. Used by the
@@ -998,7 +998,7 @@ def extract(
     key = cache.build_key(content_sha256=content_sha, extractor_signature=texture_signature())
     # Rebuild (force_fresh) literally deletes this content's saved
     # texturing first, so the entry is genuinely gone (not overwritten) and
-    # the re-extraction below leaves a single fresh entry — no stale
+    # the re-extraction below leaves a single fresh entry: no stale
     # variants linger. Otherwise reuse the current-signature entry, then
     # fall back to any prior entry for the same content (durable reuse: a
     # TEXTURE_VERSION bump leaves the current key empty but the older
@@ -1014,7 +1014,7 @@ def extract(
     if cached is not None:
         # Cache entries are keyed by content hash, so two different files
         # with identical bytes share an entry. The chunks were captured
-        # with the original file's parent_id / path / mtime — overlay
+        # with the original file's parent_id / path / mtime: overlay
         # the *current* file's identity so downstream indexer code
         # routes chunks to the right Tantivy parent_id.
         parent_id_now = file_parent_id(path)
@@ -1071,9 +1071,9 @@ def extract(
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
 
     # Best-effort cache write; if it fails (disk full, perms) we still
-    # yield the freshly-extracted chunks — caller should never lose work
+    # yield the freshly-extracted chunks: caller should never lose work
     # because the cache had a bad day. Skipped when the run-scoped
-    # battery-saver flag is on (no point caching flat extractions —
+    # battery-saver flag is on (no point caching flat extractions:
     # they're already cheap to recompute and cache hits assume
     # structured chunks).
     if not _skip_structure_extraction:
@@ -1085,7 +1085,7 @@ def extract(
 
 
 def _get_cache() -> ExtractionCache:
-    """Cached singleton — building the path each call is cheap but
+    """Cached singleton: building the path each call is cheap but
     creating the directory tree once at first use is cleaner.
 
     The prefetcher and indexer can both reach this from background

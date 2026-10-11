@@ -82,7 +82,7 @@ def test_nested_callouts_are_each_retagged() -> None:
 
 
 def test_title_keeps_inline_markup_children() -> None:
-    # Token .content joins child text only — the ** markup is carried by the
+    # Token .content joins child text only: the ** markup is carried by the
     # strong_open/strong_close children, not by any child's content.
     tokens = _tokens("> [!tip] A **bold** title\n> Body.\n")
     assert _inlines(tokens)[0] == "A bold title"

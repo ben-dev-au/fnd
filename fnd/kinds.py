@@ -1,4 +1,4 @@
-"""Central registry of the file types fnd can index — the single source of truth.
+"""Central registry of the file types fnd can index: the single source of truth.
 
 Every file type is one :class:`KindSpec`: a stable ``id`` (the value stored in
 the index ``F_KIND`` field), the suffixes that map to it, the extractor module
@@ -7,11 +7,11 @@ tree and the source-creation wizard.
 
 Consumers (walk, dispatch, the preview router, config/apps validation, the CLI,
 the Filters panel) derive their lookups from here instead of hard-coding kind
-lists, so adding a file type is one row in ``KIND_SPECS`` — plus, for a
+lists, so adding a file type is one row in ``KIND_SPECS``, plus, for a
 brand-new format, a matching ``fnd/extract/<module>.py``.
 
 ``kind`` is stored fine-grained (one id per format); ``category`` is a *grouping*
-concept only and is **not** stored in the index — a category filter expands to
+concept only and is **not** stored in the index: a category filter expands to
 its member kind ids. This module imports nothing from ``fnd`` so it is safe to
 import from anywhere without an import cycle.
 """

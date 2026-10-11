@@ -250,7 +250,7 @@ class ScopeController:
         # _commit_filter_change) so a burst of multi-select toggles coalesces.
         self._filter_search_timer: Timer | None = None
         self._batch_next = False
-        # Sidebar panel state — always loaded from disk so user-tuned
+        # Sidebar panel state: always loaded from disk so user-tuned
         # collapse / expand state survives the next launch, even when
         # ``--collection`` is passed. The CLI flag overrides search
         # *scope* (which collections / sources are active), NOT the
@@ -283,10 +283,10 @@ class ScopeController:
             or b.startswith("tags:")
             or b.startswith("kinds:")  # per-category File-type sub-branches
         }
-        # Scope — one provenance-carrying map (``selection``) is the single
+        # Scope: one provenance-carrying map (``selection``) is the single
         # source of truth; ``collections`` / ``active_sources`` are derived
         # views. A launch-time override (``--collection`` and/or the filter
-        # flags — a search copied out of the app) takes scope + filters from
+        # flags: a search copied out of the app) takes scope + filters from
         # the flags; otherwise reconstruct them from the persisted flat scope.
         # Panel *layout* always loads from disk, so a flagged launch never
         # discards the user's sidebar state.
@@ -329,7 +329,7 @@ class ScopeController:
 
         Reads ``defaults.collection``: ``all`` (the shipped default) ticks
         every configured collection, a name ticks just that one. Only ever
-        consulted on a first launch — once a scope is saved, the user's
+        consulted on a first launch: once a scope is saved, the user's
         sidebar selection is the source of truth and this never fires again.
         """
         cfg = self._app._config
@@ -351,14 +351,14 @@ class ScopeController:
         ``all`` (any case) is the pseudo-name for every configured
         collection. Otherwise the shared vocabulary canonicalises the value
         (so ``work2`` reaches the index as ``Work2``) and unknown names are
-        dropped — the CLI has already offered the user a correction by the
+        dropped: the CLI has already offered the user a correction by the
         time a value gets here. With no config loaded, the raw value is
         trusted.
 
         Names absent from the config stay dropped even when the config
         defines none at all. Keeping one would put a key in ``selection``
         that no panel row can toggle, which pins every search with no way to
-        clear it — the same phantom-scope failure ``_derive_selection``
+        clear it: the same phantom-scope failure ``_derive_selection``
         guards against. An ad-hoc ``fnd index --collection`` name is
         therefore searchable via ``fnd search -c`` but not scopeable in the
         TUI, whose scope model is config-driven by design.
@@ -380,7 +380,7 @@ class ScopeController:
 
         Full collections become ``FULL`` (config-relative). Each flat
         source id is attributed as a partial claim to every non-full
-        collection whose config contains it — the on-disk shape carries
+        collection whose config contains it: the on-disk shape carries
         no provenance, so a shared id is claimed by all owners. The live
         toggle path records exact provenance; only a save/reload of a
         shared-partial scope reconstructs approximately.
@@ -405,7 +405,7 @@ class ScopeController:
         return sel
 
     def _tag_source_ids(self) -> list[str]:
-        """Provider ids for the configured tag sources — the keys tag
+        """Provider ids for the configured tag sources: the keys tag
         selections are stored under, shared with the CLI."""
         import sys
 
@@ -436,14 +436,14 @@ class ScopeController:
 
     @property
     def collections(self) -> list[str]:
-        """Collections fully in scope (●) — the search collection-filter
+        """Collections fully in scope (●): the search collection-filter
         channel. Derived from the selection map."""
         return [name for name, sel in self.selection.items() if sel is FULL]
 
     @property
     def active_sources(self) -> list[str]:
         """Flat active source ids for the per-source search filter.
-        Only explicit (partial) selections contribute — FULL collections
+        Only explicit (partial) selections contribute: FULL collections
         scope via the collection channel. Deterministic config order."""
         out: list[str] = []
         seen: set[str] = set()
@@ -511,7 +511,7 @@ class ScopeController:
 
     def snapshot(self, query: str) -> SearchSnapshot:
         """Project the live scope into the read-only value object the command
-        serializer consumes — the one seam between scope state and
+        serializer consumes: the one seam between scope state and
         serialization, so neither reaches into the other."""
         partial = tuple(
             name for name, sel in self.selection.items() if isinstance(sel, set) and sel
@@ -634,7 +634,7 @@ class ScopeController:
                     )
         set_border_title(tree, self._panel_title(names))
         self._app._results.relabel_rows(marks_only=True)
-        # The collections list changed length — reflow the sidebar heights.
+        # The collections list changed length: reflow the sidebar heights.
         self._app._reflow_sidebar()
 
     def _collection_row(
@@ -699,7 +699,7 @@ class ScopeController:
         Scoped to the COLLECTIONS, not the current search text (unlike the Tags
         filter): a file-type list shouldn't churn as the user types, and the set
         only changes when the collection selection changes. So the result is
-        CACHED per collection set — the aggregation runs once per scope change
+        CACHED per collection set: the aggregation runs once per scope change
         instead of on every search (which ran on every filter toggle), keeping
         the re-search cheap."""
         from fnd.kind_catalogue import present_kinds
@@ -708,8 +708,8 @@ class ScopeController:
         index = getattr(searcher, "_index", None)
         if index is None:
             return None
-        # Key by the FULL active scope — full collections AND the active sources
-        # of partially-selected collections — so a source toggle recomputes and
+        # Key by the FULL active scope: full collections AND the active sources
+        # of partially-selected collections, so a source toggle recomputes and
         # the filter never reveals kinds from unselected sources of the same
         # collection.
         scope = self.source_scope
@@ -1002,8 +1002,8 @@ class ScopeController:
         """Control rows take the *inactive pane border* colour so they read as
         interactive without competing with the focused-pane accent.
 
-        The border is ``round $primary 50%`` — primary at 50% opacity over the
-        app background — so a full-strength ``$primary`` label looks noticeably
+        The border is ``round $primary 50%``, primary at 50% opacity over the
+        app background, so a full-strength ``$primary`` label looks noticeably
         brighter. Reproduce the same blend here. Resolved live so it tracks the
         theme; empty string (plain text) if the app isn't mounted yet."""
         try:
@@ -1016,7 +1016,7 @@ class ScopeController:
             # Use the border's exact foreground: $primary 50% composited over
             # the pane surface (confirmed #6F6199 on the default theme). Text
             # glyphs and the border's box-drawing glyphs are both thin strokes,
-            # so the SAME foreground perceives identically — which is what makes
+            # so the SAME foreground perceives identically, which is what makes
             # the rows read as the inactive-border colour rather than
             # a fresh, brighter purple.
             base = variables.get("surface") or variables.get("background") or "#000000"
@@ -1027,8 +1027,8 @@ class ScopeController:
     @staticmethod
     def _distinct_tag_values(by_source: dict[str, set[str]]) -> set[str]:
         """Tag values across all sources, deduped. The search groups tags by
-        value — a value selected in several sources is a single OR-ed term
-        (see fnd.tag_query._terms) — so every filter count follows that view
+        value: a value selected in several sources is a single OR-ed term
+        (see fnd.tag_query._terms), so every filter count follows that view
         rather than double-counting a value that fans across sources (e.g. a
         copied ``--tag``, which carries no source and seeds into all of them)."""
         return set[str]().union(*by_source.values())
@@ -1081,7 +1081,7 @@ class ScopeController:
     def clear_filters(self) -> None:
         """Reset every filter to its default and re-run the active query.
 
-        Collections/sources are scope, not filters, so they are left alone —
+        Collections/sources are scope, not filters, so they are left alone:
         clearing them would silently change what corpus is searched. The tag
         match mode returns to its ``all`` default so the pane is fully reset.
         A no-op when nothing is active, so a stray keypress can't thrash search.
@@ -1106,7 +1106,7 @@ class ScopeController:
         """Tags present in the active collections, per source.
 
         Returns empty lists when the index isn't open yet or the aggregation
-        fails — the pane must still render.
+        fails: the pane must still render.
         """
         from fnd.tag_catalogue import tag_catalogue
 
@@ -1135,7 +1135,7 @@ class ScopeController:
     def _facet_query(self, index: Any) -> Any:
         """Tantivy query narrowing the tag catalogue to the active search.
 
-        Deliberately built from the lexical text alone — NOT from the tag
+        Deliberately built from the lexical text alone, NOT from the tag
         selection. Facets computed over their own filter make every sibling
         tag vanish the moment one is selected, stranding the user with no way
         to switch without clearing first.
@@ -1420,7 +1420,7 @@ class ScopeController:
                 tree.cursor_line = line
                 # Setting cursor_line alone doesn't re-scroll, so when the clear
                 # bar appears above it (shrinking the tree by a row) the restored
-                # cursor can sit one row out of view. Scroll it back — DEFERRED
+                # cursor can sit one row out of view. Scroll it back: DEFERRED
                 # to after the refresh, because the bar's show/hide resizes the
                 # tree on the next layout pass, after this runs; scrolling now
                 # would target the pre-resize height and still clip the row.
@@ -1451,12 +1451,12 @@ class ScopeController:
 
         Fires exactly once per click: the results tree no longer re-invokes the
         base ``Tree._on_click`` (which the MRO already dispatches on its own),
-        so a click posts a single ``NodeSelected`` — see
+        so a click posts a single ``NodeSelected``, see
         ``ResultsTree._on_click``.
         """
         data = ev.node.data or {}
         kind = data.get("kind")
-        # A File-type category row toggles all its member kinds at once —
+        # A File-type category row toggles all its member kinds at once:
         # repaint the category + its leaves + the summary IN PLACE (never a
         # tree rebuild, so the cursor stays exactly where it was).
         if kind == "kind_category":
@@ -1470,7 +1470,7 @@ class ScopeController:
             self._commit_filter_change()
             return
         # A non-togglable section header (File type / Modified / Created / Tags)
-        # has nothing to toggle — a click or Enter expands/collapses it instead.
+        # has nothing to toggle: a click or Enter expands/collapses it instead.
         if kind == "filter_category":
             if ev.node.allow_expand:
                 ev.node.toggle()
@@ -1529,8 +1529,8 @@ class ScopeController:
     def _on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a collection node toggles the whole collection's scope
         (all sources at once); Enter on a single source row toggles that
-        source independently. Every change mutates the ``selection`` map —
-        the single source of truth — so the visible ●/◐/○ marker drives
+        source independently. Every change mutates the ``selection`` map (
+        the single source of truth) so the visible ●/◐/○ marker drives
         the toggle direction and a shared source's per-collection
         provenance is preserved (toggling one owner off can't strip a
         source a sibling still claims)."""
@@ -1617,7 +1617,7 @@ class ScopeController:
         parent_name = str(data.get("collection") or "")
         src_marker = "●" if self._source_active(parent_name, source_id) else "○"
         current_label = str(node.label)
-        # The source label is "<marker>  <i>. <short>" — preserve the
+        # The source label is "<marker>  <i>. <short>": preserve the
         # ordinal and basename, just swap the marker glyph.
         if len(current_label) > 1 and current_label[0] in ("●", "○"):
             node.set_label(src_marker + current_label[1:])
@@ -1634,7 +1634,7 @@ class ScopeController:
 
     def _panel_title(self, names: list[str]) -> str:
         """Border-title string from the selection map. Source counts use
-        ``_source_active`` — the same rule the row markers use — so the
+        ``_source_active`` (the same rule the row markers use) so the
         title and the row glyphs always agree (the toggle path and the
         full rebuild both call this)."""
         cfg = self._app._config

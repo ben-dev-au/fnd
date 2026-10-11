@@ -2,8 +2,8 @@
 
 A fresh profile should search everything rather than a collection named
 ``default`` that most users never create. The setting seeds scope only when
-nothing has been remembered — once the sidebar has saved a selection, that
-wins — so ``-c all`` exists as the quick per-launch override.
+nothing has been remembered (once the sidebar has saved a selection, that
+wins) so ``-c all`` exists as the quick per-launch override.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def test_other_values_are_not_the_pseudo_name(value: str | None) -> None:
 
 
 def test_a_real_collection_named_all_wins() -> None:
-    """Configs written before the name was reserved keep working — their
+    """Configs written before the name was reserved keep working: their
     own collection resolves, rather than silently widening to everything."""
     assert is_all_collections("all", known={"all", "papers"}) is False
 

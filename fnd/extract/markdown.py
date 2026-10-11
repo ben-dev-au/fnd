@@ -5,7 +5,7 @@ stack so each section ships its full ``heading_path`` like ``Notes > Methods >
 Sampling``.
 
 Each chunk also carries the verbatim markdown source for its section in
-``body_md`` — the TUI's structural preview renderer (Textual Markdown
+``body_md``: the TUI's structural preview renderer (Textual Markdown
 widget) consumes this. ``body_struct`` continues to carry a flat list of
 plain-text Blocks for the snippet pipeline; the two are intentionally
 separate so the snippet path doesn't end up showing markdown markers like
@@ -38,7 +38,7 @@ from fnd.text_canon import decode
 _md = MarkdownIt("commonmark").enable("table")
 
 # Token types that carry "real" content. A section is worth flushing as a
-# chunk when *any* of these appeared inside it — even if no `inline`
+# chunk when *any* of these appeared inside it, even if no `inline`
 # tokens did. Pre-fix the extractor silently dropped sections that
 # contained only a fenced code block (``code`` kind, no inline children),
 # losing them from the index entirely.
@@ -75,7 +75,7 @@ def _flush_section(
     heading_path = " > ".join(heading_stack)
     # F_BODY = chunk's own visible text (own heading + paragraphs).
     # Ancestor heading_path is searched via F_HEADING_PATH as a boost,
-    # NOT baked into body — inheriting parent-heading text into every
+    # NOT baked into body: inheriting parent-heading text into every
     # descendant's body inflates scores and surfaces chunks whose
     # visible content has no match.
     return Chunk(
@@ -169,8 +169,8 @@ def _section_source(source_lines: list[str], start_line: int, end_line: int) -> 
     ``start_line`` is the line of the section's heading_open (inclusive),
     ``end_line`` is the line of the *next* heading_open (exclusive), or
     ``len(source_lines)`` for the final section. The slice is verbatim
-    so tables, fenced code, lists, blockquotes — everything markdown-it
-    parses — round-trips into the renderer untouched.
+    so tables, fenced code, lists, blockquotes, everything markdown-it
+    parses, round-trips into the renderer untouched.
     """
     start = max(start_line, 0)
     end = max(min(end_line, len(source_lines)), start)
@@ -195,7 +195,7 @@ def _blank_frontmatter(source: str) -> str:
     can be mistaken for a heading.
 
     Blanked rather than removed so every downstream line number still matches
-    the file on disk — F_LINE feeds deep links like ``code -g {path}:{line}``.
+    the file on disk: F_LINE feeds deep links like ``code -g {path}:{line}``.
     """
     if not source.startswith("---"):
         return source
@@ -240,7 +240,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         tok = tokens[i]
 
         if tok.type == "heading_open":
-            # Source line of the new heading — defines the boundary
+            # Source line of the new heading: defines the boundary
             # for the *previous* section's slice.
             heading_line = tok.map[0] if tok.map else section_start_line
             # Flush the section we were accumulating, slicing source up
@@ -325,7 +325,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             i += 1
             continue
 
-        # Other token types (lists, hr, tables, blockquotes) — we don't
+        # Other token types (lists, hr, tables, blockquotes): we don't
         # expand them into the legacy Block list (the inline children that
         # DO appear already cover the searchable text), but flag the section
         # as having content so a table-only section flushes as its own chunk.
@@ -333,7 +333,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             section_has_content = True
         i += 1
 
-    # Final flush — slice to end of file.
+    # Final flush: slice to end of file.
     chunk = _flush_section(
         path=path,
         parent_id=parent_id,

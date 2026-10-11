@@ -3,9 +3,9 @@
 Three widening passes are tried in order:
 
   0. literal: query as the user typed it (already stem-aware via the index analyser)
-  1. fuzzy — Lucene-style "rewrite" fuzzy: enumerate the F_BODY term
+  1. fuzzy: Lucene-style "rewrite" fuzzy: enumerate the F_BODY term
      dictionary for indexed stems within the per-term auto-distance
-     (0 for ≤2 chars, 1 for 3-5, 2 for ≥6 — same shape as Lucene's
+     (0 for ≤2 chars, 1 for 3-5, 2 for ≥6, same shape as Lucene's
      ``fuzziness=AUTO``), then issue an OR of regular ``term_query``
      for each matching stem. This is the same rewrite Lucene applies
      to ``MultiTermQuery`` so the matched docs land back on BM25
@@ -13,7 +13,7 @@ Three widening passes are tried in order:
      ``fuzzy_term_query`` returns. A single-character prefix anchors
      the dictionary scan so a 6-char stem with distance 2 doesn't
      bring in unrelated short words.
-  2. synonym — terms in any synonym group expand to (term OR sym1 OR sym2)
+  2. synonym: terms in any synonym group expand to (term OR sym1 OR sym2)
 
 A pass runs only if the cumulative deduplicated hit count is below the
 caller-supplied threshold. Hits surfaced first by an earlier pass keep
@@ -63,7 +63,7 @@ def _carries_precision_intent(query: str) -> bool:
 
     * a quoted phrase, ``{N}`` proximity, or ``NEAR/N``;
     * a ``*``/``?`` wildcard or a ``/regex/`` (the fuzzy pass strips these and
-      fuzzy-matches the bare stem — ``crypto*`` would re-admit ``cryptid``);
+      fuzzy-matches the bare stem: ``crypto*`` would re-admit ``cryptid``);
     * an explicit exclusion (``NOT x`` / ``-x``): the fuzzy pass strips the
       operator and would re-admit the excluded docs.
     """
@@ -87,7 +87,7 @@ def _fuzzy_stands_down(query: str) -> bool:
 
 _FUZZY_TOKEN_RE = re.compile(r"^(\w+)(~(\d*))?$")
 # Strip ``~N`` (and bare trailing ``~``) only when preceded by a word
-# char — preserves phrase-proximity ``"a b"~3`` (~ after a quote).
+# char: preserves phrase-proximity ``"a b"~3`` (~ after a quote).
 _STRIP_FUZZY_MOD_RE = re.compile(r"(?<=\w)~\d*")
 
 
@@ -98,7 +98,7 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
     Returns ``(term, explicit_distance | None)`` tuples, None for no modifier.
     Bare ``~`` is the automatic distance, as the compiled query searches it.
     ``~N`` is clamped to ``{1, 2}``.
-    Quoted phrases are stripped — proximity (``"a b"~3``) isn't fuzzy.
+    Quoted phrases are stripped: proximity (``"a b"~3``) isn't fuzzy.
     """
     if not query:
         return []
@@ -482,7 +482,7 @@ def cascade_search(
 
 def _with_pass(h: Hit, pass_index: int) -> Hit:
     """Return a copy of ``h`` tagged with ``pass_index``. Hits are frozen
-    dataclasses, so we copy rather than mutate — via ``dataclasses.replace``,
+    dataclasses, so we copy rather than mutate, via ``dataclasses.replace``,
     which cannot drop a field the way an enumerated rebuild does (see
     :func:`fnd.fusion._with_pass_index`)."""
     return dataclasses.replace(h, pass_index=pass_index)

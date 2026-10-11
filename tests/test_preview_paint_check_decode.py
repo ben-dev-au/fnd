@@ -1,7 +1,7 @@
 """The paint check must count a running decode as work in flight.
 
 ``render_full_doc`` on a chunk-cache miss cancels the mount task, cancels the
-debounce timer, and hands the file to a background decode worker — so during a
+debounce timer, and hands the file to a background decode worker, so during a
 cold load none of ``load_timer`` / ``mount_task`` / ``_finalise_task`` is set.
 ``pipeline_busy()`` looked only at those three, so it reported *idle* while the
 decode was still running.
@@ -9,7 +9,7 @@ decode was still running.
 That is exactly when the pane legitimately shows the PREVIOUS file (the decode
 path deliberately keeps the old content up rather than blanking). So after
 ``PAINT_CHECK_MS`` the check would see "painted, but the wrong file", call it a
-strand, and spend its single repair — and the repair re-enters
+strand, and spend its single repair, and the repair re-enters
 ``render_full_doc``, whose worker group is ``exclusive=True``, restarting the
 very decode that was about to finish. On a slow file (a large PDF, or one
 evicted to iCloud, where decode is measured in minutes) that both delays the
@@ -46,7 +46,7 @@ async def test_a_running_decode_counts_as_busy(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
         preview = app._preview
         await wait_until(pilot, preview.is_painted, message="preview never painted")
         await wait_until(
@@ -61,7 +61,7 @@ async def test_a_running_decode_counts_as_busy(built_index: Path) -> None:
         )
         assert target_group is not None, "fixture needs a second file"
 
-        # Park the decode on a thread event — the worker runs off the loop.
+        # Park the decode on a thread event: the worker runs off the loop.
         gate = threading.Event()
         original = searcher.get_file_chunks
 
@@ -79,7 +79,7 @@ async def test_a_running_decode_counts_as_busy(built_index: Path) -> None:
             await safe_pause(pilot)
 
             assert preview.pipeline_busy(), (
-                "a running decode is work in flight — reporting idle lets the paint "
+                "a running decode is work in flight: reporting idle lets the paint "
                 "check spend its one repair on a load that has not finished yet"
             )
 

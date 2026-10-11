@@ -1,6 +1,6 @@
 """Serialising a search into a runnable ``fnd`` launch command.
 
-Pure unit tests over ``SearchSnapshot`` — no app, no index.
+Pure unit tests over ``SearchSnapshot``: no app, no index.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def test_tag_match_any_only_with_includes() -> None:
         _cmd(query="q", tag_include={"f": frozenset({"red"})}, tag_match_all=False)
         == "fnd q --tag red --tag-match any"
     )
-    # match_all is a mode — meaningless (and omitted) without include tags.
+    # match_all is a mode: meaningless (and omitted) without include tags.
     assert _cmd(query="q", tag_match_all=False) == "fnd q"
 
 

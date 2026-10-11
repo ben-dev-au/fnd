@@ -3,7 +3,7 @@
 A navigation reconciles more than once: the finalise commits the landing, then
 the background fill re-anchors after revealing the chunks it mounted above.
 ``_generation`` only cancels chains from an OLDER navigation, so both ran at the
-same generation and neither cancelled the other — two chains, two committed
+same generation and neither cancelled the other: two chains, two committed
 scrolls, and the retry budget spent twice (measured ~62 ticks and >1 commit on
 22 of 30 navigations).
 
@@ -74,7 +74,7 @@ def test_second_reconcile_supersedes_the_first_within_one_navigation() -> None:
     second_token, _ = strategy.calls[1]
     assert first_token != second_token, "each chain needs its own token to be cancellable"
 
-    # The superseded chain landing late must NOT reveal — the newer chain owns it.
+    # The superseded chain landing late must NOT reveal: the newer chain owns it.
     _, first_cb = strategy.calls[0]
     assert first_cb is not None
     first_cb()

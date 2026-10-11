@@ -83,7 +83,7 @@ def test_gate_skips_when_production_empty() -> None:
 
 
 def test_gate_skips_below_token_floor() -> None:
-    """Too few flat tokens to judge coverage — leave production alone."""
+    """Too few flat tokens to judge coverage: leave production alone."""
     calls: list[int] = []
     flat = "one two three four five six seven eight nine ten"  # 10 tokens < 20
     out = _tier("xxx", calls).refine(_ctx(flat), PageExtraction(markdown="prod"))
@@ -92,7 +92,7 @@ def test_gate_skips_below_token_floor() -> None:
 
 
 def test_gate_skips_when_coverage_above_floor() -> None:
-    """Born-digital: production already covers the flat layer — no fallback."""
+    """Born-digital: production already covers the flat layer; no fallback."""
     calls: list[int] = []
     flat = _distinct_words(30)
     prod = flat  # 100% coverage

@@ -63,7 +63,7 @@ async def test_toggling_collection_on_marks_all_sources(
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        # After toggle the whole collection is FULL — it scopes via the
+        # After toggle the whole collection is FULL: it scopes via the
         # collection filter, so it appears in ``collections`` (not by
         # enumerating its source ids into ``active_sources``).
         assert "TWO" in app._scope.collections, f"expected TWO full, got {app._scope.collections}"
@@ -165,7 +165,7 @@ async def test_cli_collection_shows_full_marker(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
 ) -> None:
     """Launching with ``--collection TWO`` should display TWO as
-    fully active (●) — every source toggled on — not as empty (○)."""
+    fully active (●), every source toggled on, not as empty (○)."""
     app = FNDApp(index_dir=built_index, collection="TWO", config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -190,8 +190,8 @@ async def test_cli_collection_shows_full_marker(
 async def test_legacy_scope_only_collections_renders_as_full(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
 ) -> None:
-    """A saved state from before the tri-state rework — where
-    ``_collections=["TWO"]`` but ``_active_sources=[]`` — should
+    """A saved state from before the tri-state rework, where
+    ``_collections=["TWO"]`` but ``_active_sources=[]``, should
     *render* as fully active (●) on every row, even though
     ``_active_sources`` stays empty in memory (we don't auto-expand
     it because the config / index might disagree on source paths)."""
@@ -251,7 +251,7 @@ async def test_collection_off_keeps_shared_source_of_active_sibling(
     kept its ● marker, so Home searches silently lost every md file.
 
     Both collections FULL scope via the collection filter, so survival
-    is observable as BBB staying ● (FULL) after AAA toggles off — its
+    is observable as BBB staying ● (FULL) after AAA toggles off: its
     shared vault is still in scope through BBB's collection channel."""
     app = FNDApp(index_dir=built_index, config=shared_source_config)
     async with app.run_test() as pilot:
@@ -330,7 +330,7 @@ async def test_collection_off_keeps_shared_source_of_partial_sibling(
     saved_empty_scope: Path,
 ) -> None:
     """#63: AAA full + BBB *partial* (only the shared vault on). Toggling
-    AAA off must not strip the vault — BBB still claims it, so BBB stays
+    AAA off must not strip the vault: BBB still claims it, so BBB stays
     ◐ and the vault row under BBB stays ●. The flat ``active_sources``
     list had no record of BBB's partial claim, so it was pruned."""
     app = FNDApp(index_dir=built_index, config=shared_source_config)
@@ -361,7 +361,7 @@ async def test_collection_off_keeps_shared_source_of_partial_sibling(
         await pilot.press("enter")
         await pilot.pause()
         assert "AAA" in app._scope.collections
-        # Toggle AAA off — the shared vault must survive (BBB still claims it).
+        # Toggle AAA off: the shared vault must survive (BBB still claims it).
         ctree.cursor_line = 0
         await pilot.pause()
         await pilot.press("enter")
@@ -384,7 +384,7 @@ async def test_panel_title_source_count_agrees_with_markers(
     """#58: the toggle-time title refresh must count sources by the same
     rule the row markers use (``collection_full or id in active_sources``).
     A CLI ``--collection`` full collection paints every row ● but, with
-    the old rule, the toggle-path title reported 0 sources — disagreeing
+    the old rule, the toggle-path title reported 0 sources: disagreeing
     with the full-rebuild title."""
     app = FNDApp(index_dir=built_index, collection="TWO", config=multi_source_config)
     async with app.run_test() as pilot:
@@ -408,7 +408,7 @@ async def test_panel_title_source_count_agrees_with_markers(
 async def test_toggle_collection_off_from_cli_state(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
 ) -> None:
-    """Bug B v2 — pressing Enter on a CLI-flag collection (rendered ●
+    """Bug B v2: pressing Enter on a CLI-flag collection (rendered ●
     with empty ``_active_sources``) must turn it off, not flip into
     the "fully on with sources" state silently."""
     app = FNDApp(index_dir=built_index, collection="TWO", config=multi_source_config)

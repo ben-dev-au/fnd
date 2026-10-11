@@ -4,9 +4,9 @@ Run as a sweep across every provider so a future drift catches the
 test instead of a user finding it:
 
 1. Every selectable row has a non-empty user-facing description.
-2. The `↗` glyph never appears in descriptions — it's reserved for
+2. The `↗` glyph never appears in descriptions: it's reserved for
    labels on rows whose ``external_app=True``.
-3. Labels don't end with `…` — that affordance moved to the trailing
+3. Labels don't end with `…`: that affordance moved to the trailing
    `[ Run… ]` button form.
 """
 
@@ -92,7 +92,7 @@ def test_every_row_has_a_user_facing_description() -> None:
 
 
 def test_no_descriptions_contain_external_arrow() -> None:
-    """↗ is a visual affordance — never in description prose.
+    """↗ is a visual affordance: never in description prose.
 
     The render layer adds the leading ↗ on rows where
     ``external_app=True``; if anything ships ↗ in description text,
@@ -113,7 +113,7 @@ def test_external_arrow_only_appears_on_external_app_labels() -> None:
 
 
 def test_no_labels_end_with_ellipsis() -> None:
-    """Labels in normal settings rows don't end with `…` — that
+    """Labels in normal settings rows don't end with `…`: that
     affordance lives in the trailing ``[ Run… ]`` action-button form
     (i.e. on ``action_label``, not the row label).
 
@@ -155,7 +155,7 @@ def test_action_labels_are_not_generic_open() -> None:
     for it in items:
         if it.kind != KIND_ACTION:
             continue
-        # The default action verb is "Run" — acceptable as a generic
+        # The default action verb is "Run": acceptable as a generic
         # fallback. "Open" is too vague; reject it.
         if it.action_label.strip().rstrip("…") == "Open":
             offenders.append((it.id, it.label, it.action_label))

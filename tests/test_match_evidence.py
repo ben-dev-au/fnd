@@ -2,7 +2,7 @@
 
 The load-bearing property is what it does NOT do: it never filters. The engine's
 match is what makes a result a result; if the highlighter can't paint it, the
-row is marked, never withheld — otherwise a highlighting bug would silently
+row is marked, never withheld, otherwise a highlighting bug would silently
 subtract matches the user never learns they missed.
 """
 
@@ -81,7 +81,7 @@ def test_reports_visible_when_the_rendered_substrate_matches() -> None:
 
 def test_stem_variants_count_as_visible() -> None:
     """The highlighter paints "testing" for a query of "test", so evidence
-    must agree — otherwise every stemmed hit would be marked unlocatable."""
+    must agree, otherwise every stemmed hit would be marked unlocatable."""
     spec = MatchSpec.from_query("test")
 
     assert has_paintable_match(_chunk(body_md="Unit testing matters"), spec) is True
@@ -105,7 +105,7 @@ def test_auto_fuzzy_near_misses_are_not_evidence() -> None:
 
 
 def test_an_explicit_fuzzy_request_is_evidence() -> None:
-    """``~N`` is the user asking for fuzzy, so a fuzzy hit IS their match —
+    """``~N`` is the user asking for fuzzy, so a fuzzy hit IS their match:
     the evidence spec drops only the AUTO safety net, never an explicit one."""
     chunk = _chunk(body_md="D. Encryption of the text")
     evidence = MatchSpec.from_query("test~1", auto_fuzzy=False)
@@ -137,7 +137,7 @@ def test_module_exposes_no_filter() -> None:
 
 def test_a_fuzzy_pass_hit_is_judged_by_what_gets_painted() -> None:
     """A hit the FUZZY pass produced exists because of fuzzy, so a fuzzy
-    highlight is its evidence — marking it unlocatable would flag every result
+    highlight is its evidence: marking it unlocatable would flag every result
     of a typo search. Hits from any other pass must show a real match."""
     from fnd.tui.match_evidence import FUZZY_PASS_INDEX, evidence_spec_for_pass
 

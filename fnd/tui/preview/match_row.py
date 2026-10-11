@@ -3,12 +3,12 @@
 A block's top row and its match's row are different numbers as soon as the block
 wraps: measured on a PDF contents page, a 63-row paragraph carries its match on
 row 32, so anchoring on the block top drops the match a screenful below the fold.
-A block taller than the viewport also holds more than one match — a 166-row
-fence carried 12 — so the stop set needs every row, not just the first.
+A block taller than the viewport also holds more than one match (a 166-row
+fence carried 12) so the stop set needs every row, not just the first.
 
-Both substrates resolve the rows here — the live scroll
+Both substrates resolve the rows here: the live scroll
 (:mod:`fnd.tui.preview_scroll`) and the frozen capture
-(:mod:`fnd.tui.preview.frozen`) — so a chunk lands in the same place whether or
+(:mod:`fnd.tui.preview.frozen`), so a chunk lands in the same place whether or
 not it has been captured yet.
 """
 
@@ -58,7 +58,7 @@ def _expanded_col(marks: list[tuple[int, int, int]], offset: int) -> int:
 
 
 def region_at_row(region: Region, row: int) -> Region:
-    """``region`` trimmed to begin ``row`` rows down — a block's match rather
+    """``region`` trimmed to begin ``row`` rows down: a block's match rather
     than the block itself."""
     if row <= 0:
         return region
@@ -66,7 +66,7 @@ def region_at_row(region: Region, row: int) -> Region:
 
 
 def block_plain(widget: Widget) -> str | None:
-    """A widget's rendered text — ``_content`` for every ``MarkdownBlock``, and
+    """A widget's rendered text: ``_content`` for every ``MarkdownBlock``, and
     ``.code`` for the non-block descendants ``_fallback_match_target`` scans."""
     try:
         plain = widget._content.plain  # type: ignore[attr-defined]
@@ -102,7 +102,7 @@ def _rows_for_offsets(plain: str, offsets: list[int], width: int, height: int) -
     neither model reproduces ``height``.
 
     Wrapping only ADDS rows, so a height equal to the source-line count proves
-    nothing wrapped — and the unwrapped model costs nothing against 4.9ms for
+    nothing wrapped, and the unwrapped model costs nothing against 4.9ms for
     the wrap engine on a paragraph at the structural build cap. Every offset is
     resolved in the one walk, so a block with many matches costs the same
     ``divide_line`` pass as a block with one.
@@ -157,7 +157,7 @@ def _match_rows(block: Widget, spec: MatchSpec | None) -> list[int]:
     if not offsets:
         return []
     # Cached per block: ``enumerate_stop_rows`` asks every mounted match block
-    # on every n/b press — 56 wrapped 4,000-char paragraphs cost 13.8ms cold and
+    # on every n/b press: 56 wrapped 4,000-char paragraphs cost 13.8ms cold and
     # 0.03ms after. Geometry is in the key, so a re-wrap recomputes.
     key = (content.width, content.height, len(plain), tuple(offsets))
     cached: tuple[object, list[int] | None] | None = getattr(block, "_fnd_match_row_cache", None)
@@ -174,7 +174,7 @@ def _match_rows(block: Widget, spec: MatchSpec | None) -> list[int]:
 
 def rows_to_first_match(block: Widget, spec: MatchSpec | None = None) -> int:
     """Rendered rows from ``block``'s top down to its first match's row, or
-    ``0`` when that cannot be established — the block's top is the safe anchor."""
+    ``0`` when that cannot be established: the block's top is the safe anchor."""
     rows = _match_rows(block, spec)
     return rows[0] if rows else 0
 

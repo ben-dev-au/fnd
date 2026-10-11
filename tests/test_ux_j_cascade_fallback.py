@@ -74,7 +74,7 @@ async def test_typo_query_falls_back_to_cascade(cfg: Config, fuzzy_index: Path) 
 @pytest.mark.asyncio
 async def test_exact_query_uses_fusion_path(cfg: Config, fuzzy_index: Path) -> None:
     """A clean exact-match query (no typos) should be served by the
-    fusion path — pass_index == 0 (lex) is the default attribution."""
+    fusion path: pass_index == 0 (lex) is the default attribution."""
     app = FNDApp(index_dir=fuzzy_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()

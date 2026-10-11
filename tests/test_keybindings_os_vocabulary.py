@@ -1,7 +1,7 @@
 """The Keybindings page (and the footer hint bar) speak the running OS.
 
 Before this, the cheat sheet hardcoded macOS: "Reveal in Finder", the ⌥ glyph,
-"hold Option", an Apple-Terminal tip, and a macOS-only Accessibility section —
+"hold Option", an Apple-Terminal tip, and a macOS-only Accessibility section,
 all shown verbatim to Linux and Windows users after the cross-platform port.
 
 Help text carries ``{file_manager}`` / ``{alt_key}`` / ``{alt_word}``
@@ -66,7 +66,7 @@ def test_localise_is_a_no_op_without_placeholders(monkeypatch: pytest.MonkeyPatc
 
 
 def test_localise_leaves_unrelated_braces_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Query-syntax help mentions `{60}` proximity and `{path}` app templates —
+    """Query-syntax help mentions `{60}` proximity and `{path}` app templates:
     substitution must be literal token replacement, not str.format."""
     _as(monkeypatch, "Darwin")
     text = "Proximity {60} and argv template {path} stay literal"
@@ -185,7 +185,7 @@ def test_accessibility_context_hint_degrades_off_macos(
 
 
 def test_footer_hints_use_the_platform_modifier(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The footer and the cheat sheet must agree — one renderer, one
+    """The footer and the cheat sheet must agree: one renderer, one
     vocabulary, so a Windows user isn't told to press ⌥."""
     _as(monkeypatch, "Darwin")
     assert "⌥↑↓" in render_hint_bar((), (("{alt_key}↑↓", "Skip"),)).plain
@@ -201,7 +201,7 @@ def test_footer_hint_labels_are_localised(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_results_footer_table_has_no_baked_in_glyph() -> None:
-    """The table must hold the placeholder, not ⌥ — otherwise the localise
+    """The table must hold the placeholder, not ⌥, otherwise the localise
     call in the renderer has nothing to work with."""
     results = FNDApp._FOOTER_CONTEXTUAL["results"]
     keys = [k for k, _ in results]

@@ -1,10 +1,10 @@
-"""Docling helper subprocess — runs under docling-slim's own tool venv.
+"""Docling helper subprocess: runs under docling-slim's own tool venv.
 
 Reads PDF page requests from stdin as JSON lines; writes one JSON
 response per request to stdout. Loads the docling model once at
 startup. Used by `fnd.extract._docling_daemon.DoclingDaemon`.
 
-NOT executed in fnd's project venv. fnd never imports this directly —
+NOT executed in fnd's project venv. fnd never imports this directly:
 it's launched as a subprocess via `python <this_file>`.
 
 Protocol:
@@ -47,7 +47,7 @@ def _main() -> None:
         # whole page on Apple Silicon. Pass the device as a string so we
         # don't depend on the AcceleratorDevice enum's import path. If
         # AcceleratorOptions can't be imported at all (docling moved it
-        # again), skip forcing CPU rather than failing to boot — the
+        # again), skip forcing CPU rather than failing to boot: the
         # PYTORCH_ENABLE_MPS_FALLBACK env above still routes unsupported
         # ops to CPU.
         with contextlib.suppress(Exception):

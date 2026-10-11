@@ -1,4 +1,4 @@
-"""Update all collections — end-to-end.
+"""Update all collections: end-to-end.
 
 The workflow:
   1. Settings menu drilled into Indexing or Collections.

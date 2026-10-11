@@ -64,7 +64,7 @@ def test_module_with_only_garbage_files_is_not_installed(
 ) -> None:
     """A namespace-shaped directory whose ``__init__.py`` has been
     removed (only "__init__ 2.py" or similar detritus remains) is NOT
-    installed — find_spec would otherwise treat it as a namespace
+    installed: find_spec would otherwise treat it as a namespace
     package and the naive check would lie."""
     site = tmp_path / "site-packages"
     pkg = site / "fnd_test_husk"
@@ -99,7 +99,7 @@ def test_uv_tool_package_uses_uv_dir_not_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """For ``install_via='uv-tool'``, detection must look at uv's tool root
-    (``paths.uv_tool_root()/<name>``) — NOT at PATH. A system-wide binary
+    (``paths.uv_tool_root()/<name>``), NOT at PATH. A system-wide binary
     with the same name (e.g. user already has a ``docling`` from a separate
     Python install) must not register as fnd's install.
 
@@ -122,7 +122,7 @@ def test_uv_tool_ignores_system_binary_on_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Even when ``shutil.which`` would resolve a system-wide binary,
-    uv-tool detection must NOT use that — it'd misreport fnd's install
+    uv-tool detection must NOT use that: it'd misreport fnd's install
     state when the user has unrelated copies of the same CLI on PATH."""
     tool_root = tmp_path / "uv-tools"
     tool_root.mkdir()

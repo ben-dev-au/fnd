@@ -32,7 +32,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 
 @pytest.fixture
 def medium_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """8 docs that all mention "quick brown fox" — fusion's the right
+    """8 docs that all mention "quick brown fox": fusion's the right
     regime here (lots of candidates, no clear winner)."""
     a = tmp_path / "notes"
     for i in range(8):
@@ -113,7 +113,7 @@ def test_cascade_trace_records_pass_widening(
     with hits.
 
     Uses ``glimmer`` / ``glimer`` (both pass through the index analyser unchanged
-    so the on-disk Levenshtein distance is exactly 1) — same canonical
+    so the on-disk Levenshtein distance is exactly 1): same canonical
     fixture as ``test_ux_j_cascade_fallback.py``."""
     from fnd.cascade import cascade_search
     from fnd.query import Searcher

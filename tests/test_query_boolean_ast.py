@@ -2,7 +2,7 @@
 
 The end-to-end search semantics live in test_query_acceptance.py; this pins the
 *structure* the parser produces so operator precedence, grouping, prefix/boost
-handling, and leaf classification can't drift. Pure Python — no index.
+handling, and leaf classification can't drift. Pure Python: no index.
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ def test_empty_query_is_none() -> None:
 
 
 def test_single_child_groups_unwrap() -> None:
-    # A lone term in parens collapses to the term — no needless wrapper node.
+    # A lone term in parens collapses to the term: no needless wrapper node.
     assert parse_query_ast("(entropy)") == Term("entropy")
 
 

@@ -94,7 +94,7 @@ def _make_chunk(seq: int = 0) -> Chunk:
     )
 
 
-# 1 — Indexing screen surfaces cache rows
+# 1: Indexing screen surfaces cache rows
 
 
 @pytest.mark.asyncio
@@ -162,14 +162,14 @@ async def test_cache_size_row_shows_count_and_size(
         assert "B" in v or "KB" in v or "MB" in v
 
 
-# 2 — Cache rows are direct children of Indexing (no maintenance drill).
+# 2: Cache rows are direct children of Indexing (no maintenance drill).
 
 
 @pytest.mark.asyncio
 async def test_cache_actions_inline_under_indexing(
     built_index: Path, cfg: Config, isolated_cache: Path
 ) -> None:
-    """No drill needed — Update cache / Rebuild / Free-cache live on the
+    """No drill needed: Update cache / Rebuild / Free-cache live on the
     Indexing screen itself."""
     from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
@@ -187,12 +187,12 @@ async def test_cache_actions_inline_under_indexing(
         assert "pdf_texture.cache_clear" in ids
 
 
-# 3 — Confirm dialog chrome + keyboard
+# 3: Confirm dialog chrome + keyboard
 
 
 @pytest.mark.asyncio
 async def test_clear_confirm_chrome(built_index: Path, cfg: Config, isolated_cache: Path) -> None:
-    """Clear is destructive — confirm uses $error border and the
+    """Clear is destructive: confirm uses $error border and the
     irreversible callout. Mirrors DeleteCollectionScreen chrome
     (OptionList Yes/Cancel, hint bar at bottom)."""
     cache = ExtractionCache(root=isolated_cache)
@@ -221,7 +221,7 @@ async def test_clear_confirm_chrome(built_index: Path, cfg: Config, isolated_cac
         assert "Cancel" in hint
 
 
-# 4 — Keyboard equivalence (arrows + enter)
+# 4: Keyboard equivalence (arrows + enter)
 
 
 @pytest.mark.asyncio
@@ -268,7 +268,7 @@ async def test_clear_yes_path(built_index: Path, cfg: Config, isolated_cache: Pa
         assert not isolated_cache.exists() or cache.entry_count() == 0
 
 
-# 5 — Esc cancels without side effect
+# 5: Esc cancels without side effect
 
 
 @pytest.mark.asyncio
@@ -288,7 +288,7 @@ async def test_clear_esc_cancels(built_index: Path, cfg: Config, isolated_cache:
         assert cache.entry_count() == 1
 
 
-# 7 — Root summary reflects cache state
+# 7: Root summary reflects cache state
 
 
 def test_root_summary_includes_cache(isolated_cache: Path, cfg: Config) -> None:
@@ -307,7 +307,7 @@ def test_root_summary_includes_cache(isolated_cache: Path, cfg: Config) -> None:
     cache = ExtractionCache(root=isolated_cache)
     cache.put("aa--v1", [_make_chunk(0)])
 
-    # Pre-seed the lazy slot — bypasses the worker so the test runs
+    # Pre-seed the lazy slot: bypasses the worker so the test runs
     # deterministically without needing a Textual event loop.
     _CACHE["pdf_texture.summary.cache_short"] = ("cache 1 KB", time.monotonic())
     _CACHE["pdf_texture.summary.engine"] = ("✗ engine off", time.monotonic())

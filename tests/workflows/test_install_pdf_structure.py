@@ -1,4 +1,4 @@
-"""Install pdf-structure workflow — end-to-end-ish.
+"""Install pdf-structure workflow: end-to-end-ish.
 
 We don't actually run uv pip install in tests (it would hit the
 network and take minutes). Instead we exercise the parts the user
@@ -78,7 +78,7 @@ async def test_confirm_screen_mounts(
 async def test_progress_modal_handles_failed_event(
     app_factory: Callable[[Config], FNDApp], cfg_one: Config
 ) -> None:
-    """The user reported 'Install failed. exit 1' — the modal must
+    """The user reported 'Install failed. exit 1': the modal must
     not crash on a failed event and must offer Close to dismiss."""
     from textual.widgets import OptionList
 

@@ -4,7 +4,7 @@ Pre-fix, ``body`` was the raw page text only; the page heading (derived
 from the embedded TOC, or from font-size clustering) went to
 ``heading_path`` but never into ``body``. Since search gates visibility
 on ``body``, a TOC section heading that isn't rendered verbatim in the
-page text was unsearchable — unlike markdown/docx/pptx, which all fold a
+page text was unsearchable: unlike markdown/docx/pptx, which all fold a
 chunk's own heading into ``body``.
 """
 

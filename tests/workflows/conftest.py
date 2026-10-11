@@ -47,7 +47,7 @@ def cfg_three(mini_corpus: Path, tmp_path: Path) -> Config:
 
 @pytest.fixture
 def cfg_one(mini_corpus: Path) -> Config:
-    """One collection — minimal for single-collection workflows."""
+    """One collection: minimal for single-collection workflows."""
     return Config(
         defaults=Defaults(),
         collections={"default": CollectionConfig(sources=[SourceConfig(path=mini_corpus)])},

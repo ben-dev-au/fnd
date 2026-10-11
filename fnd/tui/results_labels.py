@@ -36,7 +36,7 @@ __all__ = [
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # The engine matched this chunk, but nothing in the text the preview renders
-# carries a paintable span — selecting the row lands somewhere with no visible
+# carries a paintable span: selecting the row lands somewhere with no visible
 # highlight. The row is still listed (the engine's match is what makes a result
 # a result); the glyph says the match is there but couldn't be located, so a
 # highlighting regression shows up as marks on screen instead of results
@@ -58,7 +58,7 @@ def _score_bar(  # pyright: ignore[reportUnusedFunction]
 ) -> str:
     """Pure utility kept for the legacy test surface.
 
-    The TUI no longer draws score bars — the user's feedback on the
+    The TUI no longer draws score bars: the user's feedback on the
     eighth-block and full-block variants was that they read as visual
     noise. The current label formatters use :func:`_score_style`
     instead, colouring the numeric score in line with the theme.
@@ -83,13 +83,13 @@ def _score_style(score: float, max_score: float) -> str:
         return "dim"
     ratio = max(0.0, min(1.0, score / max_score))
     if ratio >= 0.85:
-        return "bold #9ece6a"  # tokyo-night green — leader
+        return "bold #9ece6a"  # tokyo-night green: leader
     if ratio >= 0.6:
         return "#7dcfff"  # cyan
     if ratio >= 0.35:
         return "#7aa2f7"  # accent blue (theme default)
     if ratio >= 0.15:
-        return "#bb9af7"  # cool magenta — fades from accent
+        return "#bb9af7"  # cool magenta: fades from accent
     return "dim #565f89"
 
 
@@ -209,13 +209,13 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     with the file/section text (right, may truncate cleanly).
 
     Score-first layout means the colour-coded ranking signal is always
-    visible regardless of filename length — long titles truncate
+    visible regardless of filename length: long titles truncate
     against the right edge of the pane without ever eating the score.
     """
     from rich.text import Text
 
     # Last-line-of-defence sanitise so a raw ``\t`` (or other control char) from
-    # any source — snippet, heading crumb, filename — can never over-run the row
+    # any source (snippet, heading crumb, filename) can never over-run the row
     # and corrupt the pane border. Snippets are already cleaned at their source
     # (fnd.query._make_snippet); this covers the locator/filename paths too.
     text = display_line(text)
@@ -239,7 +239,7 @@ def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
 
     A leading ``Templates`` segment is dropped when ``Templates`` also
     appears as a word in the file basename (``Design Notes - Templates
-    and Streams``) or in the title — covers both the
+    and Streams``) or in the title: covers both the
     pure ``# Templates`` H1 case and the deep multi-word filename case.
     """
     if not heading_path:
@@ -251,7 +251,7 @@ def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
     parts = [p.strip() for p in heading_path.split(">") if p.strip()]
     haystack = _words(Path(path).stem) | _words(title or "")
     # If every segment is just a word from the filename / title, the
-    # whole crumb is redundant — keep the deepest one as the location
+    # whole crumb is redundant: keep the deepest one as the location
     # marker, or drop it entirely when there's only one segment so the
     # caller can fall back to a chunk locator.
     if parts and all(_words(p).issubset(haystack) for p in parts):
@@ -273,8 +273,8 @@ def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
     """Middle-truncate ``name`` to ``max_width`` chars, keeping the extension
     visible: ``really_long_report_final_v3.pdf`` -> ``really_…nal_v3.pdf``.
 
-    A terminal's default right-clip drops the extension — the one part that
-    says what kind of file it is — so we elide the stem's middle and keep both
+    A terminal's default right-clip drops the extension (the one part that
+    says what kind of file it is) so we elide the stem's middle and keep both
     ends plus the suffix. When even one stem char won't fit we still show
     ``…<suffix>``; only when the suffix itself can't fit (``max_width`` shorter
     than ``…`` + suffix) do we fall back to a plain right-truncation that drops
@@ -304,8 +304,8 @@ def _format_hit_label(
     """Result-tree row label: short locator left, snippet right.
 
     Locator is a few chars (page / slide / trimmed heading / chunk N)
-    so the body snippet — the actually useful context for "is this
-    the match I want" — claims most of the row width.
+    so the body snippet (the actually useful context for "is this
+    the match I want") claims most of the row width.
 
     ``match_visible=False`` prepends :data:`_UNLOCATABLE_GLYPH`: the row stays,
     but the user is told the preview won't be able to show them the match.
@@ -334,7 +334,7 @@ def _format_hit_label(
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
     # Leading, not trailing: locator + 80-char snippet routinely overruns the
     # results pane, so the row is hard-truncated at the border and anything
-    # appended to the end is never drawn. Verified in a real terminal — the
+    # appended to the end is never drawn. Verified in a real terminal: the
     # marker was being emitted correctly and clipped off screen every time.
     prefix = "" if match_visible else f"{_UNLOCATABLE_GLYPH} "
     return _build_label(f"{prefix}{body}{pass_marker}", h.score, max_score)

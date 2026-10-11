@@ -1,7 +1,7 @@
 """Unquoted queries must not return stopword-only matches.
 
 A chunk that overlaps the query only via a stopword ("and"/"in"/"the")
-carries ~zero IDF — it ranks at the tail but was still retrieved, pure
+carries ~zero IDF: it ranks at the tail but was still retrieved, pure
 noise (and, since stopword highlighting was dropped, shows no highlight).
 A chunk must match at least one CONTENT term to be returned. Quoted
 phrases keep their stopwords.

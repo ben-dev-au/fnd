@@ -4,7 +4,7 @@
 source on disk and diffs it against the tantivy index. On a real corpus
 that costs seconds (measured 2-3 s; 20-30 s mid-rebuild, when the scan
 contends with the index the runner is rewriting). Run on the UI thread
-it freezes the whole TUI until it returns — the recurring "portal takes
+it freezes the whole TUI until it returns: the recurring "portal takes
 forever to open" stall.
 
 Every UI consumer reads through this module instead of calling the scan
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
 
-# (collection, path, reason, recorded_at) — the shape returned by
+# (collection, path, reason, recorded_at): the shape returned by
 # settings_screen._flat_pdfs_with_reasons.
 Row = tuple[str, str, str, str | None]
 
@@ -50,7 +50,7 @@ _TTL_SECONDS = 5.0
 
 def cached_rows(collection: str | None = None) -> list[Row] | None:
     """Last computed rows for ``collection``, or None if never computed.
-    Instant — safe to call from the render path / event loop."""
+    Instant: safe to call from the render path / event loop."""
     with _LOCK:
         entry = _CACHE.get(collection)
         return entry[0] if entry is not None else None
@@ -147,7 +147,7 @@ def _deliver(app: FNDApp | Any, cb: Callable[[list[Row]], None], rows: list[Row]
     """Marshal one callback onto the UI thread. Under test runs the
     worker can finish before the loop is up; close any returned coroutine
     so it isn't reported as never-awaited. App teardown / screen
-    reshuffle is benign — the cached value is read on the next render."""
+    reshuffle is benign: the cached value is read on the next render."""
     import asyncio
 
     with contextlib.suppress(Exception):

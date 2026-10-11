@@ -28,7 +28,7 @@ from textual.widgets import Button
 
 from fnd.tui.ui_text import PlainStatic
 
-# macOS Settings URL — opens straight to the Accessibility privacy pane
+# macOS Settings URL: opens straight to the Accessibility privacy pane
 # (Sequoia and earlier). Stable since macOS 13.
 _SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 
@@ -84,7 +84,7 @@ class AccessibilityPermissionScreen(ModalScreen[None]):
 
     def __init__(self, *, action_desc: str = "open the file at its match position") -> None:
         super().__init__()
-        # What the user was trying to do — flows into the modal copy so the
+        # What the user was trying to do: flows into the modal copy so the
         # message reads naturally regardless of which AX-gated path tripped.
         self._action_desc = action_desc
 

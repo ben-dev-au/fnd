@@ -29,7 +29,7 @@ def test_save_then_load_round_trips_filters(tmp_path: Path) -> None:
     """Filter selections must round-trip alongside scope state.
 
     Empty ``filter_kinds`` = "all kinds"; ``filter_date == 'any'`` = "any
-    date" — the absence of an explicit selection.
+    date": the absence of an explicit selection.
     """
     p = tmp_path / "scope.toml"
     original = UiState(
@@ -42,7 +42,7 @@ def test_save_then_load_round_trips_filters(tmp_path: Path) -> None:
 
 
 def test_load_partial_filters_table(tmp_path: Path) -> None:
-    """A scope.toml without [filters] should still load — the filters
+    """A scope.toml without [filters] should still load: the filters
     feature shouldn't break anyone whose state predates it."""
     p = tmp_path / "scope.toml"
     p.write_text(

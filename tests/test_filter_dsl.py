@@ -168,7 +168,7 @@ def test_eval_inequality() -> None:
 
 
 def test_eval_missing_field_strict_null() -> None:
-    """Per spec: missing field treats the predicate as False — even for !=
+    """Per spec: missing field treats the predicate as False, even for !=
     and even for `not in`. The user opted into strict null."""
     pred_eq = compile_filter("Project == 'Website'")
     pred_neq = compile_filter("Project != 'Website'")

@@ -88,7 +88,7 @@ def test_current_line_names_the_provider_and_wait_while_fetching() -> None:
     assert "Fetching from iCloud Drive" in out
     assert "Team Meeting.md" in out
     assert "waiting 9s" in out
-    # The fetch owns the line — the unrelated per-page stall tag would be
+    # The fetch owns the line: the unrelated per-page stall tag would be
     # misleading while the extractor hasn't even been handed the file.
     assert "stuck" not in out
 

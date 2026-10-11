@@ -82,7 +82,7 @@ def invalidate_todo_count_cache() -> None:
     """Drop every cached flat-PDF scan so the next refresh recomputes.
     Called when a chain finishes: a run can resolve files across multiple
     collections, so the unscoped count AND each per-collection scope (read
-    by StillFlatDrillIn) are stale — clear all of them."""
+    by StillFlatDrillIn) are stale, clear all of them."""
     from fnd.tui import flat_pdf_scan
 
     flat_pdf_scan.invalidate_all()
@@ -118,7 +118,7 @@ def _format_current_line(
 
     A cloud fetch blocks the worker that asked for it, so no progress event
     can arrive while it runs. When one is in flight it takes the line and
-    names the provider, the file, and how long — that is the difference
+    names the provider, the file, and how long: that is the difference
     between a legitimate download and an app the user reads as frozen.
     """
     if wait is not None:
@@ -301,7 +301,7 @@ class IndexerScreen(ModalScreen[None]):
         return f"Update index › {self._collection}"
 
     def _refresh_title(self) -> None:
-        """Re-render the box title — used when the chain advances to
+        """Re-render the box title: used when the chain advances to
         the next collection. Reads the new collection name + chain
         index from the FNDApp."""
         app = self._fnd_app()
@@ -555,13 +555,13 @@ class IndexerScreen(ModalScreen[None]):
         """Collection scope for the flat-PDF badge + drill-in: the active
         collection for a single Update, all collections (None) mid-chain
         (the chain cycles through several). Keeps the badge count and the
-        drill-in it opens consistent — same scope for both."""
+        drill-in it opens consistent: same scope for both."""
         return self._collection if self._chain_total <= 1 else None
 
     def _schedule_todo_refresh(self) -> None:
         """Recompute the flat-PDF count off the event loop and re-sync
         the action options when it lands. Bounded to mount + per-
-        collection completion — never the 1Hz tick — so a long rebuild
+        collection completion, never the 1Hz tick, so a long rebuild
         doesn't spawn a scan every few seconds that contends with the
         indexer it's measuring."""
         from fnd.tui import flat_pdf_scan
@@ -841,7 +841,7 @@ class IndexerScreen(ModalScreen[None]):
 
         The compromise for a corpus that is mostly evicted: keep the run
         going at local-disk speed and list what was left behind, without
-        having to cancel. Run-scoped — the next Update fetches again.
+        having to cancel. Run-scoped: the next Update fetches again.
         """
         app = self._fnd_app()
         skip = app._indexer.skip_cloud
@@ -1151,8 +1151,8 @@ async def drive_indexer(
         )
         app._indexer.chain_history = history  # type: ignore[attr-defined]
 
-    # A superseded run — a newer explicit run bumped the generation while
-    # this one was winding down (e.g. cancel-then-Rebuild-all) — must not
+    # A superseded run: a newer explicit run bumped the generation while
+    # this one was winding down (e.g. cancel-then-Rebuild-all): must not
     # touch the shared chain state, or its late teardown would clobber the
     # queue the newer run just set up. The newer run owns the chain now.
     if getattr(app._indexer, "run_seq", run_seq) != run_seq:
@@ -1236,7 +1236,7 @@ class _SuppressFullQueueLoss:
 
     Unbounded queue is fine for thousands of events; if for some reason
     a backlog appears (UI completely frozen), losing intermediate
-    file_complete events is acceptable — the next one carries fresh
+    file_complete events is acceptable: the next one carries fresh
     totals.
     """
 

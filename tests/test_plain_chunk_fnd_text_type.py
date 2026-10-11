@@ -4,7 +4,7 @@
 and stashed that same ``Text`` on ``line.fnd_text``. Match counting
 (``MatchNavigator._count_stops``) and stop-region scanning
 (``enumerate_stop_rows``) then feed ``fnd_text`` to ``text_has_any_match``,
-which runs ``DOC_WORD_RE.finditer`` over it — ``re`` needs a ``str``, so a
+which runs ``DOC_WORD_RE.finditer`` over it: ``re`` needs a ``str``, so a
 rich ``Text`` raised ``TypeError: expected string or bytes-like object, got
 'Text'`` and crashed the query (e.g. a PDF's "SPAIN" line while
 searching ``bastardo``).

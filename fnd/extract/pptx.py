@@ -108,7 +108,7 @@ def _shape_md_lines(shape: BaseShape) -> list[str]:
 
 
 def _table_md(shape: BaseShape) -> str:
-    """Serialise a pptx table shape to a GFM pipe table — same shape as
+    """Serialise a pptx table shape to a GFM pipe table: same shape as
     the docx extractor produces."""
     if not shape.has_table:
         return ""
@@ -144,7 +144,7 @@ def extract(path: Path) -> Iterator[Chunk]:
         raise
     except Exception as e:
         # Parser libs raise everything from RuntimeError to opaque C
-        # extension errors. Broad except is intentional — the goal is
+        # extension errors. Broad except is intentional: the goal is
         # "don't let one bad doc stop the index build."
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
 

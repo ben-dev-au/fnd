@@ -143,7 +143,7 @@ def test_same_tag_across_sources_is_or_not_and(tmp_path: Path) -> None:
     """A tag fanned across sources means 'from either source'.
 
     ANDing them would demand the same tag in frontmatter AND Finder, which
-    a real file essentially never satisfies — this is what `--tag x` with
+    a real file essentially never satisfies: this is what `--tag x` with
     both sources enabled compiles to.
     """
     index = _build(tmp_path)

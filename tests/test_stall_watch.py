@@ -1,6 +1,6 @@
 """The stall watch must fire, name what was running, and stay off by default.
 
-A diagnostic that silently stops reporting is worse than none — it turns "no
+A diagnostic that silently stops reporting is worse than none: it turns "no
 stalls logged" into evidence when it is really an absence of evidence. So the
 tests here are that it arms only when asked, that a genuinely blocked loop
 produces a line, and that the line carries the attribution that makes it useful.
@@ -45,7 +45,7 @@ class _FakePrefetch:
 
 
 class _FakeApp:
-    """Only what the watch reads — it must not need a running TUI to work."""
+    """Only what the watch reads: it must not need a running TUI to work."""
 
     def __init__(self) -> None:
         self.lines: list[str] = []
@@ -84,7 +84,7 @@ async def test_a_blocked_loop_is_reported_with_what_was_running() -> None:
     watch = StallWatch(app, threshold_ms=150)  # type: ignore[arg-type]
     watch.start()
     await asyncio.sleep(0.1)
-    # Block the loop the way a capture does — synchronously, no awaits — and
+    # Block the loop the way a capture does (synchronously, no awaits) and
     # then FINISH, clearing the marker before the watch can wake. That is what
     # real work does, and it is why sampling only on waking named the successor
     # and exonerated the culprit every time.
@@ -132,7 +132,7 @@ async def test_cpu_time_separates_real_work_from_a_sleeping_process() -> None:
     watch = StallWatch(app, threshold_ms=150)  # type: ignore[arg-type]
     watch.start()
     await asyncio.sleep(0.1)
-    # A BUSY block — real work, not a sleep. Bounded by CPU time, as
+    # A BUSY block: real work, not a sleep. Bounded by CPU time, as
     # StallWatch measures it: a starved run gets a fraction of a core, so a
     # wall-clock spin burned 78-193ms of its 400ms and failed a correct figure.
     cpu_target = time.process_time() + 0.4
@@ -145,7 +145,7 @@ async def test_cpu_time_separates_real_work_from_a_sleeping_process() -> None:
     assert stalls, f"a 400ms busy block went unreported: {app.lines}"
     cpu_ms = float(stalls[0].split("cpu=", 1)[1].split("ms", 1)[0])
     assert cpu_ms > 200, (
-        f"work that spun for 400ms reported only {cpu_ms}ms of CPU — the figure "
+        f"work that spun for 400ms reported only {cpu_ms}ms of CPU: the figure "
         f"cannot separate a blocked loop from an idle one: {stalls[0]}"
     )
 
@@ -192,7 +192,7 @@ def test_the_sample_key_survives_windows_path_separators() -> None:
     expected = "presenter.py:_mount_chunks_async < app.py:_process_messages"
     assert stack_key(posix) == expected
     assert stack_key(windows) == expected, (
-        "a Windows stack keyed off something other than its frames — "
+        "a Windows stack keyed off something other than its frames: "
         "unnormalised separators drop every frame and collapse to ''"
     )
 
@@ -219,6 +219,6 @@ async def test_a_blocked_loop_that_burns_nothing_reports_almost_no_cpu() -> None
     cpu_ms = float(stalls[0].split("cpu=", 1)[1].split("ms", 1)[0])
     # An upper bound, so contention can only push the figure further under it.
     assert cpu_ms < 50, (
-        f"a loop that slept for 450ms reported {cpu_ms}ms of CPU — the figure "
+        f"a loop that slept for 450ms reported {cpu_ms}ms of CPU: the figure "
         f"cannot separate a blocked loop from real work: {stalls[0]}"
     )

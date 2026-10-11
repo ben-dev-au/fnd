@@ -1,12 +1,12 @@
-"""The progress line — one row spanning the full width of the panes.
+"""The progress line: one row spanning the full width of the panes.
 
 Blank at rest. The row itself is always reserved (``visibility: hidden``,
 not ``display: none``) so showing it never reflows the panes above, but
 nothing is painted until an operation starts.
 
 Drawn as one box-drawing glyph per cell in the pane border's weight,
-following :class:`fnd.tui.preview_scrollbar.ThinScrollBarRender` — the
-filled run in the accent, the remainder as a dim rule — so the line
+following :class:`fnd.tui.preview_scrollbar.ThinScrollBarRender` (the
+filled run in the accent, the remainder as a dim rule) so the line
 reads as part of the frame rather than as a widget bolted underneath it.
 Integer cells only; no partial-block end caps, which flicker.
 """
@@ -27,7 +27,7 @@ from fnd.display_text import display_line
 # Both runs are the pane border's own rule, so the line sits in the frame at
 # exactly the weight of the borders it sits under; only colour separates the
 # filled part from the remainder. A heavier glyph for the fill was tried first
-# and read as too loud — progress is ambient information, not an alert, and it
+# and read as too loud: progress is ambient information, not an alert, and it
 # should not compete with the content for the eye. If it needs to recede
 # further, dim the accent rather than changing the glyph again.
 FILL_GLYPH = "─"
@@ -49,8 +49,8 @@ def progress_line_segments(
     track_style: RichStyle | None = None,
     label_style: RichStyle | None = None,
 ) -> list[Segment]:
-    """Render one progress row. Pure — no widget, no console, no styles
-    resolution — so the layout rules below are unit-testable directly."""
+    """Render one progress row. Pure: no widget, no console, no styles
+    resolution, so the layout rules below are unit-testable directly."""
     if width <= 0:
         return []
     fraction = 0.0 if fraction < 0.0 else (1.0 if fraction > 1.0 else fraction)
@@ -114,7 +114,7 @@ class FNDProgressBar(Widget):
     /* visibility:hidden keeps the row, so toggling never reflows the panes above. */
     FNDProgressBar.-idle { visibility: hidden; }
     FNDProgressBar > .progress--fill  { color: $accent; }
-    /* Ambient work — a background reindex — in the same accent at half
+    /* Ambient work (a background reindex) in the same accent at half
        strength. Two operations can never share the line, so this is what
        separates "the thing I just asked for" from "something running on its
        own": a line that appears without the user touching anything is

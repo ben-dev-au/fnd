@@ -62,7 +62,7 @@ def test_pretty_key_substitutions_are_applied() -> None:
 
 def test_static_sections_present() -> None:
     """Widget bindings outside the action registry (Settings menu, source form,
-    Open-with modal) are listed too. The AX-modal section is macOS-only — see
+    Open-with modal) are listed too. The AX-modal section is macOS-only: see
     ``tests/test_keybindings_os_vocabulary.py`` for its per-platform gate."""
     items = _provider_keybindings(_fake_app())
     headers = _headers(items)
@@ -106,7 +106,7 @@ def test_context_hint_none_keeps_default_order() -> None:
     headers = _headers(items)
     assert headers[0] == "Global"
     # When no hint is supplied, the order should follow the bucket
-    # declaration order — Results pane comes before Preview pane.
+    # declaration order: Results pane comes before Preview pane.
     if "Results pane" in headers and "Preview pane" in headers:
         assert headers.index("Results pane") < headers.index("Preview pane")
 
@@ -119,7 +119,7 @@ def test_unknown_context_hint_falls_back_to_default_order() -> None:
 
 def test_context_hint_marks_matching_header_for_highlight() -> None:
     """The hint section's header carries the ``_hint_section_`` sentinel
-    in its ``keywords`` — SettingsList reads that to apply the
+    in its ``keywords``: SettingsList reads that to apply the
     ``-hint-section`` CSS class so the band paints with the accent
     border + bg. Without this marker the section just sits at the top
     of the list with no visual cue."""
@@ -136,7 +136,7 @@ def test_no_context_hint_means_no_highlighted_header() -> None:
 
 
 def test_every_key_row_label_differs_from_description() -> None:
-    """The DetailStrip surfaces ``description`` when a row is focused —
+    """The DetailStrip surfaces ``description`` when a row is focused,
     if label == description, the strip just echoes the row label and
     adds zero value. Every row must carry a short label AND a
     distinct long-form description."""
@@ -152,7 +152,7 @@ def test_every_key_row_label_differs_from_description() -> None:
 
 def test_every_key_row_has_a_description() -> None:
     """A row with no description leaves the DetailStrip empty when
-    focused — every keybinding should have a long-form explanation."""
+    focused: every keybinding should have a long-form explanation."""
     items = _provider_keybindings(_fake_app())
     missing = [it.label for it in items if not it.is_header and not it.description]
     assert not missing, missing

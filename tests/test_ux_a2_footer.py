@@ -2,7 +2,7 @@
 
 Lazygit shows ~4-6 hints at any moment, prioritised by what the user
 can usefully do given their current focus. FND's default Textual
-``Footer`` dumps every bound action — busy, hard to scan. This test
+``Footer`` dumps every bound action: busy, hard to scan. This test
 suite pins the curated behaviour: result-pane actions appear when the
 results tree is focused, query actions when the query input is, and a
 small set of global actions are always visible.
@@ -35,7 +35,7 @@ def _footer_text(app: FNDApp) -> str:
 
 @pytest.mark.asyncio
 async def test_footer_shows_at_most_six_hints(built_index: Path) -> None:
-    """Hard cap on visible hints — beyond this it stops being a glance
+    """Hard cap on visible hints: beyond this it stops being a glance
     and becomes a list. lazygit's footer holds 5-6 hints comfortably."""
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
@@ -50,14 +50,14 @@ async def test_footer_shows_at_most_six_hints(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_footer_query_context_shows_submit_not_open(built_index: Path) -> None:
     """When the query input is focused, the most relevant action is
-    'submit query' (Enter). 'Open file' is irrelevant — there's no
+    'submit query' (Enter). 'Open file' is irrelevant: there's no
     selected file yet."""
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         # Default focus is the query input.
         text = _footer_text(app)
-        # Open / peek / default-app are result actions — they should not
+        # Open / peek / default-app are result actions: they should not
         # appear when no result is even selectable.
         assert "Open" not in text or "Peek" not in text or "Default" not in text, (
             f"query-context footer should hide result-only actions: {text!r}"
@@ -68,7 +68,7 @@ async def test_footer_query_context_shows_submit_not_open(built_index: Path) -> 
 async def test_footer_results_context_shows_open(built_index: Path) -> None:
     """When the results tree is focused with a hit selected, the
     open-related actions (Open / Default / Peek) become the most
-    relevant — they should appear in the footer."""
+    relevant: they should appear in the footer."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()

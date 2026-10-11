@@ -90,7 +90,7 @@ async def test_requery_same_flat_file_lands_on_new_match(built_index: Path) -> N
 async def test_md_match_in_tall_table_lands_on_matched_row(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    """A match in a lower row of a tall table scrolls that row on-screen —
+    """A match in a lower row of a tall table scrolls that row on-screen,
     not the top of the table. ``scroll_y > 0`` is insufficient: the
     top-of-table bug satisfies it. Asserts both the recorded coordinate
     points at the matched cell AND that cell's screen-y is in the pane
@@ -202,12 +202,12 @@ def _coldnav_file(label: str) -> str:
     early-middle section whose match is a prose line a few rows below its
     heading, preceded by varied content (tables, code) so chunk heights are
     non-trivial. The query term ``quartzfin`` is UNIQUE to that prose line and
-    appears in NO heading — so the scroll's match-block resolution is correct;
+    appears in NO heading, so the scroll's match-block resolution is correct;
     only the cold-render scroll *position* is at issue."""
     lines: list[str] = [f"# {label} Notes", "", "Lead-in overview paragraph.", ""]
     # A few tall front sections so the match sits ~10-15% down the file by
     # line count, while staying within the background-fill radius (all
-    # above-chunks mounted — this is the under-shoot path, not lazy-mount).
+    # above-chunks mounted: this is the under-shoot path, not lazy-mount).
     for s in range(8):
         lines.append(f"## Section {s} overview")
         lines.append("")
@@ -269,7 +269,7 @@ def _coldnav_match_region(
     app: FNDApp, parent_id: str, focus_seq: int
 ) -> Callable[[], Region | None]:
     """Return a probe for the region of the widget holding the unique query
-    text in the target file — the prose match the cold-nav scroll must land on.
+    text in the target file: the prose match the cold-nav scroll must land on.
     The probe returns None until that widget is laid out in the active preview.
     """
 
@@ -280,8 +280,8 @@ def _coldnav_match_region(
         chunk = ap.match_targets.get(focus_seq) or ap.chunk_widgets.get(focus_seq)
         if chunk is None:
             return None
-        # A frozen chunk has no child widgets to walk — that is what freezing
-        # is — so its match resolves from the row recorded at capture time, the
+        # A frozen chunk has no child widgets to walk: that is what freezing
+        # is, so its match resolves from the row recorded at capture time, the
         # way ``enumerate_stop_rows`` resolves one. Walking children only
         # made this probe answer None for good once the sweep reached the focus
         # chunk, and every wait gated on it then ran out its whole budget.
@@ -362,7 +362,7 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
     landed-signal here: the pane carries residual scroll from the previously
     previewed file AND the prefetched focus chunk is already mounted, so both
     ``scroll_y > 0`` and the match widget exist long before THIS navigation has
-    scrolled — asserting then reads the pre-landing position (the flake). The
+    scrolled, asserting then reads the pre-landing position (the flake). The
     controller exposes the real landed signal, ``is_settling`` (armed and the
     nav's scroll has not committed); gating on ``not is_settling`` runs the
     assert only once the match scroll has landed. The deterministic counterpart
@@ -377,13 +377,13 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
         focus_seq = target_group.hits[0].chunk_seq
         match_region = _coldnav_match_region(app, target_group.parent_id, focus_seq)
 
-        # Navigate the user to the (collapsed, non-first) target file node —
-        # closest to the real user action — and drive the cold load.
+        # Navigate the user to the (collapsed, non-first) target file node:
+        # closest to the real user action, and drive the cold load.
         rtree.focus()
         await safe_pause(pilot)
         rtree.move_cursor(rtree.root.children[1])
 
-        # Gate on the real landed signal — NOT ``scroll_y > 0`` (true from the
+        # Gate on the real landed signal, NOT ``scroll_y > 0`` (true from the
         # prior file's residual scroll before this nav moves at all). Once the
         # controller is no longer settling, the match scroll has committed.
         await wait_until(
@@ -401,12 +401,12 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
 
         region = match_region()
         assert region is not None, "content match widget never laid out"
-        # The prose match must be inside the pane viewport — scroll_y > 0 alone
+        # The prose match must be inside the pane viewport: scroll_y > 0 alone
         # is not enough; the under-shoot scrolls but stops short of the match.
         top, bottom = pane.region.y, pane.region.y + pane.region.height
         assert top <= region.y < bottom, (
             f"content match at screen y={region.y} is outside the preview "
-            f"viewport [{top}, {bottom}) — cold-render scroll under-shot, leaving "
+            f"viewport [{top}, {bottom}): cold-render scroll under-shot, leaving "
             f"the match below the fold (pane.scroll_y={pane.scroll_y})"
         )
 
@@ -422,18 +422,18 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
 
     The original flake was the test asserting on a fixed-tick settle that
     expired before this late scroll committed (``scroll_y > 0`` + a mounted
-    match widget are both true well before THIS nav scrolls — see the sibling
+    match widget are both true well before THIS nav scrolls: see the sibling
     test's docstring). Here the finalise settle is delayed so the correcting
     scroll is guaranteed late; gating on ``not is_settling`` waits it out. We
     assert only the post-settle invariant (match in viewport): the pre-landing
     intermediate position is a transient, and sampling it in-suite would itself
-    be racy — that the weak proxy trips pre-landing is shown by the dev harness
+    be racy; that the weak proxy trips pre-landing is shown by the dev harness
     in ``dev/tools/coldnav_timeline.py``.
     """
     app = _build_coldnav_app(tmp_path, tmp_index_dir)
 
     # Delay finalise's pre-scroll settle so the correcting match scroll commits
-    # well after the focus chunk has mounted — forcing the lagging-landing path
+    # well after the focus chunk has mounted: forcing the lagging-landing path
     # deterministically instead of relying on load timing. ``await_match_settled``
     # is the settle the cold finalise awaits before its single match scroll.
     # Scoped to the TARGET nav only (enabled after prefetch): a global delay also
@@ -478,7 +478,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
 
         monkeypatch.setattr(ctrl, "arm", _latching_arm)
 
-        # Arm the delay now — only the target navigation's landing lags.
+        # Arm the delay now: only the target navigation's landing lags.
         delay_target_landing = True
         rtree.move_cursor(rtree.root.children[1])
 
@@ -509,7 +509,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         # is_settling clears when the scroll is ISSUED, not when it lands: the
         # scroll may still be animating, and the reveal + the lazy-mount gate it
         # unblocks both move the viewport afterwards. Gate on the offset holding
-        # still — a fixed settle here is what let the assertion read mid-glide.
+        # still: a fixed settle here is what let the assertion read mid-glide.
         await wait_stable(
             pilot,
             lambda: pane.scroll_offset.y,
@@ -522,7 +522,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         assert top <= region.y < bottom, (
             f"with a delayed finalise, the match at y={region.y} is outside "
             f"viewport [{top}, {bottom}) after the controller settled "
-            f"(pane.scroll_y={pane.scroll_y}) — gating on is_settling did not "
+            f"(pane.scroll_y={pane.scroll_y}): gating on is_settling did not "
             f"wait for the real landing"
         )
 
@@ -535,7 +535,7 @@ async def test_the_landing_probe_survives_the_focus_chunk_freezing(
 
     Their waits end in ``match_region() is not None``. A frozen chunk has no
     child widgets, so a probe that walks children answers None for good the
-    moment the sweep reaches the focus chunk — and the wait then burns its whole
+    moment the sweep reaches the focus chunk, and the wait then burns its whole
     budget on a preview that is correct.
     """
     app = _build_coldnav_app(tmp_path, tmp_index_dir)
@@ -567,7 +567,7 @@ async def test_the_landing_probe_survives_the_focus_chunk_freezing(
         frozen = sum(1 for w in container.chunk_widgets.values() if isinstance(w, FrozenChunkView))
         assert frozen, "the sweep froze nothing, so this proves nothing"
         # The stand-in has to lay out before it can resolve a row, and one pause
-        # is a wait only while the machine is idle — the defect this whole file
+        # is a wait only while the machine is idle: the defect this whole file
         # is about.
         await wait_until(
             pilot,
@@ -630,7 +630,7 @@ async def _match_parked(pilot: Pilot[None], app: FNDApp, pane: Widget, match_seq
     landing finishes, and ``is_settling`` clears when the scroll is ISSUED, so
     neither says the match is on screen yet. Toggling Reading View before it is
     makes ``locate()`` capture a mid-landing position, and the restore then
-    faithfully reproduces a position that was never right — which is the whole
+    faithfully reproduces a position that was never right, which is the whole
     failure, not a reflow bug."""
     await wait_until(
         pilot,
@@ -653,7 +653,7 @@ async def _reading_reflow_landed(
     controller re-applies its restore across an unbounded number of refreshes.
 
     ``since`` is ``restores_completed`` read BEFORE the toggle. Waiting on
-    ``not is_restoring`` instead would be vacuous — the toggle only schedules
+    ``not is_restoring`` instead would be vacuous: the toggle only schedules
     the restore via ``call_after_refresh``, so the flag is still False when the
     wait first looks and it returns having proved nothing."""
     await wait_until(
@@ -675,7 +675,7 @@ async def test_reading_view_preserves_match_position(tmp_path: Path, tmp_index_d
     """Toggling Reading View (full-width reflow) keeps the match on screen when
     parked on it. The structural reflow re-wraps asynchronously, so the exact
     top row can drift a chunk; the guarantee is that the match chunk stays in
-    the viewport (the flat path is exact — see the scrolled-position test)."""
+    the viewport (the flat path is exact: see the scrolled-position test)."""
     index = _reading_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin-anchor")
     async with app.run_test(size=(120, 40)) as pilot:
@@ -771,7 +771,7 @@ async def test_reading_view_preserves_scrolled_position(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
     """When the user has scrolled away from the match, Reading View preserves
-    THEIR position — not the match."""
+    THEIR position, not the match."""
     index = _reading_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin-anchor")
     async with app.run_test(size=(120, 40)) as pilot:
@@ -790,7 +790,7 @@ async def test_reading_view_preserves_scrolled_position(
         app._preview_scroll.release()
         pane.scroll_to(y=max(0, pane.scroll_y // 2), animate=False, immediate=True)
         # ``before`` is a moving target until the scroll lands, and a tick count
-        # can flush nothing under load — wait for the geometry itself.
+        # can flush nothing under load: wait for the geometry itself.
         await wait_stable(
             pilot,
             lambda: (pane.scroll_offset.y, pane.virtual_size.height),

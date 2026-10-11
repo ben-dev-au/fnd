@@ -1,5 +1,5 @@
 """End-to-end: n/b navigate between the two CRC matches in a flashcards
-table taller than the viewport, in the real FNDApp — including reaching the
+table taller than the viewport, in the real FNDApp, including reaching the
 second match cell that sits below the fold in a multi-section document.
 
 The reported bug: after the multi-chunk preview settled, the navigator held a
@@ -63,7 +63,7 @@ def flashcards_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     """Two ADJACENT matching results: the flashcards table (two CRC cells, taller
     than the viewport) and a short paragraph (one CRC). Focusing the table mounts
     both, so the paragraph's match is a mounted stop that the table's scoped
-    ``n``/``b`` must exclude — the scoping guarantee, testable without relying on
+    ``n``/``b`` must exclude: the scoping guarantee, testable without relying on
     a distant chunk background-mounting."""
     a = tmp_path / "notes"
     body = (
@@ -82,7 +82,7 @@ def _current_stop_count(app: FNDApp) -> int:
 
     ``_chunk_stops`` falls back to the UNSCOPED set when the chunk extent is
     unknown, so a bare count stops the walk on a transient match between two
-    different sets — and the extent assertion below it then fails."""
+    different sets, and the extent assertion below it then fails."""
     pane = app.query_one("#preview_pane", VerticalScroll)
     nav = app._match_nav
     if nav._current_chunk_extent(pane) is None:
@@ -114,7 +114,7 @@ async def _walk_to_stop_count(pilot: Pilot[None], app: FNDApp, want: int, key: s
 
 @pytest.fixture
 def table_result_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """Same multi-section file, but only the flashcards table matches — so the
+    """Same multi-section file, but only the flashcards table matches, so the
     table IS the loaded result (the reported scenario). Card 32 is revealed on
     load; card 47's cell sits below the fold within the same result."""
     a = tmp_path / "notes"
@@ -230,7 +230,7 @@ async def test_n_reveals_second_table_match_below_the_fold(
     cfg: Config, table_result_index: Path
 ) -> None:
     """When the table IS the current result, n reveals its off-screen second
-    match cell — the reported bug, at the geometry level (cell truly visible)."""
+    match cell: the reported bug, at the geometry level (cell truly visible)."""
     app = FNDApp(index_dir=table_result_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -242,7 +242,7 @@ async def test_n_reveals_second_table_match_below_the_fold(
         # settles low with nothing to re-fire it during a passive wait. Re-run
         # rebuild() each poll so the count re-samples the current subtree and
         # reflects the table the moment it finishes composing (rebuild is the same
-        # idempotent call the app makes on search/mount — no product change).
+        # idempotent call the app makes on search/mount: no product change).
         def _enumerated() -> bool:
             if app._match_nav.count >= 2:
                 return True
@@ -259,7 +259,7 @@ async def test_n_reveals_second_table_match_below_the_fold(
         dt = next(t for t in pane.query(DataTable) if getattr(t, "_fnd_match_coords", []))
         card47 = Coordinate(46, 1)
 
-        # Card 47 starts below the fold — unreachable without navigation.
+        # Card 47 starts below the fold: unreachable without navigation.
         assert not _cell_visible(pane, dt, card47), "card 47 unexpectedly already visible"
 
         for _ in range(app._match_nav.count + 1):
@@ -289,11 +289,11 @@ async def test_n_never_scrolls_a_neighbours_match_under_the_current_result(
         pane = app.query_one("#preview_pane", VerticalScroll)
 
         # Scoping is active (the table's chunk extent resolved) and captures both
-        # of the table's matches — no more, no less.
+        # of the table's matches: no more, no less.
         assert nav._current_chunk_extent(pane) is not None, "chunk extent did not resolve"
         assert len(nav._chunk_stops(pane)) == 2, "scoped stops should be the table's two matches"
         # The adjacent Summary result's match is mounted too, so the UNSCOPED set
-        # is larger — proving the scope is actively excluding another result.
+        # is larger: proving the scope is actively excluding another result.
         # That neighbour arrives on the background fill, so it is waited for:
         # asserting it straight away tested how fast the runner mounts.
         await wait_until(
@@ -306,7 +306,7 @@ async def test_n_never_scrolls_a_neighbours_match_under_the_current_result(
         table_seq = _focus_seq(app)
         for _ in range(5):
             # `_go` early-returns when the chunk's stops are not resolvable yet,
-            # which leaves `_last_rel` unset — so wait for the scope BEFORE
+            # which leaves `_last_rel` unset, so wait for the scope BEFORE
             # pressing. Gating after the press would make the assertion about
             # the layout's timing rather than about n.
             await wait_until(
@@ -450,7 +450,7 @@ async def test_a_hand_over_lands_even_after_an_option_scan(
     cfg: Config, flashcards_index: Path
 ) -> None:
     """Only the tree's key handler clears scan mode, so the hand-over clears it
-    itself — the preview pane has focus for n/b just as often."""
+    itself: the preview pane has focus for n/b just as often."""
     app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -468,7 +468,7 @@ async def test_a_hand_over_lands_even_after_an_option_scan(
 
 @pytest.fixture
 def flat_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A .txt file — no chunk is markdown-rendered, so the preview takes the
+    """A .txt file: no chunk is markdown-rendered, so the preview takes the
     FLAT path, which nulls ``preview.active`` and keeps its own buffer."""
     a = tmp_path / "notes"
     filler = "".join(f"filler line {i} of no interest at all.\n" for i in range(60))
@@ -536,7 +536,7 @@ async def test_a_hand_over_onto_the_row_the_cursor_already_holds_still_lands(
         assert _focus_seq(app) == start, "the scan loaded the row it moved onto"
 
         # b at the landing has nothing above it inside this chunk, so it hands
-        # over — onto the row the cursor already holds.
+        # over: onto the row the cursor already holds.
         app.action_nav_prev_match()
 
         await wait_until(

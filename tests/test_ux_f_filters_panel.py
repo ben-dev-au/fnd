@@ -1,4 +1,4 @@
-"""UX-F: Filters panel — third left-column panel.
+"""UX-F: Filters panel, third left-column panel.
 
 File-type filter (multi-select) and Date filter (single-select radio)
 compose into the user's query as DSL clauses (``kind:(pdf md)``,
@@ -37,7 +37,7 @@ async def _click_row(
     """Click ``node``'s row at ``column``, on the row it actually occupies.
 
     Three things must hold before a coordinate click can land, and a miss is
-    silent — ``Pilot.click`` computes ``widget.region.offset + offset`` and
+    silent: ``Pilot.click`` computes ``widget.region.offset + offset`` and
     happily delivers the event to whatever else is painted there, so the only
     symptom is the assertion that follows timing out much later.
 
@@ -45,7 +45,7 @@ async def _click_row(
        built its lines, and y=-1 lands a row ABOVE the widget.
     2. It must be scrolled into view. ``line`` counts the tree's *virtual*
        lines while the click offset is *viewport*-relative, so the two diverge
-       by ``scroll_offset.y`` — expanding a couple of levels is enough to push
+       by ``scroll_offset.y``: expanding a couple of levels is enough to push
        a leaf out of a short sidebar pane and send the click to the wrong row.
     3. The click must be verified. ``click()`` returns whether the event landed
        on the target widget; asserting it turns a miss into an immediate, named
@@ -100,7 +100,7 @@ async def test_filters_panel_mounts(cfg_one_collection: Config, mixed_index: Pat
         labels = [str(c.label) for c in tree.root.children]
         joined = "\n".join(labels)
         assert "File type" in joined, joined
-        # "Modified" reads more clearly than "Date" — the underlying
+        # "Modified" reads more clearly than "Date": the underlying
         # field is the file's mtime, not creation/published date.
         assert "Modified" in joined, joined
 
@@ -159,7 +159,7 @@ async def test_single_click_toggles_kind_leaf_once(
 
     Regression: ``ResultsTree._on_click`` used to call ``super()._on_click``,
     but Textual ALSO dispatches the base ``Tree._on_click`` while walking the
-    MRO — so a single click ran the handler twice, toggling on then off (net
+    MRO, so a single click ran the handler twice, toggling on then off (net
     nothing). This drives a real click (MouseDown/Up/Click) through the pump.
     """
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
@@ -196,7 +196,7 @@ async def test_single_click_toggles_kind_leaf_once(
 async def test_single_click_on_header_arrow_expands_once(
     cfg_one_collection: Config, mixed_index: Path
 ) -> None:
-    """Clicking a collapsed section header's expand arrow opens it — once.
+    """Clicking a collapsed section header's expand arrow opens it: once.
 
     Same double-dispatch root cause seen from the *toggle* branch: two
     ``_toggle_node`` calls per click meant expand+collapse = a dead arrow.
@@ -263,7 +263,7 @@ async def test_rapid_kind_toggles_coalesce_to_one_search(
 
     Widen the debounce window rather than racing it: the mid-burst assertion
     used to hold only if three ``pilot.pause()`` round-trips finished inside
-    0.12 s of wall-clock, which a loaded runner does not guarantee — the timer
+    0.12 s of wall-clock, which a loaded runner does not guarantee; the timer
     then fired legitimately and the test failed on *correct* behaviour. With
     the window pinned open the burst cannot leak a search, and the coalesced
     one is flushed by hand instead of by sleeping.
@@ -296,7 +296,7 @@ async def test_rapid_kind_toggles_coalesce_to_one_search(
             await pilot.pause()
         assert calls["n"] == 0, "no search should fire mid-burst (debounced)"
         assert app._scope._filter_search_timer is not None, "burst left no debounce pending"
-        # Fire the pending debounce directly — deterministic, and it asserts the
+        # Fire the pending debounce directly: deterministic, and it asserts the
         # same thing sleeping past the window did: the burst coalesced to one.
         app._scope._run_filter_search()
         assert calls["n"] == 1, f"burst should coalesce to one search, got {calls['n']}"
@@ -431,7 +431,7 @@ async def test_enter_on_filetype_leaf_keeps_cursor(
     cfg_one_collection: Config, mixed_index: Path
 ) -> None:
     """Bug: toggling a file-type filter with Enter used to rebuild the tree and
-    drift the cursor a row down. It now repaints in place — cursor stays put."""
+    drift the cursor a row down. It now repaints in place: cursor stays put."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -486,7 +486,7 @@ async def test_filetype_filter_pruned_to_present_kinds(
     cfg_one_collection: Config, mixed_index: Path
 ) -> None:
     """The file-type filter only offers kinds present in scope (md + txt here);
-    absent kinds/categories (pdf, code, …) are omitted — like the Tags filter."""
+    absent kinds/categories (pdf, code, …) are omitted, like the Tags filter."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()

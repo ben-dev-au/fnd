@@ -13,7 +13,7 @@ from fnd.tui.preview_scroll import enumerate_stop_rows
 from fnd.tui.widgets.markdown import FNDMarkdown
 
 # A table ~4x the viewport height with CRC in row 32's answer and row 47's
-# question — far apart, second cell well below the fold.
+# question: far apart, second cell well below the fold.
 TABLE_MD = (
     "| # | Q | A |\n| --- | --- | --- |\n"
     + "".join(
@@ -51,7 +51,7 @@ async def test_two_stops_at_distinct_y() -> None:
         assert rows[0] < rows[1]
 
 
-# One source line wrapping over several screenfuls, its match late in it — a PDF
+# One source line wrapping over several screenfuls, its match late in it: a PDF
 # contents page's shape, and the case where a block's top is nowhere near it.
 WRAPPED_MD = "# Contents\n\n" + " ".join(
     f"Step {i:02d} - a deployment guide entry dotted to a page number" for i in range(90)
@@ -96,7 +96,7 @@ async def test_a_wrapped_block_stops_on_the_row_its_match_paints_on() -> None:
         )
 
 
-# One fence taller than the viewport carrying two matches far apart — the shape
+# One fence taller than the viewport carrying two matches far apart: the shape
 # of a long code block, where every match after the first used to be unreachable.
 FENCE_LINES = [f"    filler_value_{i} = {i}" for i in range(120)]
 FENCE_LINES[10] = "    first = quartzfin(1)"

@@ -1,8 +1,8 @@
 """Settings navigation fixes:
 
-* Bug A — searching is navigation-only: Enter lands on the first match and
+* Bug A: searching is navigation-only: Enter lands on the first match and
   does NOT fire its effect (no toggle flip, no drill, no side-effect).
-* Bug B — returning from a drilled child screen keeps the cursor on the row
+* Bug B: returning from a drilled child screen keeps the cursor on the row
   the user drilled from, not reset to the first row.
 """
 

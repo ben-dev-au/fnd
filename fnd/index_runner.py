@@ -9,8 +9,8 @@ Progress events stream through an async generator. The caller (CLI
 display. A ``cancel`` :class:`asyncio.Event` lets the caller request
 a clean stop at the next file boundary.
 
-State persistence — atomic writes after each file completion to
-``$XDG_DATA_HOME/fnd/reindex/<collection>.state.toml`` — means a
+State persistence: atomic writes after each file completion to
+``$XDG_DATA_HOME/fnd/reindex/<collection>.state.toml``, means a
 kill / quit / power-loss can be resumed simply by re-running:
 - Cache hits skip already-extracted files
 - State file tells us how far we got, for progress display on resume
@@ -220,7 +220,7 @@ def saved_states() -> list[tuple[Path, IndexState]]:
     """Every readable resume state on disk, newest first.
 
     Callers that want "is there anything to resume?" must ask this rather
-    than probing one well-known name — auto-resume used to look only for a
+    than probing one well-known name: auto-resume used to look only for a
     collection literally called ``default``, so an interrupted run of any
     named collection was silently unresumable and its state file lived on
     forever.
@@ -398,7 +398,7 @@ def _should_reprocess(
     """Whether a file already in the index needs re-processing.
 
     mtime catches content edits. ctime additionally catches metadata-only
-    edits — a Finder retag moves ctime alone, so an mtime-only check would
+    edits: a Finder retag moves ctime alone, so an mtime-only check would
     leave tags stale until the file's content happened to change.
 
     ``prior_ctime`` of 0 means the stored doc predates the field (a v7 index
@@ -470,14 +470,14 @@ class CloudPolicy:
 
     ``skip`` is the live opt-out. The user flips it from the indexer modal
     when the wait isn't worth it; from then on cloud-only files are listed
-    as skipped instead of fetched. Run-scoped by design — nothing is
+    as skipped instead of fetched. Run-scoped by design: nothing is
     persisted, so the next Update fetches again.
     """
 
     timeout_s: float = DEFAULT_FETCH_TIMEOUT_S
     skip: asyncio.Event | None = None
     # The run's cancel signal, polled while a fetch is blocked. Without it a
-    # stalled provider holds Cancel for the whole timeout — which would undo
+    # stalled provider holds Cancel for the whole timeout, which would undo
     # the responsiveness this change exists to deliver.
     cancel: asyncio.Event | None = None
 
@@ -497,7 +497,7 @@ class CloudPolicy:
         return cloud_files.fetch(call, path=path, timeout_s=self.timeout_s, cancel=self.cancel)
 
     def materialise(self, path: Path) -> None:
-        """Pull ``path`` down. Touching one byte is enough — both macOS
+        """Pull ``path`` down. Touching one byte is enough: both macOS
         dataless files and Windows Cloud Files placeholders hydrate on
         first data access."""
 
@@ -550,7 +550,7 @@ def _process_one_file(
     tag_frontmatter_keys: Sequence[str] = (),
     cloud_policy: CloudPolicy | None = None,
 ) -> _FileOutcome:
-    """Synchronous per-file work — extraction + write to Tantivy.
+    """Synchronous per-file work: extraction + write to Tantivy.
 
     ``has_textured`` is True iff any emitted chunk carries a non-empty
     ``body_md`` (PDFs that hit the structured pipeline). Run inside
@@ -558,7 +558,7 @@ def _process_one_file(
 
     When ``skip_unchanged`` and ``prior_searcher`` is given, a file already
     in this collection's committed index with an unchanged mtime AND ctime
-    is skipped entirely (no delete, no extraction) — returned as a cache
+    is skipped entirely (no delete, no extraction): returned as a cache
     hit so it counts as already-indexed. ctime is checked because a Finder
     retag moves it without touching mtime. The one exception is a flat PDF
     we could newly texturise this run (``texturise_on`` and no prior
@@ -610,7 +610,7 @@ def _process_one_file(
         if not changed and not improvable:
             return _FileOutcome(0, True, True, prior_textured, "")
 
-    # The file survived the unchanged-skip, so it genuinely needs reading —
+    # The file survived the unchanged-skip, so it genuinely needs reading,
     # which for a cloud-only file means a download. Do it here rather than
     # letting extract() block on the first read, so the wait is bounded and
     # announced instead of looking like a wedged extractor.
@@ -747,7 +747,7 @@ async def run_indexer(
     already in this collection's committed index with an unchanged mtime and
     ctime is left untouched. The "Re-texturise outdated" action passes False so it
     can revisit unchanged files. ``force_fresh`` (default False) is the
-    "Re-texturise outdated" opt-out from durable cache reuse — when True,
+    "Re-texturise outdated" opt-out from durable cache reuse, when True,
     ``extract()`` only reuses a current-signature entry and otherwise
     re-extracts fresh, upgrading pre-version texturising.
     """
@@ -761,7 +761,7 @@ async def run_indexer(
 
     # Run-scoped "Update cache at index time" toggle. When the user has
     # turned this off (battery-saver), extract() skips fresh structured
-    # extraction on cache misses and skips cache writes — see
+    # extraction on cache misses and skips cache writes: see
     # fnd/extract/pdf.py::set_skip_structure_extraction. An explicit
     # texturise_override from the caller wins over the toggle.
     if texturise_override is True:
@@ -779,8 +779,8 @@ async def run_indexer(
 
     # Tag settings come from the user's config, sourced here (the same
     # internal-load pattern used for cache_at_index_time above) so every
-    # indexing path — including the TUI "Update index" modal that drives
-    # this runner — honours tag_sources / tag_frontmatter_keys rather than
+    # indexing path, including the TUI "Update index" modal that drives
+    # this runner, honours tag_sources / tag_frontmatter_keys rather than
     # the bare defaults. Missing config falls back to the defaults.
     from fnd.config import Defaults
 
@@ -860,7 +860,7 @@ async def run_indexer(
 
     def _scan_frontmatter(path: Path) -> dict[str, object] | None:
         """Frontmatter for a filter candidate, fetching it if it is
-        cloud-only. Returning None drops the file from the walk — used when
+        cloud-only. Returning None drops the file from the walk: used when
         the user has opted out of fetching, or the provider never
         delivered."""
         from fnd.frontmatter import read_frontmatter_from_file
@@ -876,7 +876,7 @@ async def run_indexer(
                 policy.fetch(lambda: read_frontmatter_from_file(path), path),
             )
         except CloudFetchCancelledError:
-            # Not a blocked file — the run is ending. The pump checks cancel
+            # Not a blocked file: the run is ending. The pump checks cancel
             # immediately after this slice and emits the terminal event.
             return None
         except (CloudFetchError, OSError) as e:
@@ -987,7 +987,7 @@ async def run_indexer(
 
     # Files the scan could not resolve never reach the per-file loop, so
     # account for them here. Without this they vanish between "the folder
-    # holds 400 notes" and "the run processed 180" — the silent data loss
+    # holds 400 notes" and "the run processed 180": the silent data loss
     # this whole change exists to avoid.
     for blocked_path, reason in scan_blocked:
         state.failed += 1
@@ -1066,7 +1066,7 @@ async def run_indexer(
                 )
             except CloudFetchCancelledError:
                 # Cancel landed while this file's download was still
-                # outstanding. It is not a failure — commit what the run
+                # outstanding. It is not a failure: commit what the run
                 # already wrote and end on the truthful terminal event.
                 with contextlib.suppress(Exception):
                     await commit_async(writer)
@@ -1145,7 +1145,7 @@ async def run_indexer(
                             err = f"{err}  [last page beat: {_done}/{_total}]"
                 # CLI only. Under the TUI, stderr is the terminal Textual is
                 # painting into, so a skip line lands as garbage across the
-                # rendered UI — and the same skip already reaches the user
+                # rendered UI, and the same skip already reaches the user
                 # through the file_error event and the failure log below.
                 if echo_skips:
                     echo_skip(str(err))
@@ -1190,8 +1190,8 @@ async def run_indexer(
                 has_textured_chunk=has_textured,
             )
 
-        # Every file the scan found counts as live — including ones the
-        # incremental skip left untouched and ones that were unreadable —
+        # Every file the scan found counts as live, including ones the
+        # incremental skip left untouched and ones that were unreadable,
         # so only files that genuinely left the collection get pruned.
         # Skipped on cancel, where the partial walk would read as mass
         # deletion, and on a missing root (offline volume, same trap).

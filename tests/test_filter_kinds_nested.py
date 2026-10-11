@@ -44,7 +44,7 @@ def test_toggle_category_selects_all_then_clears() -> None:
 
 def test_individual_type_survives_category_partial() -> None:
     """Include a category, drop one type: the parent goes ◐ and the dropped
-    type is gone — the 'include .py but not .cpp' requirement."""
+    type is gone: the 'include .py but not .cpp' requirement."""
     sc = _controller()
     sc._toggle_kind_category("code")
     sc.filter_kinds.remove("cpp")

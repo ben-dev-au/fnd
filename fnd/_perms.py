@@ -4,7 +4,7 @@ application data tree.
 By default ``Path.mkdir(parents=True)`` honours the process umask
 (0o022 on macOS), which leaves directories world-readable. fnd's
 ``config.toml`` and on-disk state contain absolute paths to the user's
-private documents — readable by any other local account on a shared
+private documents: readable by any other local account on a shared
 Mac. These helpers normalise everything we create to 0o700 dirs and
 0o600 files so the published binary doesn't bake in the "single-user
 Mac" assumption.
@@ -16,7 +16,7 @@ Support`` itself is OS-owned and should keep 0o755).
 
 Platform note: POSIX modes are only meaningful on macOS/Linux. On Windows
 ``os.chmod`` merely toggles the read-only bit (the 0o700/0o600 modes are a
-no-op there), so this hardening is a POSIX-only guarantee — but the Windows
+no-op there), so this hardening is a POSIX-only guarantee, but the Windows
 per-user profile root (``%LOCALAPPDATA%``) is already ACL-scoped to its
 owner, which provides the equivalent protection."""
 
@@ -31,7 +31,7 @@ from pathlib import Path
 def _chmod_quiet(p: Path, mode: int) -> None:
     """Best-effort chmod. Some filesystems (smbfs, exfat, some external
     drives) don't honour POSIX modes; swallowing the error is the right
-    call — we tried."""
+    call: we tried."""
     with contextlib.suppress(OSError):
         os.chmod(p, mode)
 
@@ -43,7 +43,7 @@ def secure_mkdir(path: Path, *, anchor: Path | None = None) -> Path:
     Returns ``path`` so callers can chain.
     """
     if anchor is None:
-        # Lazy import — ``fnd.config`` imports back from this module.
+        # Lazy import: ``fnd.config`` imports back from this module.
         from fnd.config import app_data_dir
 
         anchor = app_data_dir()
@@ -53,7 +53,7 @@ def secure_mkdir(path: Path, *, anchor: Path | None = None) -> Path:
     try:
         rel = path.relative_to(anchor)
     except ValueError:
-        # Caller asked for a dir outside our anchor — only chmod the leaf.
+        # Caller asked for a dir outside our anchor: only chmod the leaf.
         _chmod_quiet(path, 0o700)
         return path
     cur = anchor

@@ -21,7 +21,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_root_menu_focuses_search_input(built_index: Path) -> None:
-    """Root menu open: the search Input owns focus — typing immediately filters."""
+    """Root menu open: the search Input owns focus, typing immediately filters."""
     from fnd.tui.settings_screen import SettingsScreen
 
     app = FNDApp(index_dir=built_index)
@@ -37,7 +37,7 @@ async def test_root_menu_focuses_search_input(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_submenu_open_focuses_list_not_input(built_index: Path) -> None:
-    """Drilling into a sub-menu (e.g. Preferences) focuses the list —
+    """Drilling into a sub-menu (e.g. Preferences) focuses the list:
     the user already chose what they wanted by drilling in. The filter
     Input is still reachable via `/` from any screen.
     """
@@ -61,7 +61,7 @@ async def test_submenu_open_focuses_list_not_input(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_typing_immediately_routes_to_filter(built_index: Path) -> None:
-    """No focus shift needed — typed chars land in the filter Input."""
+    """No focus shift needed: typed chars land in the filter Input."""
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
     app = FNDApp(index_dir=built_index)
@@ -78,7 +78,7 @@ async def test_typing_immediately_routes_to_filter(built_index: Path) -> None:
         search = screen.query_one("#settings_search", Input)
         assert search.value == "p"
         # And the list refreshed in response (cross-section search
-        # widens the list — what matters is that filtering kicked in).
+        # widens the list: what matters is that filtering kicked in).
         after_items = list(screen.query_one(SettingsList)._items)
         assert after_items != before_items, "filter should refresh the list"
 
@@ -168,7 +168,7 @@ async def test_up_below_top_moves_cursor_only(built_index: Path) -> None:
     the cursor up one row instead of jumping to the Input.
 
     Open Preferences (a sub-screen with several rows), focus the list,
-    move down a couple of rows, then press Up — focus stays on the list
+    move down a couple of rows, then press Up: focus stays on the list
     and cursor_index decreases by one selectable row.
     """
     from fnd.tui.menu import SECTION_PREFERENCES

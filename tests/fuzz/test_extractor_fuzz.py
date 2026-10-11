@@ -7,7 +7,7 @@ The contract every extractor must hold under adversarial input:
 
 If an extractor leaks a non-ExtractError exception out, the indexer
 ``except ExtractError`` in fnd/index.py:185/235 misses it and the
-whole index build aborts on one bad file — exactly the regression
+whole index build aborts on one bad file, exactly the regression
 M6 closed. Hypothesis generates byte blobs (random, prefix-of-magic,
 near-valid-OOXML) and feeds them to each extractor; the moment any
 input produces an uncaught exception the failure shrinks down to a
@@ -162,7 +162,7 @@ def _corpus_files() -> list[Path]:
 @pytest.mark.parametrize("path", _corpus_files(), ids=lambda p: p.name)
 def test_corpus_files_never_leak_raw_exception(path: Path) -> None:
     """Seed corpus regression: every file under tests/fixtures/malformed/
-    must either extract cleanly or raise ExtractError — never anything
+    must either extract cleanly or raise ExtractError: never anything
     else. When Hypothesis or oss-fuzz finds a new crashing input,
     minimise and drop it here."""
     try:

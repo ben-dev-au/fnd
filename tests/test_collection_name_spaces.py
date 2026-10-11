@@ -33,7 +33,7 @@ def test_spaced_name_round_trips_through_toml(
     write_collection_source(config_path=cfg, collection_name=name, source=src)
 
     written = cfg.read_text(encoding="utf-8")
-    # tomlkit auto-quotes the key because of the spaces — the unquoted
+    # tomlkit auto-quotes the key because of the spaces: the unquoted
     # form would be a TOML parse error.
     assert f'[[collections."{name}".sources]]' in written
 

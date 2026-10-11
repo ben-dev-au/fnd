@@ -5,7 +5,7 @@ Two features land here:
 * :func:`fnd.synonyms.expand` rewrites a query string by wrapping any
   single-term that matches a synonym group into ``(term OR sym1 OR sym2)``.
   Synonyms live in a user-owned TOML file and apply at *query time*
-  only — the index never sees the expansion, so synonym edits don't require
+  only: the index never sees the expansion, so synonym edits don't require
   a rebuild.
 * :func:`fnd.cascade.cascade_search` orchestrates a sequence of widening
   query passes. Pass 1 is the literal query; if the result count is below
@@ -58,7 +58,7 @@ def test_synonyms_unknown_term_passes_through() -> None:
 
 
 def test_synonyms_does_not_expand_inside_phrase() -> None:
-    """A term inside a quoted phrase must not be expanded — the user asked
+    """A term inside a quoted phrase must not be expanded: the user asked
     for an exact phrase, so we respect that."""
     table = SynonymTable.from_groups([["MSSM", "minimal supersymmetric standard model"]])
     out = expand('"the MSSM model"', table)
@@ -112,7 +112,7 @@ def small_md_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 def test_cascade_returns_exact_pass_when_threshold_met(small_md_corpus: Path) -> None:
     """When the literal pass already returns enough hits, widening passes
-    must not run — every hit must be tagged ``pass_index=0``."""
+    must not run: every hit must be tagged ``pass_index=0``."""
     s = Searcher(index_dir=small_md_corpus)
     hits = cascade_search(s, query="penguin sandwich", threshold=2)
     assert hits, "expected literal-pass hits"
@@ -139,7 +139,7 @@ def test_cascade_fuzzy_matches_when_indexed_token_is_stemmed(
     token for "Templates" is ``templat``. A typo query like "Templatas"
     lowercases to ``templatas`` (8 chars). Without stemming the query,
     Tantivy's ``fuzzy_term_query`` sees distance 2 from ``templat`` and
-    rejects the match — even though both forms come from the same root.
+    rejects the match, even though both forms come from the same root.
     Stem the query before issuing the fuzzy search so the on-disk
     Levenshtein distance is computed between the same token shapes the
     analyzer wrote.

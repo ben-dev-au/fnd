@@ -88,7 +88,7 @@ async def test_enter_toggles_collection_scope(
         await pilot.pause()
         # Whichever collection is first alphabetically should now be active.
         assert len(app._scope.collections) == 1, app._scope.collections
-        # Press Enter again — should toggle off.
+        # Press Enter again: should toggle off.
         await pilot.press("enter")
         await pilot.pause()
         assert app._scope.collections == []
@@ -110,7 +110,7 @@ async def test_active_collection_marked_in_label(
         await pilot.pause()
         first = next(iter(tree.root.children))
         label = str(first.label)
-        # Active marker — using ● for active, ○ for inactive.
+        # Active marker: using ● for active, ○ for inactive.
         assert "●" in label, f"active collection should be marked: {label!r}"
 
 
@@ -120,7 +120,7 @@ async def test_panel_header_shows_active_count(
 ) -> None:
     """The X/Y active count lives in the tree's ``border_title`` (matches
     the results pane's styling). Originally this was a separate Static
-    above the tree — moved into the border title to make both panels
+    above the tree: moved into the border title to make both panels
     look identical."""
     app = FNDApp(index_dir=two_collection_index, config=cfg_two_collections)
     async with app.run_test() as pilot:

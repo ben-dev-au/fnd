@@ -231,7 +231,7 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         )
         assert app._preview.parent_id is not None
         assert app._preview.parent_id != first_pid, "preview did not rebuild for file 2"
-        # Stage 1c: a single shared LineBufferPreview is reused across files —
+        # Stage 1c: a single shared LineBufferPreview is reused across files,
         # what swaps is the installed RenderedDocument (and therefore file_view).
         second_buf = app._flat.active_buffer
         assert second_buf is not None
@@ -245,7 +245,7 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
 
 
 def test_footer_labels_are_unique() -> None:
-    """No two visible footer entries share a label — fixes the original
+    """No two visible footer entries share a label: fixes the original
     'two toggles, two opens' duplication."""
     labels = [a.footer_label for a in REGISTRY if a.show_in_footer and a.footer_label]
     assert len(labels) == len(set(labels)), f"duplicate footer labels: {labels}"

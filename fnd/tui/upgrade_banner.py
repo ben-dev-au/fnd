@@ -1,7 +1,7 @@
 """Count PDF Texture Cache entries left on a previous extractor version.
 
 When the texturising engine improves (new version, docling enabled, a
-config change), already-textured PDFs keep their value — they just don't
+config change), already-textured PDFs keep their value: they just don't
 yet benefit from the improvement. Rather than interrupt the user with a
 startup popup, fnd surfaces the count passively in Settings → Indexing &
 PDF Texture, where they can choose to re-texturise the outdated docs.

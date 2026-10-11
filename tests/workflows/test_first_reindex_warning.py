@@ -1,4 +1,4 @@
-"""First-reindex warning workflow — end-to-end.
+"""First-reindex warning workflow: end-to-end.
 
 Verifies the modal:
   - Only shows when pdf-structure is installed and the marker is
@@ -65,7 +65,7 @@ def test_mark_seen_then_has_been_seen(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_start_option_marks_seen(tmp_path: Path) -> None:
     """Selecting 'Start' on the warning marks it seen and dismisses
-    with True. Doesn't need a full app — push the screen directly."""
+    with True. Doesn't need a full app: push the screen directly."""
     from textual.app import App
     from textual.widgets import OptionList
 

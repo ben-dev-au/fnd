@@ -111,7 +111,7 @@ def test_filetype_boost_applies_multiplier() -> None:
 
 
 def test_phrase_proximity_single_term_is_neutral() -> None:
-    """Single-term queries can't have a 'cluster' — bonus is always 0."""
+    """Single-term queries can't have a 'cluster': bonus is always 0."""
     profile = RankingProfile(phrase_proximity=1.0)
     out = apply_phrase_proximity(
         score=1.0, body="quark gluon plasma", terms=["quark"], profile=profile
@@ -205,7 +205,7 @@ def test_rerank_hits_scales_the_rank_score_not_the_display_score() -> None:
 
 @pytest.fixture
 def two_collection_index(fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path) -> Path:
-    """Two MD files with identical anchor phrases — used to verify a profile
+    """Two MD files with identical anchor phrases: used to verify a profile
     switch can flip ranking on tied content."""
     md_dir = tmp_path / "md"
     md_dir.mkdir(parents=True, exist_ok=True)
@@ -342,7 +342,7 @@ def test_load_config_with_ranking_profile(tmp_path: Path) -> None:
 
 def test_ranking_profile_unknown_name_is_neutral_default() -> None:
     """Calling Config.ranking_profile() with a missing name yields an
-    all-zero default — opt-in semantics. Proximity/exactness is handled by
+    all-zero default: opt-in semantics. Proximity/exactness is handled by
     fusion's exact-phrase pass, not this post-rank multiplier."""
     from fnd.config import Config
     from fnd.rerank import profile_from_config
@@ -358,7 +358,7 @@ def test_fnd_app_resolves_collection_specific_profile(
     two_collection_index: Path,
 ) -> None:
     """The TUI resolves a per-collection ranking profile when present and
-    applies it during search — no profile defined → neutral identity."""
+    applies it during search: no profile defined → neutral identity."""
     from fnd.config import CollectionConfig, Config, RankingProfileConfig
     from fnd.tui import FNDApp
 

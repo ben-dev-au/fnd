@@ -95,13 +95,13 @@ def date_token_range(token: str) -> tuple[int, int] | None:
     ``(low, high)`` unix range, or None if not a known token.
 
     ``today`` means "since UTC midnight today" (modified today), not "since this
-    exact instant" — the latter would match nothing. week/month/year are the
+    exact instant": the latter would match nothing. week/month/year are the
     documented "within the last N days" cumulative windows.
     """
     if token not in _DATE_TOKEN_DAYS:
         return None
     now = _now_ts()
-    if token == "today":  # noqa: S105 — keyword, not a secret
+    if token == "today":  # noqa: S105, keyword, not a secret
         return (now - now % 86_400, FAR_FUTURE)  # UTC midnight today
     return (now - _DATE_TOKEN_DAYS[token] * 86_400, FAR_FUTURE)
 

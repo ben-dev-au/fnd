@@ -29,10 +29,10 @@ def test_case_difference_alone_is_all_yellow() -> None:
 
 
 def test_substitution_paints_substituted_char_orange() -> None:
-    """Query 'pizza' on doc 'pizzs' — last 'a' replaced with 's'."""
+    """Query 'pizza' on doc 'pizzs': last 'a' replaced with 's'."""
     spec = MatchSpec.from_query("pizza", auto_fuzzy=True)
     # Aligning "pizzs" vs "pizza":
-    # p-p, i-i, z-z, z-z, then 's' vs 'a' (substitution) — orange.
+    # p-p, i-i, z-z, z-z, then 's' vs 'a' (substitution): orange.
     runs = word_highlight_runs("pizzs", spec)
     assert runs == [
         (0, 4, HIGHLIGHT_STYLE),

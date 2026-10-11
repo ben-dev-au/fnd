@@ -1,5 +1,5 @@
 """Typed query errors shared across the DSL pre-pass, the query planner, and
-the Tantivy boundary. Leaf module — no runtime imports — so any layer can raise
+the Tantivy boundary. Leaf module (no runtime imports) so any layer can raise
 these without risking an import cycle."""
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ class QueryError(ValueError):
 class QuerySyntaxError(QueryError):
     """A query the user can fix: malformed proximity, unbalanced brackets, or a
     string Tantivy's parser rejects. ``hint`` is a practical one-liner shown
-    next to the query input — keep it calm and actionable."""
+    next to the query input: keep it calm and actionable."""
 
     def __init__(self, message: str, *, hint: str | None = None) -> None:
         super().__init__(message)
@@ -42,7 +42,7 @@ class QueryEngineError(QuerySyntaxError):
 
 
 class UnknownFilterValueError(QueryError):
-    """A filter value outside its closed set of legal values — a typo'd
+    """A filter value outside its closed set of legal values: a typo'd
     collection name, file kind, or date token.
 
     Carries the near-misses so the CLI can offer a correction instead of a
@@ -102,7 +102,7 @@ class MissingFilterValueError(UnknownFilterValueError):
     """A required scope the user didn't name at all.
 
     Same shape as an unrecognised value so the CLI's report-and-offer path
-    handles it unchanged — the difference is only what the one-liner says and
+    handles it unchanged: the difference is only what the one-liner says and
     what it proposes. Used where naming nothing must not silently widen: a
     reindex covering every collection is a minutes-long rebuild, so it has to
     be asked for rather than defaulted into.
@@ -140,5 +140,5 @@ class MissingFilterValueError(UnknownFilterValueError):
 
 class QueryTooLargeError(QueryError):
     """Query exceeds the size / complexity bounds in :mod:`fnd.extract._limits`.
-    Defensive today — the local user is the only author — but pinned so any
+    Defensive today (the local user is the only author) but pinned so any
     future URL-handler / Spotlight / ``--query-from-file`` path inherits it."""

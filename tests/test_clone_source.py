@@ -22,7 +22,7 @@ from fnd.config import (
 
 
 def _setup_two_collections(tmp_path: Path) -> Path:
-    """Two collections — `src_coll` has one fully-populated source,
+    """Two collections: `src_coll` has one fully-populated source,
     `dst_coll` is empty."""
     cfg_path = tmp_path / "config.toml"
     src = SourceConfig(
@@ -63,7 +63,7 @@ def test_clone_appends_to_target_collection(tmp_path: Path) -> None:
         source_index=0,
         target_collection="dst_coll",
     )
-    # Returned index is 0-based — the new entry's position in the
+    # Returned index is 0-based: the new entry's position in the
     # target collection's sources list.
     assert new_idx == 0
     cfg = load(cfg_path)

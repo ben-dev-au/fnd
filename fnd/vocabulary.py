@@ -1,7 +1,7 @@
 """Closed value sets for the filters a user can name on the command line.
 
-A :class:`Vocabulary` is the legal universe for one filter — collection
-names, file kinds, date tokens — so a value outside it fails loudly with a
+A :class:`Vocabulary` is the legal universe for one filter (collection
+names, file kinds, date tokens) so a value outside it fails loudly with a
 suggestion rather than surviving as a clause that can never match. Both
 failure modes are silent today: an unknown ``-c`` name becomes a hard
 ``F_COLLECTION`` term that matches nothing, and an unknown ``--kind``
@@ -79,7 +79,7 @@ class Vocabulary:
     def suggest(self, raw: str) -> list[str]:
         """Names close enough to ``raw`` to have been the intent, best first.
 
-        A case-only variant always qualifies — it costs no edits, and on a
+        A case-only variant always qualifies: it costs no edits, and on a
         case-sensitive vocabulary it's the whole reason the value missed.
         Anything else has to fall inside the usual typo tolerance.
 
@@ -118,7 +118,7 @@ class Vocabulary:
         A whole-string match is tried first so a legacy config name that
         itself contains a comma still resolves; only then is the value split.
         Names may legally contain spaces, so parts are stripped, not
-        tokenised. Each caller decides what to do with the unknowns — the CLI
+        tokenised. Each caller decides what to do with the unknowns: the CLI
         reports them, the sidebar drops them.
         """
         whole = self.match(raw)
@@ -137,7 +137,7 @@ class Vocabulary:
         return list(dict.fromkeys(known)), list(dict.fromkeys(unknown))
 
     def unknown(self, raw: str, *, flag: str | None = None) -> UnknownFilterValueError:
-        """Build the error for ``raw`` without raising it — for callers that
+        """Build the error for ``raw`` without raising it: for callers that
         collect several problems before reporting any of them."""
         return UnknownFilterValueError(
             label=self.label,

@@ -5,7 +5,7 @@ sidecar, so the list can never drift from what is actually indexed.
 
 Counts are FILE counts, not document counts. A tantivy document is a chunk, so
 a 40-chunk PDF tagged ``report`` would otherwise report as 40. The aggregation
-buckets by file and tallies tags within each, which is exact — see the note in
+buckets by file and tallies tags within each, which is exact: see the note in
 :func:`tag_catalogue` for why the cardinality approach was abandoned.
 """
 
@@ -107,8 +107,8 @@ def tag_catalogue(
 
     # Bucket by FILE, then by tag within each file, and count the file buckets
     # each tag appears in. The obvious shape (bucket by tag, cardinality over
-    # parent_id) silently returns 0 for some buckets — measured on a real
-    # corpus, one tag had 34 chunks and a cardinality of 0.0 — which would hide
+    # parent_id) silently returns 0 for some buckets: measured on a real
+    # corpus, one tag had 34 chunks and a cardinality of 0.0, which would hide
     # real tags behind a "(0)" count. This inversion is exact and, measured on
     # the same corpus, faster.
     agg: dict[str, object] = {

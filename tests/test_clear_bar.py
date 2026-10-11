@@ -1,7 +1,7 @@
 """The pinned Clear bar docked at the top of the filters pane container.
 
 It floats above the scrolling tree so it stays visible whatever the tag list's
-scroll — the reason a scrolling in-tree row was rejected.
+scroll: the reason a scrolling in-tree row was rejected.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 def idx(tmp_path: Path, tmp_index_dir: Path) -> Path:
     root = tmp_path / "papers"
     root.mkdir(parents=True, exist_ok=True)
-    # Many tagged files so the tree scrolls — the case the pinned bar exists for.
+    # Many tagged files so the tree scrolls: the case the pinned bar exists for.
     for i in range(40):
         (root / f"n{i}.md").write_text(
             f"---\ntags: [t{i}]\n---\n\n# N{i}\n\nsaffron\n", encoding="utf-8"
@@ -72,7 +72,7 @@ async def test_bar_appears_when_active(cfg: Config, idx: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_bar_docks_at_top_inside_the_pane(cfg: Config, idx: Path) -> None:
-    """Inside the container's border, above the scrolling tree — so it floats
+    """Inside the container's border, above the scrolling tree, so it floats
     in view regardless of scroll."""
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test(size=(100, 40)) as pilot:
@@ -150,8 +150,8 @@ async def test_filters_tree_has_bounded_height_so_it_scrolls(cfg: Config, idx: P
     """Regression: the tree inside the container must be a bounded (1fr) height
     so it SCROLLS. `height: auto` grew it to full content height and it was
     merely clipped by the container, stranding the cursor off-screen. (Actual
-    scrolling can't be asserted headlessly — run_test doesn't resolve layout
-    heights — so this guards the exact style that broke; scroll behaviour itself
+    scrolling can't be asserted headlessly, run_test doesn't resolve layout
+    heights, so this guards the exact style that broke; scroll behaviour itself
     is verified in the tmux harness.)"""
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
@@ -159,13 +159,13 @@ async def test_filters_tree_has_bounded_height_so_it_scrolls(cfg: Config, idx: P
         tree = app.query_one("#filters_panel_tree", Tree)
         height = tree.styles.height
         assert height is not None
-        assert not height.is_auto, "tree height is auto — it will clip instead of scroll"
+        assert not height.is_auto, "tree height is auto: it will clip instead of scroll"
         assert height.unit.name == "FRACTION", f"expected 1fr, got {height}"
 
 
 @pytest.mark.asyncio
 async def test_bar_shows_the_active_filter_count(cfg: Config, idx: Path) -> None:
-    """Not a '(X)' key-hint that reads as a placeholder — the count of active
+    """Not a '(X)' key-hint that reads as a placeholder: the count of active
     filters."""
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:

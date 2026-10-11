@@ -1,4 +1,4 @@
-"""Two-press Ctrl+C escape hatch — sets TEXTUAL_ALLOW_SIGNALS so the
+"""Two-press Ctrl+C escape hatch: sets TEXTUAL_ALLOW_SIGNALS so the
 tty driver converts ^C to SIGINT even from a blocked event loop, then
 installs a handler that exits the app cleanly on the first press and
 unconditionally hard-exits on any subsequent press.
@@ -74,7 +74,7 @@ def test_first_sigint_schedules_app_exit_on_the_loop() -> None:
 
 
 def test_second_sigint_unconditionally_hard_exits() -> None:
-    """Any second ^C — even seconds after the first — must hard-exit.
+    """Any second ^C, even seconds after the first, must hard-exit.
     Previous time-window logic missed real-world press cadence."""
     app = _stub_app()
     fake_loop = MagicMock()

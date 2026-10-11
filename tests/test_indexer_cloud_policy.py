@@ -2,7 +2,7 @@
 
 The policy, from the 7-minute Update-all stall: a file the user can see in
 their file manager should end up in the index, so the indexer pulls it down
-rather than refusing it. What must never happen again is the *silent* wait —
+rather than refusing it. What must never happen again is the *silent* wait,
 so every fetch is announced through :func:`fnd.cloud_files.current_wait`,
 bounded by ``defaults.cloud_fetch_timeout_s``, and abandonable mid-run via
 the modal's "Skip cloud-only" action.
@@ -100,7 +100,7 @@ def test_policy_default_fetches_and_opt_out_skips(tmp_path: Path) -> None:
 async def test_cloud_only_file_is_fetched_not_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A placeholder is materialised and then indexed — the old behaviour
+    """A placeholder is materialised and then indexed: the old behaviour
     refused it outright with "download in Finder before indexing"."""
     doc = tmp_path / "cloud.md"
     doc.write_text("# heading\n\nbody text\n", encoding="utf-8")
@@ -130,7 +130,7 @@ async def test_opt_out_skips_cloud_only_files_mid_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With the opt-out set, the placeholder is reported as skipped rather
-    than fetched — and the reason names the provider."""
+    than fetched, and the reason names the provider."""
     doc = tmp_path / "cloud.md"
     doc.write_text("# heading\n\nbody\n", encoding="utf-8")
     monkeypatch.setattr("fnd.index_runner.is_placeholder", lambda _p: True)
@@ -194,7 +194,7 @@ async def test_opt_out_does_not_flag_already_indexed_cloud_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unchanged, already-indexed cloud-only file needs no work either
-    way — with the opt-out on it must still read as "already indexed", not
+    way, with the opt-out on it must still read as "already indexed", not
     as something the user was denied."""
     # Source root holds only the document: the state file and index must
     # live outside it, or the second run enumerates them as corpus files.
@@ -239,7 +239,7 @@ async def test_scan_phase_blocks_are_counted_not_dropped(
 
     Frontmatter-filter candidates are dropped from the walk when the fetch
     is declined or fails, so they never reach the per-file loop. Without an
-    explicit flush they vanish silently — no count, no event, no log entry —
+    explicit flush they vanish silently (no count, no event, no log entry)
     which is the exact failure mode this change exists to prevent.
     """
     corpus = tmp_path / "vault"
@@ -278,7 +278,7 @@ def test_fetch_aborts_promptly_when_the_run_is_cancelled(tmp_path: Path) -> None
     """A stalled provider must not hold Cancel for the whole timeout.
 
     Without polling, `fetch` joined for `timeout_s` (60s by default), so a
-    Cancel pressed while a download was wedged sat unanswered for a minute —
+    Cancel pressed while a download was wedged sat unanswered for a minute:
     undoing the responsiveness this change set exists to deliver.
     """
     target = tmp_path / "wedged.pdf"
@@ -297,7 +297,7 @@ def test_fetch_aborts_promptly_when_the_run_is_cancelled(tmp_path: Path) -> None
         cloud_files.fetch(_never, path=target, timeout_s=30.0, cancel=cancel)
     elapsed = time.monotonic() - started
 
-    assert elapsed < 5.0, f"cancel took {elapsed:.1f}s — not polled during the join"
+    assert elapsed < 5.0, f"cancel took {elapsed:.1f}s, not polled during the join"
     assert cloud_files.current_wait() is None
 
 

@@ -1,4 +1,4 @@
-"""Update all collections — verify docs land in the Tantivy index.
+"""Update all collections: verify docs land in the Tantivy index.
 
 Catches the bug where the chain visibly walks every collection (and the
 modal renders "Done.") but the LAST collection's docs are missing from
@@ -45,8 +45,8 @@ def _per_collection_doc_counts(index_dir: Path, names: list[str]) -> dict[str, i
 
 @pytest.mark.asyncio
 async def test_chain_commits_final_collection_docs(tmp_path: Path) -> None:
-    """Four-collection chain must leave docs for every collection —
-    including the final one — in the index after the chain completes."""
+    """Four-collection chain must leave docs for every collection,
+    including the final one: in the index after the chain completes."""
     names = ["alpha", "beta", "gamma", "delta"]
     # Distinct corpora per collection so parent_id-based delete-then-
     # re-add does not let each chain step wipe the prior step's docs

@@ -1,7 +1,7 @@
 """A broken highlighter must never subtract results.
 
 The engine's match is what makes a result a result. If paintability were allowed
-to gate the results pane, a bug in the highlighter would remove rows silently —
+to gate the results pane, a bug in the highlighter would remove rows silently:
 the user would never learn they had missed a match, and the bug would never be
 discovered. So an unpaintable match is *marked*, never withheld.
 
@@ -23,7 +23,7 @@ from fnd.matching import MatchSpec
 from fnd.tui import FNDApp
 from fnd.tui.results_labels import _UNLOCATABLE_GLYPH
 
-# Non-empty (so the evidence check engages) but present in no document — the
+# Non-empty (so the evidence check engages) but present in no document: the
 # shape a broken highlighter would produce. An *empty* spec would short-circuit
 # to "nothing to locate" and prove nothing.
 BLIND_SPEC = MatchSpec.from_query("zzqqxx")
@@ -71,7 +71,7 @@ def _rows(tree: Tree[object]) -> list[tuple[str, int]]:
 
 
 def _blind(app: FNDApp, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the app's specs with ones that match nothing — a highlighter
+    """Replace the app's specs with ones that match nothing: a highlighter
     that has stopped working.
 
     Both the painting spec and the evidence spec are blinded: they are built
@@ -107,7 +107,7 @@ async def test_blind_highlighter_removes_no_results(
 async def test_blind_highlighter_marks_every_row(
     app_with_results: FNDApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Not merely retained — visibly flagged, so the regression is discoverable
+    """Not merely retained: visibly flagged, so the regression is discoverable
     rather than a silent oddity."""
     async with app_with_results.run_test() as pilot:
         for _ in range(8):

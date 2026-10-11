@@ -2,7 +2,7 @@
 
 Reads the junit reports one per (OS, run) and prints a markdown summary.
 A test that fails in some runs and passes in others is a flake; one that
-fails in every run of an OS is a real, platform-specific failure — the
+fails in every run of an OS is a real, platform-specific failure: the
 distinction the workflow exists to make.
 """
 
@@ -68,7 +68,7 @@ def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0)
                 detail.setdefault(nodeid, _detail(case))
 
     total = sum(len(v) for v in runs.values())
-    out = [f"## Flake hunt — {total} suite runs\n"]
+    out = [f"## Flake hunt: {total} suite runs\n"]
 
     # A job that dies before uploading leaves no directory at all, so a smaller
     # count is the ONLY trace of it. Say so loudly: a table that silently
@@ -83,7 +83,7 @@ def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0)
         if absent:
             out.append(
                 f"> **{len(absent)} of {len(expect_oses) * expect_runs} suites reported "
-                f"nothing** — {', '.join(absent)}. Still running, or the job died before "
+                f"nothing**: {', '.join(absent)}. Still running, or the job died before "
                 "uploading. Everything below describes only the suites that reported.\n"
             )
     out.append("| OS | runs | runs with a failure |")
@@ -94,7 +94,7 @@ def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0)
     out.append("")
 
     if missing:
-        out.append(f"> No report from: {', '.join(missing)} — job died before pytest wrote one.\n")
+        out.append(f"> No report from: {', '.join(missing)}, job died before pytest wrote one.\n")
 
     if not fails:
         out.append("**Every run green.** No test failed in any run.")
@@ -129,7 +129,7 @@ def _json_list(arg: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    # argv: <reports-dir> [oses-json] [indices-json] — the matrix that was ASKED
+    # argv: <reports-dir> [oses-json] [indices-json]; the matrix that was ASKED
     # for, so a suite that never reported is named rather than silently missing.
     _dir = Path(sys.argv[1] if len(sys.argv) > 1 else "reports")
     _oses = _json_list(sys.argv[2]) if len(sys.argv) > 2 else None

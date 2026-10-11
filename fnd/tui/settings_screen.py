@@ -9,12 +9,12 @@ vocabulary:
     ``Tree.border_title``).
   * A plain one-line search ``Input`` at the top of the container, no
     decorative border.
-  * The row list itself — a ``Vertical`` of one ``MenuRow`` widget per
+  * The row list itself: a ``Vertical`` of one ``MenuRow`` widget per
     item so we can columnar-render key/label/value with Rich, skip
     headers from cursor nav, and pin trailing setting values to a fixed
     column.
   * A bottom edit-bar (mounted but hidden) that opens above the shared
-    hint bar when editing a scalar — same chrome wherever it appears.
+    hint bar when editing a scalar: same chrome wherever it appears.
   * A shared ``#footer_hints`` Static docked at the screen bottom,
     rendered by :func:`fnd.tui.app.render_hint_bar` so the visual is
     identical to the main app's footer.
@@ -220,8 +220,8 @@ def build_confirm_body(
     """Three-row labelled body shared by every confirm screen.
 
     Default labels (Outcome / Cost / Safety) describe a pay-then-gain
-    action — installing, deleting, paying CPU to rebuild. Some actions
-    don't fit that framing — uninstalling FREES disk rather than
+    action: installing, deleting, paying CPU to rebuild. Some actions
+    don't fit that framing: uninstalling FREES disk rather than
     costing it. Callers override the labels (e.g. ``cost_label="Disk
     freed"``) so each screen reads naturally.
 
@@ -315,7 +315,7 @@ def confirm_border_class(severity: str) -> str:
 
 
 # Per-kind glyph constants. All render in default macOS Terminal fonts
-# (Menlo, SF Mono, Monaco) — verified safe.
+# (Menlo, SF Mono, Monaco): verified safe.
 _GLYPH_TOGGLE_ON = "✓ on"  # U+2713 + text
 _GLYPH_TOGGLE_OFF = "✗ off"  # U+2717 + text
 _GLYPH_DRILL = "▸"  # U+25B8 small triangle
@@ -421,12 +421,12 @@ def _render_row(
       KIND_EXTERNAL   drill: summary + ▸ ; external_app: path (dim), label gets leading ↗
       KIND_PICKER     value (bold) + ▾ (accent)
       KIND_SCALAR     value (bold)
-      KIND_DISPLAY    value (bold) — and label rendered dim instead of bright
+      KIND_DISPLAY    value (bold), and label rendered dim instead of bright
 
-    ``app`` may be ``None`` for tests that don't construct a full app —
+    ``app`` may be ``None`` for tests that don't construct a full app:
     in that case the trailing slot is skipped.
 
-    ``breadcrumb`` is a tuple of section labels — when provided it is
+    ``breadcrumb`` is a tuple of section labels, when provided it is
     rendered instead of the normal trailing so the user knows which
     section each cross-section search result comes from.
 
@@ -519,7 +519,7 @@ def _render_row(
         # The trailing affordance (rightmost segment) is the row's
         # primary signal of "what does Enter do." If the row's total
         # render would exceed width, the terminal silently truncates
-        # the right edge — losing the glyph the user needs. Truncate
+        # the right edge: losing the glyph the user needs. Truncate
         # the longest dim/summary segment instead, leaving room for at
         # least a 2-char dotted pad and the whole affordance.
         min_pad = 2
@@ -547,7 +547,7 @@ def _truncate_segments_to_fit(
 ) -> list[tuple[str, str]]:
     """Shrink the first dim/summary segment with ``…`` so the total
     fits within ``budget``. The trailing affordance segment (and any
-    other non-dim segments) is preserved verbatim — losing the glyph
+    other non-dim segments) is preserved verbatim: losing the glyph
     would defeat the per-kind visual language.
 
     Returns the original list when no truncation is needed."""
@@ -569,7 +569,7 @@ def _truncate_segments_to_fit(
         kept[longest] = (_shorten(text, room, elide), style)
         return kept
     if available_for_dim <= 1:
-        # Pathologically narrow row — drop dim segments altogether,
+        # Pathologically narrow row: drop dim segments altogether,
         # keep only the affordance.
         return [(t, s) for t, s in segments if "dim" not in s]
     out: list[tuple[str, str]] = []
@@ -593,11 +593,11 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
     """Per-kind trailing segments as (text, rich_style) pairs.
 
     Rich Text styles used:
-      ``bold green``  — toggle on, safe affirmation
-      ``bold red``    — toggle off, destructive
-      ``bold cyan``   — accent: action brackets, drill arrow, picker caret, ↗
-      ``bold``        — bright value (scalar / picker value / display value)
-      ``dim``         — drill row summary text, parenthetical context
+      ``bold green`` (toggle on, safe affirmation
+      ``bold red``) toggle off, destructive
+      ``bold cyan`` (accent: action brackets, drill arrow, picker caret, ↗
+      ``bold``) bright value (scalar / picker value / display value)
+      ``dim``, drill row summary text, parenthetical context
     """
     if app is None:
         return []
@@ -611,7 +611,7 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
 
     if item.kind == KIND_ACTION:
         # Keybindings cheat-sheet rows carry a ``key`` glyph in their
-        # leading column — that IS the affordance. A trailing button
+        # leading column: that IS the affordance. A trailing button
         # would (a) repeat noise across ~30 rows of documentation and
         # (b) push the leading [key] into the right margin under
         # narrow widths.
@@ -649,7 +649,7 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
         if item.external_app:
             # External app: dim path; no trailing arrow (leading ↗ on label).
             return [(summary, "dim")] if summary else []
-        # Internal drill — same as KIND_SUBMENU.
+        # Internal drill: same as KIND_SUBMENU.
         if summary:
             return [(summary + " ", "dim"), (_GLYPH_DRILL, "bold cyan")]
         return [(_GLYPH_DRILL, "bold cyan")]
@@ -991,7 +991,7 @@ class SettingsList(Widget, can_focus=True):
     SettingsList Static.row.-hint-section { background: $accent 8%; }
     /* Only paint the cursor row when the list itself owns focus. When
        the screen's filter Input is focused, the user is composing a
-       query — a list-cursor highlight at the same time would compete
+       query: a list-cursor highlight at the same time would compete
        for the eye. */
     SettingsList:focus Static.row.-cursor { background: $accent 40%; text-style: bold; }
     """
@@ -1032,11 +1032,11 @@ class SettingsList(Widget, can_focus=True):
         # Maps id(item) → breadcrumb tuple during cross-section search.
         # Empty when no filter is active.
         self._search_breadcrumbs: dict[int, tuple[str, ...]] = {}
-        # The active search query, lowercased — used to bold the matching
+        # The active search query, lowercased: used to bold the matching
         # substring inside each filtered row's label.
         self._search_query: str = ""
         # When set, the next ``_init_cursor`` lands on this item id instead
-        # of the first selectable row — lets a re-population (e.g. resume
+        # of the first selectable row: lets a re-population (e.g. resume
         # from a popped child screen) keep the cursor on the row the user
         # drilled from. Consumed (reset to None) once applied.
         self._pending_cursor_id: str | None = None
@@ -1051,8 +1051,8 @@ class SettingsList(Widget, can_focus=True):
 
     def compose(self) -> ComposeResult:
         # VerticalScroll (not plain Vertical) so long lists like the
-        # Keybindings cheat sheet — 30+ rows after the registry-derived
-        # rebuild — get a working scrollbar and ``_scroll_cursor_into_view``
+        # Keybindings cheat sheet, 30+ rows after the registry-derived
+        # rebuild, get a working scrollbar and ``_scroll_cursor_into_view``
         # has a scrollable parent to call ``scroll_to_widget`` on.
         yield VerticalScroll(id="settings_list_body")
 
@@ -1069,7 +1069,7 @@ class SettingsList(Widget, can_focus=True):
         # _init_cursor (deferred below) lands here if the id is present.
         self._pending_cursor_id = cursor_id
         body = self.query_one("#settings_list_body", VerticalScroll)
-        # Remove existing rows synchronously by walking the DOM directly —
+        # Remove existing rows synchronously by walking the DOM directly:
         # Textual's `remove_children` is async and would race against the
         # mount of fresh rows immediately below.
         for child in list(body.children):
@@ -1194,12 +1194,12 @@ class SettingsList(Widget, can_focus=True):
         to the newly-cursored row without re-rendering every row.
 
         ``_render_all`` rebuilds every row's Rich ``Text`` and updates
-        every ``Static`` — on a long list (Keybindings has ~80 rows) it
+        every ``Static``: on a long list (Keybindings has ~80 rows) it
         dominates the cost of a single arrow keystroke. The cursor move
         only changes one CSS class on two rows; do exactly that.
 
         Also posts the Highlighted message so the parent screen can
-        update its hint bar / detail strip — any external setter of
+        update its hint bar / detail strip: any external setter of
         ``cursor_index`` (screen restoration, jump-to-row, tests) goes
         through this watcher so the cascade always fires.
         """
@@ -1273,7 +1273,7 @@ class SettingsList(Widget, can_focus=True):
             with contextlib.suppress(Exception):
                 self.scroll_to_widget(rows[self.cursor_index], animate=False)
 
-    # Item kinds that "drill into a sub-screen" — these are what `right`
+    # Item kinds that "drill into a sub-screen": these are what `right`
     # activates. Right does nothing on scalars / toggles / actions / leaf
     # rows; the user must press Enter for those.
     _DRILL_KINDS: frozenset[str] = frozenset({KIND_SUBMENU, KIND_PICKER, KIND_EXTERNAL})
@@ -1287,7 +1287,7 @@ class SettingsList(Widget, can_focus=True):
     def action_drill(self) -> None:
         """Right-arrow navigation: drill into a sub-screen only. No-op
         for kinds that would otherwise *commit* state (scalar edit,
-        toggle, action dispatch) — those are Enter-only."""
+        toggle, action dispatch): those are Enter-only."""
         if 0 <= self.cursor_index < len(self._items):
             item = self._items[self.cursor_index]
             if item.kind in self._DRILL_KINDS:
@@ -1429,7 +1429,7 @@ class SettingsScreen(Screen[None]):
         lst = self.query_one(SettingsList)
         lst.set_items(list(self._items))
         # Root menu: focus the filter Input so typing immediately
-        # narrows. Sub-menus focus the list — the user just drilled
+        # narrows. Sub-menus focus the list: the user just drilled
         # in deliberately and wants to navigate, not re-filter from
         # scratch. The `/` shortcut still works to focus the filter
         # on demand from any screen.
@@ -1449,7 +1449,7 @@ class SettingsScreen(Screen[None]):
     def refresh_items(self) -> None:
         """Re-run the provider and repaint every row's trailing value.
 
-        A scalar/picker edit only changes one row's value — re-rendering
+        A scalar/picker edit only changes one row's value: re-rendering
         in place is enough since the row's ``value_getter`` lambda reads
         config lazily. But a structural edit (adding a source, renaming
         a collection) changes the *set* of rows, and the cached
@@ -1459,7 +1459,7 @@ class SettingsScreen(Screen[None]):
         trailing values needed refreshing.
 
         Also invalidates the lazy-trailing cache so async values (cache
-        size, pdf-structure disk, etc.) re-compute on resume — the user
+        size, pdf-structure disk, etc.) re-compute on resume: the user
         may have just run an action that changed the underlying numbers.
         """
         import contextlib
@@ -1491,7 +1491,7 @@ class SettingsScreen(Screen[None]):
         # Preserve cursor position by item id: a structural edit (add /
         # remove row) shifts indices, so the closest semantic anchor is
         # the previously-cursored row's stable id. Threaded through
-        # set_items → _init_cursor so the restore is atomic — a separate
+        # set_items → _init_cursor so the restore is atomic: a separate
         # deferred restore loses the race against _init_cursor's own
         # deferred reset-to-first and the cursor jumps back to the top.
         prev_id: str | None = None
@@ -1591,7 +1591,7 @@ class SettingsScreen(Screen[None]):
 
         For the default branch, the `⏎` action label reflects what
         Enter does on the focused row (Toggle / Edit / Choose / Open /
-        Run / Open in editor) — or is omitted entirely for read-only
+        Run / Open in editor), or is omitted entirely for read-only
         rows. This way the footer never lies about the next action.
         """
         # Edit-bar open: just the save/cancel pair.
@@ -1689,7 +1689,7 @@ class SettingsScreen(Screen[None]):
         self._filter_active = True
         filtered, breadcrumbs = self._filter_items(q)
         if not filtered:
-            # Empty-state hint — a non-selectable placeholder row so the
+            # Empty-state hint: a non-selectable placeholder row so the
             # cursor-skip rule keeps it inert.
             placeholder = MenuItem(
                 id="search.empty",
@@ -1704,7 +1704,7 @@ class SettingsScreen(Screen[None]):
         """Cross-section: walk every section's leaves, score by substring
         match against label + key + keywords + breadcrumb segments.
 
-        Spec deliberately excludes ``description`` prose — descriptions
+        Spec deliberately excludes ``description`` prose: descriptions
         surface in the detail strip on focus, and indexing them muddies
         the search results.
         """
@@ -1738,7 +1738,7 @@ class SettingsScreen(Screen[None]):
     def _on_search_submitted(self, _ev: Input.Submitted) -> None:
         # Search is navigation-only: Enter lands focus on the first match
         # (the cursor is already there from filtering) and stops. It does
-        # NOT fire the row's effect — no silent toggles, no accidental
+        # NOT fire the row's effect: no silent toggles, no accidental
         # side-effects (e.g. launching an editor). The user presses Enter
         # again on the now-focused list to actually act on the row.
         lst = self.query_one(SettingsList)
@@ -1799,7 +1799,7 @@ class SettingsScreen(Screen[None]):
         refresh_search_placeholder(self, "#settings_search")
 
     def _row_metadata(self, item: MenuItem) -> str:
-        """Build the 2nd-line metadata for the detail strip — storage path,
+        """Build the 2nd-line metadata for the detail strip: storage path,
         constraint, applicability note, etc."""
         parts: list[str] = []
         if item.setting_path:
@@ -1813,18 +1813,18 @@ class SettingsScreen(Screen[None]):
     def _activate_item(self, item: MenuItem) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         if item.kind == KIND_DISPLAY:
-            # Read-only row — Enter does nothing. Detail strip still
+            # Read-only row: Enter does nothing. Detail strip still
             # populates from cursor focus.
             return
         if item.kind == KIND_ACTION:
             # ACTION rows have three dispatch paths in priority order:
             #   1. ``external`` callable (custom side-effect, e.g. push
             #      a confirm modal or an IndexerScreen). When present,
-            #      run it and leave the settings stack alone — the
+            #      run it and leave the settings stack alone: the
             #      callable usually pushes its own screen.
             #   2. ``action_id`` (REGISTRY-bound app action). Close the
             #      settings stack and dispatch via ``app.action_<id>``.
-            #   3. Documentation-only rows (widget-level bindings — Move
+            #   3. Documentation-only rows (widget-level bindings: Move
             #      cursor, Activate, etc. in the Keybindings sheet)
             #      carry neither; Enter is a no-op so the user can keep
             #      reading the cheat sheet.
@@ -2086,7 +2086,7 @@ class PickerScreen(Screen[None]):
             else:
                 self._selected.add(target.value)
             # In-place update keeps the OptionList cursor on the toggled
-            # row — rebuilding via clear_options + add_option would reset
+            # row: rebuilding via clear_options + add_option would reset
             # it to index 0 every time and force the user to re-navigate.
             lst = self.query_one("#picker_list", OptionList)
             lst.replace_option_prompt_at_index(target_index, self._render_choice_prompt(target))
@@ -2709,7 +2709,7 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
             )
         ]
         for app_id, app in registry.items():
-            # Filter to apps that are actually installed on this host —
+            # Filter to apps that are actually installed on this host:
             # matches the global default-app picker and the Open-with
             # modal, both of which already filter by ``available()``.
             # Without this, the picker would let users pick e.g. Skim on
@@ -2718,12 +2718,12 @@ class SourceFormScreen(_SourceFields, DocumentScreen):
             if not app.available():
                 continue
             # `reveal` never opens the file, so it can't stand in as a
-            # source's app — see ``App.selectable_default``.
+            # source's app: see ``App.selectable_default``.
             if not app.selectable_default:
                 continue
             handles = ",".join(app.handles)
             # ``app.notes`` carries the per-app advisory ("install plugin X
-            # for line-precise jumps", "no page-jump on macOS", etc.) — surface
+            # for line-precise jumps", "no page-jump on macOS", etc.): surface
             # it as the picker's description so users see the recommendation
             # at the point of choice. Fall back to ``handles:`` when an app
             # has no notes (most built-ins do).
@@ -3265,7 +3265,7 @@ class AddCollectionWizard(_SourceFields, DocumentScreen):
     @on(TextArea.Changed, "#frontmatter_sample")
     def _on_sample_changed(self, _ev: TextArea.Changed) -> None:
         """Live match-status when the user pastes/edits a frontmatter
-        sample — mirrors SourceFormScreen so the wizard's tester is
+        sample: mirrors SourceFormScreen so the wizard's tester is
         actually functional, not just visually present."""
         self._refresh_match_status()
 
@@ -3561,7 +3561,7 @@ class DeleteCollectionScreen(Screen[None]):
         self._name = collection_name
         # Set once the worker is dispatched: freezes the bindings so the user
         # can't re-fire "Yes" (a second worker) or escape onto the now-stale
-        # parent screen mid-delete. Never cleared — the screen is single-use.
+        # parent screen mid-delete. Never cleared: the screen is single-use.
         self._deleting = False
         self._default_moved = False
 
@@ -3635,7 +3635,7 @@ class DeleteCollectionScreen(Screen[None]):
         # seconds on a fragmented one, so it runs on a worker with a spinner.
         # Non-atomic by design: the config is committed here, before the worker
         # drops the chunks. A _drop failure leaves orphan chunks with the
-        # collection already gone from config — surfaced to the user, cleared by
+        # collection already gone from config: surfaced to the user, cleared by
         # a later "Rebuild all"; no auto-rollback (matches the prior sync path).
         import contextlib
 
@@ -3718,8 +3718,8 @@ class DeleteCollectionScreen(Screen[None]):
             )
         with contextlib.suppress(Exception):
             app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        # Pop the Delete screen + the now-stale per-collection screen beneath it
-        # — but only while the Delete screen is still on top. A manual escape
+        # Pop the Delete screen + the now-stale per-collection screen beneath it,
+        # but only while the Delete screen is still on top. A manual escape
         # mid-delete means the user already navigated elsewhere, so popping by
         # count would drop unrelated screens. Never pop the root.
         if app.screen is self:
@@ -3741,7 +3741,7 @@ class DeleteCollectionScreen(Screen[None]):
 class CacheMaintenanceConfirm(Screen[None]):
     """Confirm screen for cache prune / clear.
 
-    Mirrors :class:`DeleteCollectionScreen` chrome — same bordered
+    Mirrors :class:`DeleteCollectionScreen` chrome, same bordered
     settings_box, same OptionList Yes/Cancel pattern, same key
     bindings. Arrows navigate between options; Enter selects.
     Destructive variants use ``$error`` border; reversible variants
@@ -3843,11 +3843,11 @@ class CacheMaintenanceConfirm(Screen[None]):
 class UpdateAllConfirm(Screen[None]):
     """Confirm + chain Update index across every collection.
 
-    Mirrors the CacheMaintenanceConfirm chrome — bordered box,
+    Mirrors the CacheMaintenanceConfirm chrome: bordered box,
     OptionList Yes/Cancel, hint bar. On Yes, kicks off the first
     collection's update via the existing per-collection modal path;
     when that completes, advances to the next. Phase F adds a
-    proper aggregate progress modal — for now we delegate to
+    proper aggregate progress modal: for now we delegate to
     sequential per-collection runs."""
 
     ROLE: ClassVar[Role] = Role.CONFIRM
@@ -4029,7 +4029,7 @@ def _pdf_cache_size_human() -> str:
 class StructuredPdfConfirmScreen(Screen[None]):
     """Disclosure + Yes/Cancel for the pdf-structure extra.
 
-    Mirrors :class:`CacheMaintenanceConfirm` chrome — bordered
+    Mirrors :class:`CacheMaintenanceConfirm` chrome, bordered
     settings_box, OptionList Yes/Cancel, hint bar. State at mount
     decides install vs uninstall copy. Confirming pushes the progress
     modal wired in step 6b.
@@ -4072,7 +4072,7 @@ class StructuredPdfConfirmScreen(Screen[None]):
         self._extra = EXTRAS.get("pdf-structure")
         self._installed = self._extra is not None and self._is_installed()
         # Install is "safe" (additive, reversible). Uninstall is
-        # "recoverable" — packages go but indexed chunks stay, so the
+        # "recoverable": packages go but indexed chunks stay, so the
         # user can recover by reinstalling.
         self._severity = "recoverable" if self._installed else "safe"
         self.add_class(confirm_border_class(self._severity))
@@ -4789,7 +4789,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
 
 
 def open_settings(app: FNDApp) -> None:
-    """Open the Settings root menu — a short list of categories the
+    """Open the Settings root menu: a short list of categories the
     user can drill into. No content stacked on a single screen."""
     items = build_root_items(app)
     app.push_screen(
@@ -4829,7 +4829,7 @@ def open_settings_section(
     Used by drill-in rows on the root menu AND by the global shortcuts
     (`?` → Keybindings, F3 → Collections). When called from `?`, an
     optional ``context_hint`` is threaded into the section's provider so
-    the Keybindings list reorders its sections — most-relevant first
+    the Keybindings list reorders its sections: most-relevant first
     after Global. Hint is ignored by sections that don't consume it.
     """
     label = section_label(section_id)
@@ -4851,10 +4851,10 @@ def open_settings_section(
 def _format_recorded_at(iso: str) -> str:
     """Compact local-time label for an ISO-8601 UTC timestamp.
 
-    today HH:MM        — same calendar day
-    yesterday HH:MM    — previous calendar day
-    Mon HH:MM          — within the last 7 days
-    MMM DD HH:MM       — older than a week"""
+    today HH:MM, same calendar day
+    yesterday HH:MM, previous calendar day
+    Mon HH:MM, within the last 7 days
+    MMM DD HH:MM, older than a week"""
     import datetime as _dt
 
     try:
@@ -4878,7 +4878,7 @@ def _flat_pdfs_with_reasons(  # pyright: ignore[reportUnusedFunction]  # consume
 ) -> list[tuple[str, str, str, str | None]]:
     """Return a list of ``(collection, path, reason, recorded_at)`` for
     every PDF that is on disk but has no body_md-bearing chunk in the
-    tantivy index (i.e. not texturised — body_struct is present on every
+    tantivy index (i.e. not texturised: body_struct is present on every
     indexed PDF and can't distinguish flat from textured). ``recorded_at``
     is the failure-log timestamp, or None when inferred. Reasons are
     sourced from the failure log when present; otherwise inferred from
@@ -5084,15 +5084,15 @@ class StillFlatDrillIn(Screen[None]):
     def _refresh(self) -> None:
         """Paint the last scan instantly (or a 'Scanning…' placeholder on
         a cold cache) and recompute off the event loop. The flat-PDF scan
-        walks every source on disk and diffs the index — seconds on a real
-        corpus — so it must never run on the UI thread or the screen
+        walks every source on disk and diffs the index, seconds on a real
+        corpus, so it must never run on the UI thread or the screen
         freezes on open. ``_on_rows_ready`` repaints when the worker lands."""
         from fnd.tui import flat_pdf_scan
 
         cached = flat_pdf_scan.cached_rows(self._collection_filter)
         if cached is not None:
             self._render_rows(cached)
-            # Only rescan when stale — a fresh cache would otherwise notify
+            # Only rescan when stale: a fresh cache would otherwise notify
             # _on_rows_ready inline and rebuild the whole row list a second
             # time (flicker + wasted work).
             if not flat_pdf_scan.is_fresh(self._collection_filter):

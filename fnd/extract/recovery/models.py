@@ -30,7 +30,7 @@ class PageExtraction:
 @dataclass(frozen=True, eq=False)
 class ExtractionContext:
     """Everything the tiers need about the page under extraction. ``flat``
-    is ``page.get_text("text")`` — already in scope at the call site, so
+    is ``page.get_text("text")``: already in scope at the call site, so
     the coverage gate is free."""
 
     doc: Any  # pymupdf.Document

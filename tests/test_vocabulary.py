@@ -130,8 +130,8 @@ def test_separator_only_scope_is_an_error_not_a_silent_widening(blank: str) -> N
 
 # ── the no-collections-configured branch ──────────────────────────────────
 #
-# Names can't be checked against an empty config — an ad-hoc
-# `fnd index --collection` name would look exactly like a typo — but the value
+# Names can't be checked against an empty config: an ad-hoc
+# `fnd index --collection` name would look exactly like a typo, but the value
 # still has to parse and still has to name something.
 
 
@@ -146,7 +146,7 @@ def test_ad_hoc_name_passes_through_when_nothing_is_configured() -> None:
 
 
 def test_comma_list_still_splits_when_nothing_is_configured() -> None:
-    """Unvalidated is not unparsed — one comma-joined term matches nothing."""
+    """Unvalidated is not unparsed: one comma-joined term matches nothing."""
     issues = FilterIssues()
     assert resolve_collection_option("one,two", _empty(), issues) == ["one", "two"]
     assert not issues
@@ -167,7 +167,7 @@ def test_all_still_means_everything_with_no_config() -> None:
 
 def test_every_exact_field_has_a_vocabulary() -> None:
     """``_check_query_filters`` maps EXACT query fields to vocabularies by name.
-    A new EXACT field in the registry with no vocabulary would go unvalidated —
+    A new EXACT field in the registry with no vocabulary would go unvalidated:
     fail here rather than let that happen quietly."""
     from fnd.query_fields import REGISTRY, FieldValue
 

@@ -76,7 +76,7 @@ Pilot.press = _safe_press  # type: ignore[method-assign]
 # When the pdf-structure extra is installed in the dev venv, PDF chunks
 # carry body_md and the preview dispatcher routes them through the
 # structural Markdown widget. Most existing tests pre-date that and
-# assert the flat-buffer routing PDFs have always taken — they pass
+# assert the flat-buffer routing PDFs have always taken: they pass
 # in CI (no extra installed) but fail locally when a dev has installed
 # it. Default the whole test suite to flat-PDF routing so the
 # invariant tests stay green; the two structural-PDF tests opt out
@@ -223,7 +223,7 @@ def saved_empty_scope(isolated_ui_state: Path) -> Path:
     """Persist a deliberately-empty scope before the app starts.
 
     A profile that has never saved a scope is seeded from
-    ``defaults.collection`` — all collections by default — so a test that
+    ``defaults.collection``, all collections by default, so a test that
     wants to start from "nothing selected" has to ask for it. Saving an
     empty state says "the user unticked everything", which is a different
     situation from "brand-new profile" and the one these tests mean.
@@ -288,7 +288,7 @@ def isolated_pdf_structure_cache(  # pyright: ignore[reportUnusedFunction]
     pre-structured-extra run) make later tests see wrong data.
 
     The PDF extractor caches its ExtractionCache instance in
-    ``_cache_singleton`` — reset it so the patched default_cache_dir
+    ``_cache_singleton``: reset it so the patched default_cache_dir
     actually takes effect."""
     root = tmp_path / "pdf-structure-cache"
     monkeypatch.setattr("fnd.cache.default_cache_dir", lambda: root)
@@ -308,7 +308,7 @@ def isolated_indexer_resume_state(  # pyright: ignore[reportUnusedFunction]
     ``state_file_for("default")`` from the real user-data dir. A
     resumable state left there (an interrupted real index, or another
     test that drove the indexer against the real default dir) makes the
-    app auto-resume a "default" indexer the moment it launches — so any
+    app auto-resume a "default" indexer the moment it launches, so any
     test that drives the indexer sees a spurious extra "default" run
     before its own collections. Redirect the lookup so tests never read
     (or write) real resume state.
@@ -330,7 +330,7 @@ def isolated_progress_calibration(  # pyright: ignore[reportUnusedFunction]
 
     The calibrator learns from every completed operation, so without this any
     test that drives a preview load would write the developer's real
-    calibration — and read it back, making the bar's pacing (and therefore
+    calibration, and read it back, making the bar's pacing (and therefore
     these tests) depend on whatever the last interactive session measured.
     Reset the in-memory store on both sides: it is module-global, so a stale
     one leaks between tests just as readily as the file does."""

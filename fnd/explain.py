@@ -4,7 +4,7 @@ TUI overlay.
 Off the hot path: trace objects are only built when ``with_trace=True``
 flows through :func:`fnd.layered.search_layered`. The data inside is
 the same data that would otherwise be discarded after fusion / cascade
-ran — no extra computation, just retention of internal state.
+ran: no extra computation, just retention of internal state.
 """
 
 from __future__ import annotations

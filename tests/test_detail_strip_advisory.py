@@ -2,7 +2,7 @@
 visible border so it reads as a distinct guidance panel.
 
 The strip is the only place we proactively surface "install plugin X"
-/ "no page-jump on macOS" / etc. — without the advisory routed
+/ "no page-jump on macOS" / etc. without the advisory routed
 through, users have to discover capability gaps by trial and error.
 """
 
@@ -53,7 +53,7 @@ def test_obsidian_app_notes_mention_advanced_uri_plugin() -> None:
 def test_app_defaults_picker_obsidian_choice_carries_plugin_advisory() -> None:
     """``_choices_apps_for_kind`` already routes ``app.notes`` into the
     picker. Pin that the obsidian choice's description names the
-    plugin — without this nudge users don't know why o-on-md sometimes
+    plugin, without this nudge users don't know why o-on-md sometimes
     lands at the section heading instead of the matched line."""
     from fnd.tui.menu import _choices_apps_for_kind
 
@@ -99,7 +99,7 @@ async def test_vault_field_hint_mentions_advanced_uri_plugin(
     tmp_path: Path,
 ) -> None:
     """SourceFormScreen's Obsidian vault row's hint is the user's
-    second chance to learn about the plugin — first sighting is at
+    second chance to learn about the plugin: first sighting is at
     App picker, second at the vault field itself."""
     from fnd.config import CollectionConfig, Config, SourceConfig
     from fnd.tui.settings_screen import SourceFormScreen

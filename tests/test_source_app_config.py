@@ -2,10 +2,10 @@
 
 The new optional fields on :class:`fnd.config.SourceConfig`:
 
-* ``app`` — single app id (sugar for "use this app for every filetype it
+* ``app``: single app id (sugar for "use this app for every filetype it
   handles").
-* ``app_for`` — explicit per-filetype mapping (``{"md": "obsidian"}``).
-* ``app_params`` — free-form key/value bag for template variables
+* ``app_for``: explicit per-filetype mapping (``{"md": "obsidian"}``).
+* ``app_params``: free-form key/value bag for template variables
   (``vault``, custom user vars).
 
 References to unknown app ids are rejected at the top-level
@@ -83,7 +83,7 @@ def test_config_rejects_unknown_app_in_source_app_for() -> None:
 
 
 def test_config_user_app_id_visible_to_source_validation() -> None:
-    """A source can reference an id defined in [apps.<id>] — not just
+    """A source can reference an id defined in [apps.<id>], not just
     built-ins."""
     Config.model_validate(
         {
@@ -129,7 +129,7 @@ def test_open_smart_passes_vault_through_to_request(
     monkeypatch.setattr(apps_mod, "_obsidian_app_exists", lambda: True)
     # Make config loading return a minimal Config that defaults md→obsidian.
     # opener.open_smart does ``from fnd.config import load as load_config``
-    # at call time — patch the source attribute so the lookup sees the stub.
+    # at call time: patch the source attribute so the lookup sees the stub.
     import fnd.config as cfg_mod
 
     monkeypatch.setattr(

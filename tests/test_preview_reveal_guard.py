@@ -51,7 +51,7 @@ def test_reveal_preview_reveals_active_container_and_drops_outgoing() -> None:
 def test_reveal_preview_is_noop_for_superseded_container() -> None:
     # A finalise callback fires a tick late after a newer nav swapped in
     # ``current``. Revealing the stale ``superseded`` would surface the wrong
-    # file and clobber the new nav's outgoing reference — must be a no-op.
+    # file and clobber the new nav's outgoing reference: must be a no-op.
     superseded = _FakeContainer()
     superseded.add_class("-pre-reveal")
     current = _FakeContainer()

@@ -66,7 +66,7 @@ def test_legr_none_when_no_prose() -> None:
 
 def test_legr_abstains_when_system_dict_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """No injected dict + an absent system word list (Windows / minimal
-    container) must abstain (None), not score every page 0.0 — otherwise
+    container) must abstain (None), not score every page 0.0, otherwise
     the tier would reprocess all legible prose."""
     from fnd.extract.recovery import evaluators
 

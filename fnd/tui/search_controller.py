@@ -9,13 +9,13 @@ subsystem awaits extraction.
 ``run()`` is split three ways so the blocking part can leave the event
 loop:
 
-* **prepare** — on the loop. Parsing, validation and spec building are
+* **prepare**: on the loop. Parsing, validation and spec building are
   cheap, and a malformed query has to raise its notice immediately.
   Produces a frozen :class:`_SearchRequest`.
-* **execute** — on a worker thread. Only the actual search. It reads the
+* **execute**: on a worker thread. Only the actual search. It reads the
   request and the searcher and writes nothing, which is what makes a
   superseded search harmless rather than a race.
-* **commit** — back on the loop. Cache invalidation, DOM teardown and the
+* **commit**: back on the loop. Cache invalidation, DOM teardown and the
   results rebuild, in the order they have always run, and skipped
   entirely if a newer query has been issued since.
 
@@ -88,7 +88,7 @@ class SearchController:
         self._app = app
         self.searcher: Searcher | None = None
         self.current_query: str = ""
-        # Cached match-spec for the active query — drives the markdown-
+        # Cached match-spec for the active query: drives the markdown-
         # widget highlight subclasses, the per-line plain renderer's
         # highlight pass, and the match-aware scrollbar marker map. The
         # spec captures the SAME literal / fuzzy / synonym semantics
@@ -96,7 +96,7 @@ class SearchController:
         # gets the user-visible highlight (not just exact-stem hits).
         # Recomputed on every ``_run_query``.
         self.match_spec: MatchSpec = MatchSpec()
-        # The painting spec minus AUTO-fuzzy — see _run_query. Answers "is the
+        # The painting spec minus AUTO-fuzzy: see _run_query. Answers "is the
         # term the user typed visible here?", which auto-fuzzy near-misses would
         # otherwise answer yes to.
         self.evidence_spec: MatchSpec = MatchSpec()
@@ -115,7 +115,7 @@ class SearchController:
         # Handle for the deferred prefetch timer so each new search cancels the
         # previous one instead of stacking. A burst of searches (e.g. toggling
         # several file-type filters) would otherwise queue a prefetch-of-10 per
-        # search — dozens of background preview mounts congesting the event loop
+        # search: dozens of background preview mounts congesting the event loop
         # and making every subsequent nav feel laggy. Only the latest search's
         # top results are worth prefetching, so keep just the last timer alive.
         self._prefetch_timer: Timer | None = None
@@ -132,7 +132,7 @@ class SearchController:
         self.ranking_profile: RankingProfile = RankingProfile()
         # Monotonic query counter. ``_prepare`` bumps it; ``_commit`` refuses
         # any result that does not carry the current value. This is the whole
-        # of the staleness defence — a superseded thread worker still runs to
+        # of the staleness defence: a superseded thread worker still runs to
         # completion and still arrives, it just finds its generation gone.
         self._generation: int = 0
         self._committed_generation: int = 0
@@ -166,7 +166,7 @@ class SearchController:
 
         Asked of Textual rather than counted here, because a count can drift
         and this one cannot be allowed to. Counting was tried: `run` bumped a
-        counter and both commit paths decremented it — but `exclusive=True`
+        counter and both commit paths decremented it, but `exclusive=True`
         makes Textual cancel the previous worker SYNCHRONOUSLY inside
         `add_worker`, before the new one starts, so a worker cancelled before
         its coroutine ever ran reached neither commit path and the count
@@ -176,7 +176,7 @@ class SearchController:
         an external reindex silently stops being picked up.
 
         The worker manager's own state cannot drift out of step with the
-        workers it owns — a cancelled worker leaves PENDING/RUNNING by itself.
+        workers it owns: a cancelled worker leaves PENDING/RUNNING by itself.
         """
         from textual.worker import WorkerState
 
@@ -192,7 +192,7 @@ class SearchController:
     def idle(self) -> bool:
         """True when every issued query has been committed or discarded.
 
-        The signal tests should wait on — never a fixed number of pauses.
+        The signal tests should wait on: never a fixed number of pauses.
         """
         return self._committed_generation >= self._generation
 
@@ -215,7 +215,7 @@ class SearchController:
         # Claim the generation FIRST, before anything that can fail. _fail()
         # marks the current generation committed, so allocating it after the
         # parse meant a malformed query marked an IN-FLIGHT search's
-        # generation as committed — that worker then passed the guard in
+        # generation as committed: that worker then passed the guard in
         # _commit, restored its stale results and wiped the error notice the
         # user had just been shown.
         self._generation += 1
@@ -223,7 +223,7 @@ class SearchController:
 
         # Re-point the searcher at the latest committed generation so a
         # reindex (in-app or external `fnd reindex`) that landed while the
-        # app is open shows up on this query — no restart. Near-free
+        # app is open shows up on this query: no restart. Near-free
         # (~0.1 ms) when nothing changed; ignore a vanished index dir.
         #
         # Only while nothing is executing. reload() reassigns the Searcher's
@@ -267,7 +267,7 @@ class SearchController:
         # they actually searched for here?" (fnd.tui.match_evidence).
         #
         # Painting is deliberately generous: auto-fuzzy lights up near-misses so
-        # a typo still shows something. But near-misses are not evidence — a
+        # a typo still shows something. But near-misses are not evidence: a
         # query for "test" paints "best" and "rest" at distance 1, so judging
         # visibility on the painting spec would report every such chunk as fine
         # while the user stares at a paragraph with none of their term in it.
@@ -305,7 +305,7 @@ class SearchController:
                 match_all=scope.tag_match_all,
             )
         # Collections are a HARD filter, passed as a list straight to the
-        # query layer — never a ``c:`` prefix string. The prefix path rides
+        # query layer: never a ``c:`` prefix string. The prefix path rides
         # the soft query parser (ranks instead of restricting) and splits
         # collection names on spaces, so a multi-collection scope leaked
         # other collections and dropped spaced names like ``DB Archive``.
@@ -372,7 +372,7 @@ class SearchController:
     # ── execute (worker thread) ──────────────────────────────────
 
     def _execute_and_commit(self, request: _SearchRequest, session: ProgressSession) -> None:
-        """Worker body. Marshals every outcome back to the loop — including
+        """Worker body. Marshals every outcome back to the loop, including
         failures, so a raising search can't leave the line up forever."""
         from fnd.filter_dsl import FilterError
         from fnd.query_errors import QueryError
@@ -390,8 +390,8 @@ class SearchController:
     def _marshal(self, fn: Any, *args: Any) -> None:
         """Hop back to the event loop with the outcome.
 
-        A search can still be in flight when the app shuts down — the user
-        quits mid-query, or a test leaves its ``run_test`` block — and the
+        A search can still be in flight when the app shuts down: the user
+        quits mid-query, or a test leaves its ``run_test`` block, and the
         commit then has no DOM left to write to. That is not an error, and it
         must not surface as a failed worker. A failure while the app IS still
         running is a real bug, so it still propagates.
@@ -407,7 +407,7 @@ class SearchController:
         writes nothing."""
         # Bound ONCE. Reading self.searcher again below is a time-of-check to
         # time-of-use gap: anything on the loop that reassigns it between the
-        # reads would pass a different snapshot — or None — into the search.
+        # reads would pass a different snapshot, or None, into the search.
         handle = self.searcher
         if handle is None or not (request.lexical.strip() or request.metadata_filter):
             return [], None
@@ -462,13 +462,13 @@ class SearchController:
         """Land the results. Everything below has always run AFTER the search
         returned; keeping it whole here preserves that order."""
         # Superseded. Textual cancels the worker but cannot interrupt it, so a
-        # stale search always runs to completion and arrives here — this guard
+        # stale search always runs to completion and arrives here: this guard
         # is what keeps it from touching anything.
         if request.generation != self._generation:
             session.close()
             return
         self._committed_generation = request.generation
-        # Everything below runs on the loop and is real, measurable work —
+        # Everything below runs on the loop and is real, measurable work:
         # cache teardown, the results tree rebuild, the filters aggregation.
         # The plan names it, so enter it: leaving the session in "query" for
         # the whole operation capped the line at that phase's share and meant
@@ -493,7 +493,7 @@ class SearchController:
         self.current_query = request.query  # the original (with [...]) for history
 
         # A new query must always re-render the first result, even when it
-        # lands on the same (parent, seq) as the last one — release the
+        # lands on the same (parent, seq) as the last one: release the
         # in-flight coalescing latch so this query's dispatch isn't
         # mistaken for a redundant same-tick duplicate of the previous.
         self._app._preview.inflight_target = None
@@ -563,7 +563,7 @@ class SearchController:
 
     def _show_query_notice(self, err: Exception) -> None:
         """Render a calm, practical line below the query bar for a malformed
-        query — message plus an actionable hint where we have one."""
+        query: message plus an actionable hint where we have one."""
         from fnd.filter_dsl import FilterError
         from fnd.query_errors import QuerySyntaxError
 
@@ -594,7 +594,7 @@ class SearchController:
             notice.display = False
 
     def query_signature(self) -> str:
-        """Stable signature for the current query — match-bearing
+        """Stable signature for the current query: match-bearing
         widgets are baked with this query's highlights, so the cache
         must invalidate when it changes. Includes intent because intent
         biases snippet selection, and the highlight
@@ -621,7 +621,7 @@ class SearchController:
         """Flip ``defaults.fuzzy_enabled`` in the config TOML and re-run
         the current search so the new state is visible immediately.
         Per-term ``~N`` modifiers still trigger fuzzy expansion when
-        the toggle is off — only the auto-fuzzy pass is gated."""
+        the toggle is off: only the auto-fuzzy pass is gated."""
         from fnd.config import default_config_path, write_setting
 
         current = self._app._config.defaults.fuzzy_enabled if self._app._config else True
@@ -668,7 +668,7 @@ class SearchController:
         """Drop the current result set and preview without re-running.
 
         Used when the user changes scope (toggles a collection) and the
-        existing results are about to go stale — but we don't want to
+        existing results are about to go stale, but we don't want to
         steal focus or thrash through a fresh search until the user
         explicitly asks for one. Mirrors the cache invalidation in
         ``_run_query`` minus the actual search call and the

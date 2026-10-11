@@ -279,7 +279,7 @@ def tokenize(text: str) -> list[Token]:
             kind = TokenKind.IDENT if ch == '"' else TokenKind.STRING
             out.append(Token(kind, value, col))
             continue
-        # Date literal (must precede number — same leading digits).
+        # Date literal (must precede number: same leading digits).
         date_match = _DATE_RE.match(text, i)
         if date_match:
             iso = date_match.group(0)
@@ -546,7 +546,7 @@ class _Parser:
         if t.kind is TokenKind.NULL:
             return None
         if t.kind is TokenKind.IDENT:
-            # Bare identifier on the value side is an error — values must be
+            # Bare identifier on the value side is an error: values must be
             # quoted strings, numbers, dates, or keywords.
             raise FilterError(
                 f"expected value, got identifier {t.value!r}; quote string values",
@@ -609,7 +609,7 @@ def compile_filter(text: str) -> Predicate:
 
 
 def parse_or_error(text: str) -> tuple[Predicate | None, FilterError | None]:
-    """Same as :func:`compile_filter` but never raises — returns either a
+    """Same as :func:`compile_filter` but never raises, returns either a
     usable predicate or a structured error. Used by the TUI form so the
     user gets inline syntax feedback as they type."""
     if not text.strip():
@@ -723,7 +723,7 @@ def _eval_in(fm: Mapping[str, object], value: object, field: str, negated: bool)
 
 def _orderable(a: object, b: object) -> bool:
     if isinstance(a, bool) or isinstance(b, bool):
-        return False  # bool is a subtype of int — explicitly reject
+        return False  # bool is a subtype of int: explicitly reject
     if isinstance(a, int | float) and isinstance(b, int | float):
         return True
     return isinstance(a, dt.date) and isinstance(b, dt.date)

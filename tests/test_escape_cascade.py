@@ -1,4 +1,4 @@
-"""Esc cascade — from any non-results pane Esc focuses the results tree.
+"""Esc cascade: from any non-results pane Esc focuses the results tree.
 
 The Settings menu lives on the screen stack with its own Esc handler;
 this test exercises only the main-app cascade. Esc inside the menu is

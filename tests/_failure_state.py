@@ -1,7 +1,7 @@
 """What the app looked like when a wait gave up.
 
-A timing failure reaches CI as one line — ``wait_until timed out after 20.0s:
-<message>`` — which names the wait but not the clause still false, nor whether
+A timing failure reaches CI as one line, ``wait_until timed out after 20.0s:
+<message>``, which names the wait but not the clause still false, nor whether
 the poller ran 3 times or 900. This module is the snapshot appended to it: the
 preview pipeline's state plus the ``_diag_log`` breadcrumbs the app already
 emits, teed here per-test by an autouse fixture in ``conftest``.

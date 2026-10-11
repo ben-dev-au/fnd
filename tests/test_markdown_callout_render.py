@@ -137,7 +137,7 @@ async def test_every_callout_type_is_tinted_apart_from_plain_blockquotes() -> No
         assert sampled.has_class("callout-example")
         assert not plain.has_class("callout")
         # $boost resolves fully transparent here, so a callout that inherits it
-        # renders with no fill — every callout type must carry its own tint.
+        # renders with no fill: every callout type must carry its own tint.
         assert plain.styles.background.a == 0
         assert quoted.styles.background.a > 0
         assert sampled.styles.background.a > 0

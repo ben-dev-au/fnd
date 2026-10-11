@@ -5,7 +5,7 @@ Symptom (data-reproduced under rapid navigation): selecting a result sometimes
 left its preview blank until the user navigated to a different result and back.
 Root cause: reveal is driven by one specific finalise task that rapid navigation
 can cancel before it reveals, or hang for seconds awaiting above-window chunks a
-cancelled mount never mounted — either leaves the active container invisible; and
+cancelled mount never mounted, either leaves the active container invisible; and
 the scroll-only resume path (``_settled_instant_scroll``) never revealed at all.
 
 The fix enforces the invariant "an active container becomes visible within a
@@ -85,7 +85,7 @@ def test_reveal_active_reveals_pre_reveal_active_container() -> None:
 
 def test_reveal_active_cleans_up_bar_and_latch_when_already_visible() -> None:
     # Branch-A settle: the container is already visible, but a superseded mount
-    # may have left the shared bar open / latch set — reveal_active still clears.
+    # may have left the shared bar open / latch set: reveal_active still clears.
     c = _FakeContainer()  # no -pre-reveal
     host = _Host(active=c)
     _reveal_active(host)
@@ -110,7 +110,7 @@ async def test_watchdog_reveals_stranded_active_container(
 ) -> None:
     """A container activated invisibly with NO finalise to reveal it (the
     cut-short / hung-finalise case) must be revealed by the bounded-time
-    watchdog — otherwise it stays invisible forever ('blank until I pick a
+    watchdog, otherwise it stays invisible forever ('blank until I pick a
     different result')."""
     from fnd.tui.preview import tuning
 
@@ -119,7 +119,7 @@ async def test_watchdog_reveals_stranded_active_container(
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
 
         preview = app._preview
         g = app._search.groups[0]
@@ -133,16 +133,16 @@ async def test_watchdog_reveals_stranded_active_container(
         await pane.mount(container)
 
         # Activate invisibly exactly as a cold mount does, but never spawn a
-        # finalise task — the strand condition (finalise cancelled/hung).
+        # finalise task: the strand condition (finalise cancelled/hung).
         preview.activate_container(container, pre_reveal=True)
-        assert container.has_class("-pre-reveal"), "setup — container should start invisible"
+        assert container.has_class("-pre-reveal"), "setup: container should start invisible"
         assert preview.active is container
 
         # Nothing else will reveal it. Within REVEAL_WATCHDOG_MS the watchdog must.
         await asyncio.sleep(0.2)
         await safe_pause(pilot)
         assert not container.has_class("-pre-reveal"), (
-            "BUG: an active -pre-reveal container was never revealed — the "
+            "BUG: an active -pre-reveal container was never revealed; the "
             "reveal watchdog did not fire (preview stays blank until re-nav)"
         )
 
@@ -152,7 +152,7 @@ async def test_watchdog_rearms_and_does_not_reveal_during_active_nav(
     built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Re-arming: each pre-reveal activation resets the timer, so the watchdog
-    only fires once the user STOPS on a still-invisible container — it never
+    only fires once the user STOPS on a still-invisible container: it never
     interrupts an in-flight navigation by revealing a container prematurely."""
     from fnd.tui.preview import tuning
 
@@ -176,7 +176,7 @@ async def test_watchdog_rearms_and_does_not_reveal_during_active_nav(
         first_timer = preview._reveal_watchdog
         assert first_timer is not None, "activation must arm the watchdog"
         # Before the first watchdog would fire, a new nav activates a second
-        # container — this must re-arm the timer onto the new active one.
+        # container: this must re-arm the timer onto the new active one.
         await asyncio.sleep(0.05)
         second = PreviewContainer(
             parent_doc_id=g.parent_id,
@@ -186,7 +186,7 @@ async def test_watchdog_rearms_and_does_not_reveal_during_active_nav(
         await pane.mount(second)
         preview.activate_container(second, pre_reveal=True)
         # Prove the timer was actually re-armed (a new timer object), not left as
-        # the stale first one — otherwise this test would pass even if re-arming
+        # the stale first one, otherwise this test would pass even if re-arming
         # were broken, since some other path could still reveal `second`.
         assert preview._reveal_watchdog is not None
         assert preview._reveal_watchdog is not first_timer, (

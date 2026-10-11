@@ -19,7 +19,7 @@ from tests._pilot_wait import wait_until
 
 def test_trim_redundant_heading_strips_filename_prefix() -> None:
     """``Templates > Iterators`` on file ``Templates - Notes.md`` should
-    drop the leading ``Templates`` segment — it just repeats the filename
+    drop the leading ``Templates`` segment: it just repeats the filename
     above. The deeper segment is what locates the match."""
     out = _trim_redundant_heading(
         "Templates > Iterators", title="Templates", path="/x/Templates - Notes.md"
@@ -40,7 +40,7 @@ def test_trim_redundant_heading_strips_word_in_long_filename() -> None:
 
 def test_trim_redundant_heading_drops_when_only_filename() -> None:
     """A single-segment heading equal to the filename leaves nothing
-    useful — caller falls back to a chunk locator."""
+    useful: caller falls back to a chunk locator."""
     out = _trim_redundant_heading("Templates", title="Templates", path="/x/Templates.md")
     assert out == ""
 
@@ -152,7 +152,7 @@ async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
     """Matched markdown chunks render via Textual's Markdown widget tree
     (FNDMarkdown), with the matched word carrying a search-highlight
     span on its block's Content. Replaces the legacy per-line layout
-    assertion — the structural renderer keeps tables / fenced code /
+    assertion: the structural renderer keeps tables / fenced code /
     lists rendering correctly even when a chunk contains a match.
     """
     from fnd.tui.widgets.markdown import FNDMarkdown
@@ -170,7 +170,7 @@ async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
         pane = app.query_one("#preview_pane", VerticalScroll)
 
         def any_highlight() -> bool:
-            """A block under some FNDMarkdown carries a search-highlight span —
+            """A block under some FNDMarkdown carries a search-highlight span:
             the visible match indicator. The widget mounting is not the span
             landing: Windows rendered one a frame before the other."""
             for md in pane.query(FNDMarkdown):

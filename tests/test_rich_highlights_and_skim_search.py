@@ -105,7 +105,7 @@ def test_open_smart_routes_to_url_when_query_present(
     f.touch()
     monkeypatch.setattr("sys.platform", "darwin")  # Skim auto-promote is macOS-only
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
-    # Isolate from the developer's real config — without this the resolver
+    # Isolate from the developer's real config, without this the resolver
     # routes through whichever [app_defaults] they have set (eg. `preview`)
     # and the test fires a real `osascript`, opening Preview against the
     # empty tmp file.
@@ -123,7 +123,7 @@ def test_open_smart_routes_to_url_when_query_present(
 def test_open_smart_uses_url_when_query_blank(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Query-less PDF opens still use the Skim URL form — the AppleScript
+    """Query-less PDF opens still use the Skim URL form: the AppleScript
     path was removed because filename control-char injection through the
     AppleScript string literal could execute arbitrary `osascript`."""
     from fnd.config import Config
@@ -248,7 +248,7 @@ async def test_chunk_widgets_mounted_per_pdf_page(
     The widget owns a FileView whose ``chunk_to_range`` covers every
     page; the focused chunk's first-match line is the scroll target.
 
-    Forces flat preview routing — when the pdf-structure extra is
+    Forces flat preview routing, when the pdf-structure extra is
     installed in the dev venv, PDFs carry body_md and would otherwise
     route structural. The flat-pipeline contract is what this
     test asserts; structural routing has its own coverage."""

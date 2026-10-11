@@ -1,4 +1,4 @@
-"""Schema-migration helpers — detection + rebuild prompt."""
+"""Schema-migration helpers: detection + rebuild prompt."""
 
 from __future__ import annotations
 

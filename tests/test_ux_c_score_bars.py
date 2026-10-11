@@ -29,7 +29,7 @@ def test_score_bar_full_at_max() -> None:
 
 
 def test_score_bar_empty_at_zero_max() -> None:
-    """Defensive: a max of 0 (no scored results) shouldn't divide by zero —
+    """Defensive: a max of 0 (no scored results) shouldn't divide by zero,
     return blank cells preserving column alignment."""
     bar = _score_bar(score=0.0, max_score=0.0, width=4)
     assert bar == "    "
@@ -44,7 +44,7 @@ def test_score_bar_proportional_in_middle() -> None:
 
 @pytest.mark.asyncio
 async def test_results_tree_labels_omit_score_bars(fixtures_dir: Path, tmp_index_dir: Path) -> None:
-    """The label format shouldn't carry block-graph glyphs — they read
+    """The label format shouldn't carry block-graph glyphs: they read
     as visual artefacts on most terminals and the user vetoed them."""
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     app = FNDApp(index_dir=tmp_index_dir, initial_query="blue penguin sandwich")

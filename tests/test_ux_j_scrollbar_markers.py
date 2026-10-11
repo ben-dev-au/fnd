@@ -57,7 +57,7 @@ def test_renderer_overlays_marker_glyph_on_match_rows() -> None:
 
 def test_renderer_blank_when_no_match_map() -> None:
     """A renderer with an empty match map should fall through to the
-    parent's render — no marker glyph appears."""
+    parent's render: no marker glyph appears."""
     renderer = MatchAwareScrollBarRender(
         virtual_size=100,
         window_size=10,
@@ -73,7 +73,7 @@ def test_renderer_blank_when_no_match_map() -> None:
 
 def test_renderer_line_precise_maps_to_exact_cell() -> None:
     """Line-precise contract: a 1000-line file with a single match at line
-    500, painted on a 10-cell track, places exactly one marker — at
+    500, painted on a 10-cell track, places exactly one marker: at
     cell 5 (mid). The chunk-uniform path can't pin this; the line-
     precise path must."""
     renderer = MatchAwareScrollBarRender(
@@ -98,7 +98,7 @@ def test_renderer_line_precise_handles_extremes() -> None:
     first and last track cells respectively, never out of bounds.
 
     Tested at the ``_marker_cells`` layer because the thumb at the top
-    of the bar occludes cell 0 in ``__rich_console__`` output — that's
+    of the bar occludes cell 0 in ``__rich_console__`` output: that's
     a thumb-clipping property of the parent ScrollBarRender, not a
     line-precise mapping property, so we isolate the latter here.
     """
@@ -113,15 +113,15 @@ def test_renderer_line_precise_handles_extremes() -> None:
         total_lines=600,
     )
     assert renderer._marker_cells(size=6) == {0, 5}
-    # Also check a different track height — markers stay within range.
+    # Also check a different track height: markers stay within range.
     cells = renderer._marker_cells(size=20)
     assert cells == {0, 19}
 
 
 def test_renderer_prefers_line_precise_over_chunk_map() -> None:
-    """When both fields are populated, the line-precise mapping wins
-    — match_map is ignored. Lets callers migrate piecemeal without
-    silently double-counting markers."""
+    """When both fields are populated, the line-precise mapping wins:
+    match_map is ignored. Lets callers migrate piecemeal without
+        silently double-counting markers."""
     renderer = MatchAwareScrollBarRender(
         virtual_size=600,
         window_size=10,
@@ -149,7 +149,7 @@ def _thumb_glyphs(renderer: ThinScrollBarRender, height: int = 8) -> list[str]:
 
 def test_thin_renderer_paints_box_vertical_thumb_not_full_block() -> None:
     """The thin renderer paints thumb cells as the box-drawing vertical
-    (the pane border's glyph), as foreground over a transparent track —
+    (the pane border's glyph), as foreground over a transparent track:
     never a reverse-video full-cell block."""
     renderer = ThinScrollBarRender(
         virtual_size=100,
@@ -175,8 +175,8 @@ def test_thin_renderer_paints_box_vertical_thumb_not_full_block() -> None:
 
 
 def test_thin_thumb_size_is_constant_across_scroll_positions() -> None:
-    """The thumb is a fixed number of cells regardless of scroll position
-    — it must not resize as the user scrolls (only ``top`` moves)."""
+    """The thumb is a fixed number of cells regardless of scroll position:
+    it must not resize as the user scrolls (only ``top`` moves)."""
     counts = set()
     for pos in range(0, 81, 5):  # 0 .. max_scroll for virtual 100, window 20
         renderer = ThinScrollBarRender(
@@ -206,7 +206,7 @@ _STOCK_BLOCKS = set("█▉▊▋▌▍▎▏")
 
 def test_thin_renderer_horizontal_uses_box_glyph_not_stock_block() -> None:
     """Horizontal bars (wide tables, unwrapped code fences) must read the same
-    thin weight as the vertical bar — the centralised renderer covers both
+    thin weight as the vertical bar: the centralised renderer covers both
     orientations rather than falling through to stock partial-block glyphs."""
     renderer = ThinScrollBarRender(
         virtual_size=200,

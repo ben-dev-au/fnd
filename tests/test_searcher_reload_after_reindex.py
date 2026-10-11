@@ -53,7 +53,7 @@ def test_searcher_reload_picks_up_new_commit(tmp_path: Path, tmp_index_dir: Path
     searcher = Searcher(index_dir=tmp_index_dir)
     assert searcher.search("alpha", limit=10, collection="notes")
 
-    # Reindex with a second doc — commits a new generation.
+    # Reindex with a second doc: commits a new generation.
     _write_md(docs / "second.md", "# Second\nbravo zero seconds marker.\n")
     build_index(roots=[docs], index_dir=tmp_index_dir, collection="notes")
 
@@ -77,7 +77,7 @@ def test_get_file_chunks_survives_concurrent_reload(tmp_path: Path, tmp_index_di
 
     docs = tmp_path / "notes"
     # >= _PARALLEL_DECODE_THRESHOLD (50) sections so the ThreadPool decode
-    # path runs — that's where the cross-thread swap is dangerous.
+    # path runs: that's where the cross-thread swap is dangerous.
     body = "# Doc\n" + "".join(
         f"\n## Section {i}\nzero seconds marker body for section {i}.\n" for i in range(80)
     )
@@ -126,7 +126,7 @@ async def test_new_file_appears_on_next_query_without_restart(
     cfg: Config, tmp_path: Path, tmp_index_dir: Path
 ) -> None:
     """User scenario: with the app open, a new file is indexed; the very
-    next query surfaces it — no restart needed."""
+    next query surfaces it: no restart needed."""
     docs = tmp_path / "notes"
     _write_md(docs / "first.md", "# First\nalpha content here.\n")
     build_index(roots=[docs], index_dir=tmp_index_dir, collection="notes")

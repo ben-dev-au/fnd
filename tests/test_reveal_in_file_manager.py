@@ -67,7 +67,7 @@ def test_reveal_action_is_offered_where_a_result_is_focused() -> None:
 
 def test_reveal_action_label_defers_the_file_manager_name_to_render_time() -> None:
     """The registry is a module constant, so it carries the placeholder rather
-    than a baked-in OS name — see ``tests/test_keybindings_os_vocabulary.py``
+    than a baked-in OS name: see ``tests/test_keybindings_os_vocabulary.py``
     for the per-platform rendering."""
     action = next(a for a in REGISTRY if a.id == ACTION_ID)
     footer_label = action.footer_label
@@ -127,7 +127,7 @@ async def test_reveal_key_press_reaches_the_action(built_index: Path, revealed: 
 async def test_reveal_is_a_no_op_with_no_result_focused(
     built_index: Path, revealed: list[Path]
 ) -> None:
-    """A query with no hits leaves the cursor on nothing — reveal must not
+    """A query with no hits leaves the cursor on nothing: reveal must not
     raise or spawn a file manager on a bogus path."""
     app = FNDApp(index_dir=built_index, initial_query="zzzznosuchtermzzzz")
     async with app.run_test() as pilot:
@@ -156,7 +156,7 @@ def test_reveal_row_appears_in_the_picker_for_any_kind(kind: str) -> None:
 
 
 def test_reveal_sorts_last_so_it_never_pushes_openers_down() -> None:
-    """It's an escape hatch, not an opener — the apps that actually open the
+    """It's an escape hatch, not an opener: the apps that actually open the
     file stay at the top of the list."""
     ids = [r.id for r in eligible_apps(kind="pdf", registry=apps.BUILTIN_APPS)]
     assert ids[-1] == "reveal", ids

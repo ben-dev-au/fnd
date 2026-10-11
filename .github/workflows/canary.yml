@@ -52,7 +52,7 @@ jobs:
           # --refresh so a cached wheel cannot mask a broken publish.
           out=$(uvx --refresh --from "fndr==$VERSION" fnd version 2>&1)
           printf '%s\n' "$out"
-          # Whole line, not substring — 0.0.50 contains 0.0.5.
+          # Whole line, not substring: 0.0.50 contains 0.0.5.
           printf '%s\n' "$out" | grep -qFx "$VERSION" \
             || { echo "::error::PyPI install did not report exactly $VERSION"; exit 1; }
 
@@ -109,7 +109,7 @@ jobs:
           body="The weekly canary failed installing the published fndr \`$VERSION\`: $RUN_URL
 
           This means users cannot install, or are installing the wrong version.
-          The run shows which channel — PyPI, Homebrew, or a specific OS.
+          The run shows which channel: PyPI, Homebrew, or a specific OS.
 
           This is user-facing and outranks anything else in the queue."
           existing=$(gh issue list --search "$title in:title" --state open \

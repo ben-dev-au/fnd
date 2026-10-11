@@ -5,10 +5,10 @@ internal spaces and most printable characters so users can name a
 collection "Book Club". The forbidden set is narrowed to
 characters that would actually break a downstream consumer:
 
-- ``/`` and ``\\`` — collide with the per-collection state file path
-- quote characters and backticks — TOML / shell / DSL quoting conflict
-- ``,`` — the ``c:<a>,<b>`` DSL list separator
-- control characters and DEL — never useful
+- ``/`` and ``\\``: collide with the per-collection state file path
+- quote characters and backticks (TOML / shell / DSL quoting conflict
+- ``,``) the ``c:<a>,<b>`` DSL list separator
+- control characters and DEL, never useful
 
 The first character must still be an ASCII alnum or underscore so the
 name can't start with a hyphen (CLI flag collision), a dot (hidden file
@@ -34,7 +34,7 @@ def test_windows_reserved_device_names_rejected_on_win32(
     name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A collection named after a Windows device (CON, PRN, …) can't own a
-    ``<name>.state.toml`` there — reject it on Windows (case-insensitive, and
+    ``<name>.state.toml`` there: reject it on Windows (case-insensitive, and
     for the stem before the first dot)."""
     monkeypatch.setattr("sys.platform", "win32")
     with pytest.raises(InvalidCollectionNameError, match="reserved device name"):

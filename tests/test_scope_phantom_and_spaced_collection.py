@@ -5,7 +5,7 @@ drive search scope.
 
 Both stem from a collection name that contains a space/comma. The
 multi-collection filter built an unquoted ``c:`` value, so a spaced name
-was split at the space — the tail became a stray bare term and the name
+was split at the space; the tail became a stray bare term and the name
 was dropped. A phantom name with no config row could then pin every
 search while being invisible (untoggleable) in the sidebar.
 """
@@ -78,7 +78,7 @@ async def test_multi_collection_scope_hard_restricts(
         assert "b.md" in names, "spaced collection 'Spaced Coll' was dropped from scope"
         assert "a.md" in names, "'Plain' collection missing from scope"
         assert "c.md" not in names, (
-            "'Third' collection leaked into a 2-collection scope — multi-"
+            "'Third' collection leaked into a 2-collection scope: multi-"
             "collection scoping is ranking softly instead of hard-filtering"
         )
 
@@ -101,7 +101,7 @@ async def test_phantom_collection_name_dropped_on_load(
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app._scope.collections == ["Plain"], (
-            "phantom 'Spaced Coll,Plain' should be dropped — it has no panel "
+            "phantom 'Spaced Coll,Plain' should be dropped: it has no panel "
             f"row yet drives scope; got {app._scope.collections}"
         )
 

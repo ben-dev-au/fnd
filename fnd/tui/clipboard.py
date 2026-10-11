@@ -1,6 +1,6 @@
 """System-clipboard writes, isolated behind one seam.
 
-Each OS clipboard tool is described as an argv (``clipboard_argv``) — a
+Each OS clipboard tool is described as an argv (``clipboard_argv``): a
 pure resolver that unit-tests per platform. ``copy_text`` takes both the
 resolver and the process runner as injectable dependencies, so callers can
 exercise the copy path without spawning anything.

@@ -22,7 +22,7 @@ except Exception:  # pragma: no cover - optional dep absent
 
 _AVAILABLE = termaid is not None
 
-# Above this the A* layout isn't worth the on-loop cost — fall back to source.
+# Above this the A* layout isn't worth the on-loop cost: fall back to source.
 MAX_SOURCE_LINES = 200
 
 

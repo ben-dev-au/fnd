@@ -1,4 +1,4 @@
-"""Shift-O "Open with…" modal — pick which app opens the focused hit.
+"""Shift-O "Open with…" modal: pick which app opens the focused hit.
 
 Surfaced when the user presses ``O`` on a result. One job: let the
 user pick an app for this file and fire it. The picker is a plain
@@ -12,7 +12,7 @@ list of "<key>  <marker> <name>" rows:
   row directly without moving the cursor.
 * Esc dismisses.
 
-No descriptions, hierarchy explainers, or app notes live here —
+No descriptions, hierarchy explainers, or app notes live here:
 that's settings territory. Resolution itself is exactly what Open uses;
 see ``[app_defaults]`` in config.toml for the rules.
 """
@@ -62,7 +62,7 @@ def eligible_apps(
     are available, then sort: resolved default first, then registry
     insertion order.
 
-    ``availability`` overrides the live ``app.available()`` probe — used
+    ``availability`` overrides the live ``app.available()`` probe: used
     by tests so we don't need to mock every individual ``_*_exists``
     helper.
     """
@@ -116,7 +116,7 @@ def letter_shortcuts(rows: Iterable[Any]) -> dict[str, str]:
                     chosen = ch
                     break
         if chosen is None:
-            continue  # 9+ rows past digit range; skip — modal cap
+            continue  # 9+ rows past digit range; skip: modal cap
         used.add(chosen)
         out[row.id] = chosen
     return out
@@ -179,7 +179,7 @@ class OpenWithScreen(ModalScreen[str | None]):
         )
         self._shortcuts = letter_shortcuts(self._rows)
         # Per-instance letter-shortcut bindings. ``show=False`` keeps
-        # them out of the chrome — they're visible inline next to each
+        # them out of the chrome: they're visible inline next to each
         # row already.
         for app_id, key in self._shortcuts.items():
             self._bindings.bind(key, f"fire('{app_id}')", show=False)

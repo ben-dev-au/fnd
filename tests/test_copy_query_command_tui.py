@@ -2,7 +2,7 @@
 
 Covers both halves: the ``tui`` launch flags hydrate the scope (relaunch),
 and the ``copy_query_command`` action serialises live scope back out (copy).
-The two are inverses — ``test_seed_then_snapshot_round_trips`` asserts it.
+The two are inverses: ``test_seed_then_snapshot_round_trips`` asserts it.
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ async def test_nothing_to_copy_skips_clipboard(
 @pytest.mark.asyncio
 async def test_tag_fanned_across_sources_counts_once(cfg: Config, home_index: Path) -> None:
     """A source-agnostic `--tag` seeds into every source, but the search treats
-    it as one OR-ed term — the active-filter count must not double it. Reopening
+    it as one OR-ed term: the active-filter count must not double it. Reopening
     `fnd Tree -c Work --tag strategy-pattern` used to report 2 tags active."""
     app = FNDApp(index_dir=home_index, config=cfg, collection="home")
     async with app.run_test() as pilot:

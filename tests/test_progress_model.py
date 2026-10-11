@@ -1,6 +1,6 @@
 """Progress model: weights, easing, monotonicity, measurement.
 
-Pure unit tests — no Textual, no app, no clock of their own. The model
+Pure unit tests: no Textual, no app, no clock of their own. The model
 takes an injected clock so every timing assertion here is exact rather
 than a race against wall time.
 """
@@ -76,7 +76,7 @@ def test_recalibration_keeps_seeds_for_unmeasured_phases() -> None:
 def test_a_timed_phase_reads_nearly_full_when_it_runs_to_time() -> None:
     """The estimate coming true should look like it. An earlier curve read
     HALF the phase at its expected duration, so even a perfectly calibrated
-    operation finished with the bar around 50% — measured on the flat path,
+    operation finished with the bar around 50%: measured on the flat path,
     a median fill at completion of 0.167. That is the "pauses partway"
     complaint, caused by the curve rather than by the estimates."""
     clock = FakeClock()
@@ -94,7 +94,7 @@ def test_a_timed_phase_is_proportional_while_it_runs_to_time() -> None:
 
 def test_a_timed_phase_keeps_a_fat_tail() -> None:
     """The property the curve was chosen for. Doubling and quadrupling the
-    elapsed time must still move the bar by an amount a user can see — an
+    elapsed time must still move the bar by an amount a user can see: an
     exponential's tail is flat here, which froze the line for over a second
     on a phase that overran."""
     clock = FakeClock()

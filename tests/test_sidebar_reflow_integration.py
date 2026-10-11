@@ -58,7 +58,7 @@ async def test_short_filters_pane_does_not_outsize_results(cfg: Config, idx: Pat
         assert results.region.height > filters_pane.region.height
         assert filters_pane.region.height <= 10, (
             f"filters pane {filters_pane.region.height} rows for a handful of "
-            "filter rows — it ballooned"
+            "filter rows: it ballooned"
         )
 
 

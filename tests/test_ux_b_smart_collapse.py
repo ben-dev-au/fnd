@@ -1,10 +1,10 @@
 """UX-B: Left arrow collapses parent from child (lazygit semantics).
 
 The standard Textual Tree binding for ``left`` only collapses the
-focused node — useless when the cursor is on a leaf, since there's
+focused node: useless when the cursor is on a leaf, since there's
 nothing under the leaf to collapse. Lazygit's UX: ``left`` on a leaf
 moves the cursor to its parent and collapses *that*. ``left`` on an
-already-collapsed branch behaves the same — keep walking up. This
+already-collapsed branch behaves the same: keep walking up. This
 turns ``left`` into a single-key "back out" gesture.
 """
 
@@ -43,7 +43,7 @@ async def test_left_on_leaf_collapses_parent(built_index: Path) -> None:
         assert focused is not None
         # Sanity: cursor is on a leaf whose parent is the file node.
         assert focused.parent is first_file
-        # Press Left — should collapse first_file and move cursor onto it.
+        # Press Left: should collapse first_file and move cursor onto it.
         await pilot.press("left")
         await pilot.pause()
         assert not first_file.is_expanded, "Left on a leaf should collapse its parent"
@@ -102,7 +102,7 @@ async def test_left_on_expanded_branch_just_collapses_it(built_index: Path) -> N
         await pilot.pause()
         assert tree.cursor_node is not first_file, "cursor must not land on an expanded file row"
         # Collapse the parent via Left. With the parent now collapsed,
-        # the previously-visible child row is gone — cursor should
+        # the previously-visible child row is gone: cursor should
         # naturally end up on the parent row (which is now selectable).
         await pilot.press("left")
         await pilot.pause()

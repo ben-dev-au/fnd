@@ -3,7 +3,7 @@
 Books with prefatory pages (TOC, preface) typically label them in
 roman numerals so the displayed locator matches what's actually
 printed on the page, while ``page`` (PDF index) is what Skim needs
-for deep-linking. The two diverge — that's the bug this guards
+for deep-linking. The two diverge: that's the bug this guards
 against.
 """
 
@@ -36,7 +36,7 @@ def _build_labelled_pdf(path: Path) -> None:
 
 
 def _build_unlabelled_pdf(path: Path) -> None:
-    """Plain 3-page PDF without page labels — extractor should leave
+    """Plain 3-page PDF without page labels: extractor should leave
     ``page_label`` empty so display falls back to the PDF index."""
     doc = pymupdf.open()
     for n in range(3):
@@ -97,7 +97,7 @@ def test_chunk_header_falls_back_to_page_index_when_no_label() -> None:
 
 def _build_pdf_with_printed_numbers(path: Path, *, body_count: int, body_start: int) -> None:
     """A PDF whose body pages print ``body_start..body_start+N-1`` in
-    the bottom margin — the typical typeset-book layout — and whose
+    the bottom margin (the typical typeset-book layout) and whose
     front matter has no margin number at all (mimicking unlabeled
     front matter you'd find in most real books).
 
@@ -172,7 +172,7 @@ def test_cross_page_sequence_picks_page_number_over_chapter_number(tmp_path: Pat
     """Real-book layout: a header that combines chapter number with
     the running page number. Per-page rules can't tell which integer
     is which, but the cross-page resolver picks the one that ticks
-    up by 1 across consecutive pages — that's the page number, not
+    up by 1 across consecutive pages: that's the page number, not
     the (constant) chapter number."""
     pdf = tmp_path / "with-headers.pdf"
     doc = pymupdf.open()
@@ -196,7 +196,7 @@ def test_cross_page_sequence_picks_page_number_over_chapter_number(tmp_path: Pat
 
 
 def test_cross_page_sequence_rejects_short_runs(tmp_path: Path) -> None:
-    """Two pages with sequential margin numbers isn't enough — could
+    """Two pages with sequential margin numbers isn't enough: could
     be coincidence (e.g. cross-references of ``page 5 / page 6``).
     Require at least 3 consecutive pages to commit."""
     pdf = tmp_path / "short-run.pdf"
@@ -217,7 +217,7 @@ def test_cross_page_sequence_rejects_short_runs(tmp_path: Path) -> None:
 
 def test_page_label_survives_layered_search_pipeline(tmp_path: Path, tmp_index_dir: Path) -> None:
     """Regression: every Hit-reconstruction site (rerank, fusion, cascade)
-    must propagate ``page_label`` — otherwise the result-tree locator
+    must propagate ``page_label``, otherwise the result-tree locator
     falls back to the PDF index even though the index has the right
     label stored. This used to silently drop the field at four sites."""
     from fnd.index import build_index
@@ -229,26 +229,26 @@ def test_page_label_survives_layered_search_pipeline(tmp_path: Path, tmp_index_d
     build_index(roots=[tmp_path], index_dir=tmp_index_dir, collection="t")
 
     s = Searcher(index_dir=tmp_index_dir)
-    # The fixture has bodies "body 0".."body 4" — query for the unique
+    # The fixture has bodies "body 0".."body 4": query for the unique
     # body text so we get a stable hit.
     groups, _ = search_layered(
         s, query="body", limit=5, sections_per_file=5, collection="t", with_trace=True
     )
     assert groups, "expected at least one matching group"
     labels = [h.page_label for g in groups for h in g.hits]
-    # Fixture pages: i, ii, 1, 2, 3 — none should be empty after the
+    # Fixture pages: i, ii, 1, 2, 3, none should be empty after the
     # layered pipeline reconstructs Hits.
     assert all(lbl != "" for lbl in labels), f"page_label dropped somewhere: {labels}"
 
 
 def test_meta_label_takes_precedence_over_margin_scan(tmp_path: Path) -> None:
-    """If the PDF declares an explicit page label, trust it — that's
+    """If the PDF declares an explicit page label, trust it: that's
     the authoritative source. Margin scan only runs as a fallback."""
     pdf = tmp_path / "explicit.pdf"
     doc = pymupdf.open()
     for i in range(3):
         page = doc.new_page(width=612, height=792)
-        # Margin shows a *different* number — make sure metadata wins.
+        # Margin shows a *different* number: make sure metadata wins.
         page.insert_text((300, 770), str(900 + i), fontsize=10, fontname="helv")
         page.insert_text((72, 200), "body", fontsize=12, fontname="helv")
     doc.set_page_labels([{"startpage": 0, "prefix": "", "style": "D", "firstpagenum": 7}])
@@ -256,5 +256,5 @@ def test_meta_label_takes_precedence_over_margin_scan(tmp_path: Path) -> None:
     doc.close()
 
     chunks = list(extract(pdf))
-    # Meta says 7,8,9 — that's what we should see, not 900,901,902.
+    # Meta says 7,8,9: that's what we should see, not 900,901,902.
     assert [c.page_label for c in chunks] == ["7", "8", "9"]

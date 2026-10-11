@@ -123,7 +123,7 @@ async def test_match_target_is_a_line_widget_not_the_header(
     """Contract: when a focused PDF chunk contains a match,
     ``scroll_to_chunk`` lands on the matched line, NOT the chunk's
     first line. The user-visible bug was scrolling to "page top"
-    instead of the actual match position — the flat buffer's
+    instead of the actual match position: the flat buffer's
     ``first_hit_line_in_chunk`` map keeps the precise target."""
     app = FNDApp(index_dir=long_page_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
@@ -147,7 +147,7 @@ async def test_match_target_is_a_line_widget_not_the_header(
         )
         focused_seq, hit_line = next(iter(fv.first_hit_line_in_chunk.items()))
         chunk_start, _ = fv.chunk_to_range[focused_seq]
-        # The matched line is past the chunk's first line — that's the
+        # The matched line is past the chunk's first line: that's the
         # whole point of scroll_to_chunk(prefer_first_match=True).
         assert hit_line >= chunk_start
         # And the line really does contain "zebra".
@@ -158,7 +158,7 @@ async def test_match_target_is_a_line_widget_not_the_header(
 async def test_match_target_falls_back_to_header_when_no_match_in_chunk(
     long_page_pdf_index: Path,
 ) -> None:
-    """Chunks without query-term matches still need a scroll target —
+    """Chunks without query-term matches still need a scroll target:
     ``scroll_to_chunk`` falls back to the chunk's first line when
     ``first_hit_line_in_chunk`` has no entry for that chunk."""
     app = FNDApp(index_dir=long_page_pdf_index, initial_query="zebra")
@@ -178,7 +178,7 @@ async def test_match_target_falls_back_to_header_when_no_match_in_chunk(
         assert buf is not None
         fv = buf.file_view
         assert fv is not None
-        # Every chunk in chunk_to_range must have SOME scroll target —
+        # Every chunk in chunk_to_range must have SOME scroll target,
         # either a first-match line OR the chunk's first line.
         for seq, rng in fv.chunk_to_range.items():
             assert seq in fv.first_hit_line_in_chunk or rng[0] >= 0

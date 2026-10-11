@@ -1,4 +1,4 @@
-"""Action registry — single source of truth for the TUI's behaviour surface.
+"""Action registry: single source of truth for the TUI's behaviour surface.
 
 Every TUI action is declared here once, with its default keybinding and the
 ``:command`` name. Footer hints, the help overlay, and the keymap loader all
@@ -27,7 +27,7 @@ from fnd.config import app_data_dir
 
 @dataclass(slots=True, frozen=True)
 class Action:
-    """One TUI action — keymap and help-overlay row."""
+    """One TUI action: keymap and help-overlay row."""
 
     id: str  # snake_case name; matches FNDApp.action_<id>
     description: str
@@ -42,7 +42,7 @@ class Action:
     # tree focused), ``"preview"`` (preview pane focused), and the sidebar
     # panels ``"outline"``, ``"collections"`` and ``"filters"``.
     contexts: tuple[str, ...] = ()
-    # Priority bindings fire before any focused widget's own handlers —
+    # Priority bindings fire before any focused widget's own handlers:
     # required when the chosen key collides with a Textual widget
     # default (e.g. Input owns ctrl+f as "delete right word"). Override
     # with care: it removes the widget's behaviour for that key.
@@ -407,7 +407,7 @@ def load_keymap(path: Path | None = None) -> Keymap:
     Unknown action ids in the user file are dropped silently (the validator
     surfaces them via :func:`validate_keymap`)."""
     # ``default_key`` may list several keys, comma-separated, so one action can
-    # bind more than one — needed because a single physical combo reaches the
+    # bind more than one: needed because a single physical combo reaches the
     # app under different key names depending on the terminal (e.g. Option+Right
     # arrives as ``ctrl+right`` under a natural-text-editing remap but as
     # ``alt+right`` on a Kitty-keyboard-protocol terminal).

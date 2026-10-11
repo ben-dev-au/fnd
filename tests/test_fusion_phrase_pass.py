@@ -21,13 +21,13 @@ def test_unquoted_multiword_emits_phrase_and_lex() -> None:
     by = {s.source: s for s in subs}
     assert by["phrase"].query == '"alpha beta gamma"'  # exact, in order
     assert "lex" in by
-    # No graded slop passes — exactly the phrase + lex pair.
+    # No graded slop passes: exactly the phrase + lex pair.
     assert {s.source for s in subs} == {"phrase", "lex"}
     assert by["phrase"].weight > by["lex"].weight
 
 
 def test_quoted_query_keeps_exact_intent_no_broadening() -> None:
-    """A user-quoted phrase stays exact — the lex pass already carries it as a
+    """A user-quoted phrase stays exact: the lex pass already carries it as a
     PhraseQuery, so we don't add a second phrase pass that would double-quote."""
     subs = auto_subqueries('"alpha beta gamma"', synonyms=None)
     assert [s.source for s in subs] == ["lex"]
@@ -38,8 +38,8 @@ def test_single_word_has_no_phrase_pass() -> None:
 
 
 def test_structured_queries_skip_the_phrase_pass() -> None:
-    """A query that already carries structure — booleans, ``+``/``-``, wildcard,
-    fuzzy, regex, grouping, or a ``^`` boost — runs lex-only. Wrapping it as a
+    """A query that already carries structure: booleans, ``+``/``-``, wildcard,
+    fuzzy, regex, grouping, or a ``^`` boost: runs lex-only. Wrapping it as a
     phrase mangles the operators (``"crypto* -wallet"`` → phrase "crypto wallet")
     and skews ranking toward adjacency the user never asked for."""
     for q in (

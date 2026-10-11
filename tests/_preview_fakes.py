@@ -8,7 +8,7 @@ stub is identical across them, so it lives here to keep the class-flip behaviour
 The stub mirrors the parts of Textual's API that ``preview/visibility.py`` uses,
 including the ``update`` keyword and the ``app.stylesheet`` restyle that follows
 it. Restyling means nothing to a stub that only holds a set of names, so both are
-RECORDED — ``FakeContainer.class_calls`` and ``FakeStylesheet.updated`` — and
+RECORDED, ``FakeContainer.class_calls`` and ``FakeStylesheet.updated``, and
 ``tests/test_preview_visibility.py`` asserts against them. Recording without an
 assertion would be decoration.
 

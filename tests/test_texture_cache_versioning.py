@@ -37,7 +37,7 @@ def _chunk(md: str = "## H\n\nbody") -> Chunk:
 
 def test_texture_signature_is_coarse_and_stable() -> None:
     """The cache key must NOT churn on pymupdf4llm patch bumps or cfg-flag
-    tweaks — only on a manual TEXTURE_VERSION bump."""
+    tweaks: only on a manual TEXTURE_VERSION bump."""
     sig = pdfmod.texture_signature()
     assert sig == f"tex-v{pdfmod.TEXTURE_VERSION}"
     assert "pymupdf4llm" not in sig
@@ -78,7 +78,7 @@ def test_promote_only_current_engine_entries(tmp_path: Path) -> None:
     assert migrated == 1
     assert failed == 0
     assert cache.get(f"{cur}--tex-v1") is not None
-    # The genuinely-older entry is left in place — check via get() (which
+    # The genuinely-older entry is left in place: check via get() (which
     # round-trips through entry_path) so the assertion is filename-encoding
     # agnostic (Windows sanitises the ``|`` in the on-disk name).
     assert cache.get(f"{old}--pymupdf4llm-1.20|cfg-OLDHASH") is not None
@@ -98,7 +98,7 @@ def test_signature_bump_reuses_prior_texture(
         pytest.skip("pymupdf4llm not installed")
     cache = PdfStructureCache(root=tmp_path)
     monkeypatch.setattr(pdfmod, "_cache_singleton", cache)
-    list(pdfmod.extract(FIXTURE))  # current version — populates cache
+    list(pdfmod.extract(FIXTURE))  # current version: populates cache
     monkeypatch.setattr(pdfmod, "TEXTURE_VERSION", 99)  # "major update"
     hits_before = cache.hits
     chunks = list(pdfmod.extract(FIXTURE))  # must reuse via get_any
@@ -111,7 +111,7 @@ def test_force_fresh_ignores_prior_signature(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Re-texturise-outdated mode (force_fresh) must NOT reuse an
-    older-signature entry — it re-extracts under the current signature."""
+    older-signature entry: it re-extracts under the current signature."""
     if not pdfmod._HAS_PYMUPDF4LLM:
         pytest.skip("pymupdf4llm not installed")
     cache = PdfStructureCache(root=tmp_path)
@@ -130,7 +130,7 @@ def test_force_fresh_reextracts_even_current_signature(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Rebuild (force_fresh) must re-extract even a PDF already textured at
-    the CURRENT signature — bypassing the cache entirely. Regression for a
+    the CURRENT signature: bypassing the cache entirely. Regression for a
     Rebuild that served the current-signature cache and so silently ran a
     plain incremental update instead of re-texturising."""
     if not pdfmod._HAS_PYMUPDF4LLM:

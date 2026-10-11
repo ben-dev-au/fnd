@@ -20,7 +20,7 @@ def test_picker_lists_apps_that_handle_the_kind(
 ) -> None:
     """For PDF, the picker should list every available app whose
     ``handles`` covers 'pdf' (skim, preview, pdf_expert, system) plus
-    the '(auto-resolve)' sentinel — and NOT obsidian/vscode (md only)."""
+    the '(auto-resolve)' sentinel, and NOT obsidian/vscode (md only)."""
     from fnd.tui.menu import _choices_apps_for_kind
 
     monkeypatch.setattr(apps, "_skim_app_exists", lambda: True)
@@ -40,7 +40,7 @@ def test_picker_lists_apps_that_handle_the_kind(
     # md-only apps must NOT appear in the PDF picker.
     assert "obsidian" not in ids
     # vscode has wildcard '*' handle so it DOES appear (it can open
-    # PDF as text — user choice).
+    # PDF as text: user choice).
     assert "vscode" in ids
 
 

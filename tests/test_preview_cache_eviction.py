@@ -4,7 +4,7 @@ Root cause of the "preview blank until I select another result and come back"
 strand (data-reproduced under overshoot-and-return navigation at ~0.25s cadence):
 
 With ``PREVIEW_CACHE_MAX_FILES == 1`` the cache holds one container. A mount that
-a rapid nav CANCELS runs its ``finally`` LATE — after a newer navigation has
+a rapid nav CANCELS runs its ``finally`` LATE: after a newer navigation has
 already re-activated a *different* container. That late ``finally`` called
 ``put(its_container, protect=its_container)``, which evicted the now-active
 container out of the DOM while ``self.active`` still pointed at it: a detached,

@@ -5,7 +5,7 @@ mount it is replacing.
 *before* the ``cancel_mount_task()`` the structural branch does. So a structural
 mount already in flight for the previous file kept running; when it finished it
 called ``activate_container``, which hides every ``LineBufferPreview`` and shows
-its own container — the preview ends up displaying the file the user navigated
+its own container: the preview ends up displaying the file the user navigated
 AWAY from, while the cursor sits on the flat one.
 
 ``schedule_load``'s own navigate-away cancel does not cover it: that cancel is
@@ -66,7 +66,7 @@ async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index:
     app = FNDApp(index_dir=mixed_index, initial_query="apples")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._search.groups, "setup — query produced no results"
+        assert app._search.groups, "setup: query produced no results"
         preview = app._preview
         # The app's own first preview must land first: the parked mount below
         # takes its `mount_task` slot, so a load still running there is never cancelled.
@@ -103,13 +103,13 @@ async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index:
         )
         preview.mount_task = task
         await safe_pause(pilot)
-        assert not task.done(), "setup — the structural mount should be parked in flight"
+        assert not task.done(), "setup: the structural mount should be parked in flight"
 
         # Navigate to the flat result.
         preview.dispatch_mount(flat_g.parent_id, flat_chunks[0].chunk_seq, flat_chunks)
 
         assert task.cancelled() or task.cancelling() > 0, (
-            "a flat navigation must cancel the structural mount it replaces — "
+            "a flat navigation must cancel the structural mount it replaces: "
             "otherwise that mount activates its container and displays the wrong file"
         )
 

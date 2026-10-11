@@ -1,6 +1,6 @@
 """Filename-injection regression tests for the Skim open path.
 
-The previous AppleScript opener escaped only ``\\`` and ``"`` — a filename
+The previous AppleScript opener escaped only ``\\`` and ``"``: a filename
 containing a newline could break out of the AppleScript string literal and
 inject arbitrary ``osascript`` commands. The URL form goes through
 ``urllib.parse.quote`` and reaches ``open`` as an argv element, so every
@@ -20,7 +20,7 @@ from fnd import opener
 
 # Skim is macOS-only; its skim:/// deep-link (and the NUL/adversarial-filename
 # hardening around it) is only built on Darwin. Windows also differs at the path
-# layer — resolve() does not reject an embedded NUL the way POSIX does.
+# layer: resolve() does not reject an embedded NUL the way POSIX does.
 mac_only = pytest.mark.skipif(sys.platform != "darwin", reason="Skim is macOS-only")
 
 
@@ -41,7 +41,7 @@ mac_only = pytest.mark.skipif(sys.platform != "darwin", reason="Skim is macOS-on
     ],
 )
 def test_skim_url_neutralises_adversarial_filenames(tmp_path: Path, evil_name: str) -> None:
-    # No `.touch()` — we don't need the file to exist on disk. `resolve()`
+    # No `.touch()`: we don't need the file to exist on disk. `resolve()`
     # works on absent paths and the security claim is purely about
     # encoding, not filesystem state. (pytest's tmp-dir slugifier mangles
     # the parametrized name for the dir, so creating a file with the
@@ -49,7 +49,7 @@ def test_skim_url_neutralises_adversarial_filenames(tmp_path: Path, evil_name: s
     f = tmp_path / evil_name
     url = opener.skim_url(f, page=1)
 
-    # No raw control characters survive into the URL — anything that could
+    # No raw control characters survive into the URL: anything that could
     # break out of an AppleScript string literal or a shell argv element
     # is percent-encoded.
     for forbidden in ("\n", "\r", "\t", '"', "\\"):
@@ -66,7 +66,7 @@ def test_skim_url_neutralises_adversarial_filenames(tmp_path: Path, evil_name: s
 
 @mac_only
 def test_skim_url_rejects_nul_byte_via_path_resolution(tmp_path: Path) -> None:
-    """NUL in a Path raises before ``skim_url`` ever runs — Python's path
+    """NUL in a Path raises before ``skim_url`` ever runs: Python's path
     layer refuses to embed it, which is the right outcome (NUL would
     truncate an argv element on the C side of ``open(2)``)."""
     with pytest.raises(ValueError, match=r"null byte|embedded null"):
@@ -87,7 +87,7 @@ def test_open_smart_dispatches_to_url_for_adversarial_filename(
     # path runs on any CI runner.
     monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
-    # Isolate from the user's real config — without this the test routes
+    # Isolate from the user's real config, without this the test routes
     # through whichever ``[app_defaults]`` the developer happens to have set.
     from fnd.config import Config
 

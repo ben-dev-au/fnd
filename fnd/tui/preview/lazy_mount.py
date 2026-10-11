@@ -2,7 +2,7 @@
 
 ``LazyMounter`` watches viewport position (via a debounced check) and
 mounts the next batch of chunks when the user approaches the boundary
-of the mounted region — long files behave like a continuous document
+of the mounted region: long files behave like a continuous document
 without the initial mount paying for everything.
 """
 
@@ -59,7 +59,7 @@ class LazyMounter:
         # interpret their own scroll changes as user intent and fire a
         # competing mount that yanks the focused chunk off-screen.
         # Debounce timer so rapid scroll bursts collapse to a single
-        # check at the tail end — protects programmatic intermediate
+        # check at the tail end: protects programmatic intermediate
         # scrolls AND smooths user wheel/key scroll bursts.
         self.check_timer: object | None = None
 
@@ -90,7 +90,7 @@ class LazyMounter:
         timer; only the *last* scroll in a burst actually runs the
         check. Coalesces programmatic anchor scrolls (which fire one or
         two watcher trips back-to-back) AND user wheel/key bursts down
-        to a single check at the tail end — no fighting between the
+        to a single check at the tail end: no fighting between the
         navigation's own scroll-to-widget and lazy-mount's compensate."""
         import contextlib
 
@@ -111,7 +111,7 @@ class LazyMounter:
         # scroll, which commits immediately inside the reconcile window.
         if user_initiated and not self._app._preview.reconciling:
             self._app._match_nav.on_manual_scroll()
-        # Any scroll — a user wheel/key, a reveal, or a warm-nav result switch —
+        # Any scroll (a user wheel/key, a reveal, or a warm-nav result switch)
         # can move matches across the fold, so re-measure the ▲/▼ view markers.
         # Settle-gated inside, so it never reads regions mid cold-nav settle.
         self._app._match_nav.on_preview_scrolled()
@@ -124,15 +124,15 @@ class LazyMounter:
         """Scroll watcher entry point (after debounce). Mounts the next
         batch of chunks in the scroll direction when the viewport
         approaches a boundary of the chunk currently under it. Looks
-        at the next *unmounted* chunk in document order — so gaps left
+        at the next *unmounted* chunk in document order, so gaps left
         behind when the user jumps between matches get filled
         progressively, not just the chunks past the absolute max/min
         mounted index."""
         self.check_timer = None
         # Suppress lazy-mount only while a navigation is still settling (the
         # controller owns the position until its scroll commits). Once the
-        # reveal lands the gate opens, so user scrolls by ANY means — keyboard
-        # OR an unfocused mouse-wheel — extend the window. Gating on is_armed
+        # reveal lands the gate opens, so user scrolls by ANY means, keyboard
+        # OR an unfocused mouse-wheel, extend the window. Gating on is_armed
         # instead dead-ended wheel-scroll: the anchor stays armed across navs
         # and only release() (a focused user scroll) cleared it.
         if self._app._preview_scroll.is_settling:
@@ -149,7 +149,7 @@ class LazyMounter:
         # owns the window and will hand off once it settles. Only until it has
         # PAINTED, though: the same task then goes on to fill and freeze in the
         # background, and waiting for that walled upward scrolling off for
-        # seconds — mounting nothing at all until the housekeeping was done.
+        # seconds, mounting nothing at all until the housekeeping was done.
         if self._app._preview.mount_before_first_paint():
             return
         task = self.task
@@ -172,7 +172,7 @@ class LazyMounter:
         margin = float(tuning.LAZY_MOUNT_TRIGGER_MARGIN)
 
         # Snapshot mounted chunks' virtual-y ranges so we can find the
-        # widgets covering viewport top + bottom in O(mounted) — small
+        # widgets covering viewport top + bottom in O(mounted): small
         # under realistic mount counts.
         chunk_ranges: list[tuple[int, int, int]] = []
         for idx in sorted(container.mounted_indices):
@@ -201,14 +201,14 @@ class LazyMounter:
         # A fully captured file fills the rest of itself DOWNWARD in the
         # background; upward is left to the scroll below, one compensated batch
         # at a time. An unattended above-fill jitters the viewport for as long
-        # as it runs — the constraint the presenter states for its own fill.
+        # as it runs: the constraint the presenter states for its own fill.
         if (
             len(chunks) <= tuning.FULLWARM_MOUNT_MAX_CHUNKS
             and self._app._preview.file_warm_state(container.parent_doc_id) is WarmState.FULL
         ):
             # Its OWN handle: `self.task` gates the user-driven fills, and a
             # background fill holding it dropped every upward request for as
-            # long as it ran — the reader hit a wall and had to scroll back
+            # long as it ran: the reader hit a wall and had to scroll back
             # down to shake one loose.
             fill = self.fill_task
             if fill is None or fill.done():  # type: ignore[attr-defined]
@@ -219,7 +219,7 @@ class LazyMounter:
         bottom_cover = _covering(viewport_bottom - 1) or chunk_ranges[-1]
         bottom_idx, _, bottom_chunk_y1 = bottom_cover
         # Only fire below if the IMMEDIATE next chunk in document order
-        # is unmounted — otherwise the user is mid-region and can
+        # is unmounted, otherwise the user is mid-region and can
         # scroll on through the contiguous mounted span without a wall.
         next_idx = bottom_idx + 1
         if (
@@ -252,7 +252,7 @@ class LazyMounter:
             and ((scroll_y - top_chunk_y0) <= margin or approaching)
         ):
             # Sized by what is served: a warmed file clears a wall in one step
-            # instead of three chunks at a time — one batch per scroll event,
+            # instead of three chunks at a time: one batch per scroll event,
             # never an unattended loop.
             self.task = asyncio.create_task(
                 self._mount_batch(
@@ -288,14 +288,14 @@ class LazyMounter:
                 return
             # BELOW only. Inserting content above the viewport shoves it down
             # and the scroll can only re-pin it a layout later, so an unattended
-            # above-fill jitters the reader for as long as it runs — measured at
+            # above-fill jitters the reader for as long as it runs: measured at
             # 19 of 21 painted frames showing the wrong part of the document.
             # Scrolling up stays user-driven, one compensated batch per scroll.
             # Strictly AFTER the last mounted chunk. "Missing and above the top
             # of the window" is not the same thing: mount_chunk_into inserts in
             # document order, so filling an interior gap puts widgets ABOVE the
-            # viewport while the below branch — which does no scroll adjustment,
-            # on the assumption content grows downward — displaces the reader
+            # viewport while the below branch, which does no scroll adjustment,
+            # on the assumption content grows downward, displaces the reader
             # once per batch. Interior gaps are left to the scroll, which knows
             # which side of the viewport they are on.
             below = [i for i in missing if i > max(mounted)] if mounted else missing
@@ -311,7 +311,7 @@ class LazyMounter:
             )
             if len(container.mounted_indices) <= before:
                 # A batch that mounts nothing would spin. Something declined the
-                # mount — a condemned widget, a swapped container — and the
+                # mount (a condemned widget, a swapped container) and the
                 # windowed path can pick the rest up on scroll.
                 return
             await asyncio.sleep(0)
@@ -322,7 +322,7 @@ class LazyMounter:
         """The larger batch only when this run really is served from the store.
 
         FULL is counted over the CAPTURABLE chunks, so a file of mostly
-        flat-path pages reads FULL while most of it still has to be built —
+        flat-path pages reads FULL while most of it still has to be built,
         and the served size is ten times what a build batch can afford.
         """
         span = [start + step * i for i in range(tuning.LAZY_MOUNT_BATCH_SERVED)]
@@ -347,7 +347,7 @@ class LazyMounter:
         because content grows downward.
 
         Above: hidden-prepend, await build, reveal. No scroll
-        compensate — anchor preservation via virtual_region delta
+        compensate: anchor preservation via virtual_region delta
         proved unreliable post-reveal (returns 0 on consecutive
         above-batches even after refresh), so newly-prepended chunks
         appear at the top of the visible area, which IS the right UX
@@ -386,7 +386,7 @@ class LazyMounter:
         # them hidden, then reveal AND scroll-compensate so the user's view stays
         # put. The anchor is the first already-mounted chunk just below the
         # prepend region; revealing the chunks above it shifts it DOWN by their
-        # combined height, so we scroll the pane by that delta — turning the old
+        # combined height, so we scroll the pane by that delta: turning the old
         # "wall, jump, scroll-down-to-retrigger" into a continuous upward scroll.
         # Measuring the delta reliably needs a SETTLED layout: the earlier code
         # read the delta as 0 pre-settle and gave up on compensation, leaving the
@@ -416,7 +416,7 @@ class LazyMounter:
             for w in hidden:
                 # Re-checked here as well as in the mount loop: this awaits per
                 # widget, and a query landing in that window detaches the
-                # container — the reveal below then changes no geometry and the
+                # container: the reveal below then changes no geometry and the
                 # growth claim would strand, to be spent on the next document.
                 if self._app._preview.active is not container:
                     return
@@ -447,7 +447,7 @@ class LazyMounter:
             if hidden and isinstance(pane, MatchAwareScroll) and anchor_w is not None:
                 # Anchored on the first chunk BELOW the prepend, at its position
                 # now. The claim has to outlive this call: `display = True` lays
-                # nothing out — the arrange happens on a later timer tick — so a
+                # nothing out (the arrange happens on a later timer tick) so a
                 # claim released before returning was never present when the
                 # growth it claimed arrived.
                 pane.absorb_anchor = (anchor_w, int(anchor_w.virtual_region.y))
@@ -456,7 +456,7 @@ class LazyMounter:
             if absorb_pane is not None:
                 # Suspend painting across the reveal AND the layout it causes.
                 # The compensation lands inside that layout, but the compositor
-                # can still paint the pre-correction offset first — the reader
+                # can still paint the pre-correction offset first: the reader
                 # sees the document a batch-height out of place for one frame.
                 # Batched, the first frame anyone sees is the corrected one.
                 revealed = list(hidden)
@@ -466,7 +466,7 @@ class LazyMounter:
                     hidden.clear()
                     # Held until the prepend has finished landing. The
                     # signal is the revealed widgets themselves: each is
-                    # laid out — and so contributes its height — at its own
+                    # laid out, and so contributes its height, at its own
                     # pace, which is why the growth arrives in instalments
                     # 40-57ms apart, and why releasing on a timer released
                     # just before the last one and let it paint
@@ -494,7 +494,7 @@ class LazyMounter:
 
             # Re-anchor: scroll by however far the anchor moved down, so the
             # prepended chunks extend the scrollable region UPWARD without moving
-            # the user's view — continuous scroll instead of a wall.
+            # the user's view: continuous scroll instead of a wall.
             if anchor_w is not None and before_y is not None and anchor_seq is not None:
                 await self._app._preview.await_settled()
                 # Re-resolve across the await. The freeze sweep can swap this

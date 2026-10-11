@@ -1,7 +1,7 @@
 """Per-platform unit tests for the OS launcher seam (``fnd.launcher``).
 
 Every branch is exercised by injecting a spy runner / ``startfile`` / ``which``
-into the concrete launcher — no process is ever spawned, so these run
+into the concrete launcher: no process is ever spawned, so these run
 identically on any OS (the CI matrix then confirms the real spawns).
 """
 

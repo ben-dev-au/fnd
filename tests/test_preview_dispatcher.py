@@ -1,6 +1,6 @@
 """``choose_preview_mode`` routes chunks to the right pipeline.
 
-Pure-function tests on the dispatcher — no Textual pilot needed. The
+Pure-function tests on the dispatcher: no Textual pilot needed. The
 host wire-in (``fnd/tui/app.py``) calls this once per file-load to
 decide between the flat buffer (PDF / TXT) and the structural Markdown
 renderer (MD / DOCX / PPTX).
@@ -46,7 +46,7 @@ def test_pdf_with_body_md_takes_structural_path(monkeypatch: pytest.MonkeyPatch)
 def test_pdf_partially_structured_still_structural(monkeypatch: pytest.MonkeyPatch) -> None:
     """A PDF that was reindexed with extras present but had an
     individual page fail extraction (empty body_md) still routes
-    structural overall — the any-chunk rule wins."""
+    structural overall: the any-chunk rule wins."""
     monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)
     chunks = [_chunk("pdf", body_md=""), _chunk("pdf", body_md="## p2")]
     assert choose_preview_mode(chunks) == "structural"
@@ -69,7 +69,7 @@ def test_pptx_with_body_md_takes_structural_path() -> None:
 
 
 def test_markdown_kind_without_body_md_falls_through_to_flat() -> None:
-    """Stale-index defence — a markdown-kinded chunk with empty
+    """Stale-index defence: a markdown-kinded chunk with empty
     ``body_md`` shouldn't mount through the structural renderer (which
     would render nothing). The flat path renders the legacy ``blocks``
     text safely instead."""
@@ -92,7 +92,7 @@ def test_empty_chunks_takes_flat_path() -> None:
 
 
 def test_uses_markdown_renderer_pdf_with_body_md() -> None:
-    """Per-chunk routing must agree with ``choose_preview_mode`` — PDF
+    """Per-chunk routing must agree with ``choose_preview_mode``: PDF
     chunks with ``body_md`` route through the markdown renderer at mount
     time. Drift between this helper and ``_MARKDOWN_RENDERED_KINDS``
     caused PDFs to render flat despite the dispatcher selecting
@@ -106,7 +106,7 @@ def test_uses_markdown_renderer_pdf_with_body_md() -> None:
 def test_an_oversized_chunk_is_routed_away_from_the_markdown_renderer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The size cap had no test at all — neither the routing nor the fallback.
+    """The size cap had no test at all, neither the routing nor the fallback.
 
     A chunk over the cap must stop using the structural renderer and route to
     the flat one instead.
@@ -120,7 +120,7 @@ def test_an_oversized_chunk_is_routed_away_from_the_markdown_renderer(
     small = _chunk(kind="md", body_md="| a | b |\n|---|---|\n| 1 | 2 |")
     assert uses_markdown_renderer(small)
 
-    # Both sides of the boundary — the cap is inclusive, and a body far under
+    # Both sides of the boundary: the cap is inclusive, and a body far under
     # and far over it cannot tell `<=` from `<`.
     assert uses_markdown_renderer(_chunk(kind="md", body_md="x" * MARKDOWN_MAX_CHARS))
     assert not uses_markdown_renderer(_chunk(kind="md", body_md="x" * (MARKDOWN_MAX_CHARS + 1)))

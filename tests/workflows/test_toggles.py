@@ -1,4 +1,4 @@
-"""Toggle workflows — Auto-resume + Update cache at index time.
+"""Toggle workflows: Auto-resume + Update cache at index time.
 
 Each toggle should:
   - Read from defaults on mount.

@@ -1,7 +1,7 @@
 """Freeze a built chunk: keep what it painted, drop the widgets that painted it.
 
 The preview's cost is not rendering markdown, it is holding widgets. Textual's
-arrange is linear in widget count, and a chunk is tens of them — measured 42 per
+arrange is linear in widget count, and a chunk is tens of them: measured 42 per
 chunk on a real PDF. Freezing keeps the rendered result and discards the tree:
 
     arrange, 400 chunks   widget trees 41.7ms   frozen 2.1ms
@@ -12,7 +12,7 @@ that tree's own output. Tables, fenced code, list bullets, inline formatting and
 the match highlighting all survive because none of them are re-derived.
 
 Capture drives a ``Compositor`` directly. ``Widget.render_lines`` renders only a
-widget's OWN content — children are composed over it by the Screen — so
+widget's OWN content, children are composed over it by the Screen, so
 capturing a container that way yields strips that are styled but EMPTY, which
 looks exactly like the technique not working. ``Compositor.render_strips`` takes
 an explicit size, so a chunk taller than the terminal captures in full.
@@ -47,7 +47,7 @@ class FrozenChunk:
     """What a built chunk painted, plus the positions the preview navigates by.
 
     The row fields are captured while the widgets still exist, which is the point:
-    resolving a match — or a table cell — against a live tree is what races today
+    resolving a match, or a table cell, against a live tree is what races today
     (a DataTable's cell region is unresolvable until its rows lay out). A row
     number recorded at capture time cannot race.
     """
@@ -77,12 +77,12 @@ class FrozenChunk:
 
 
 def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
-    """Capture ``chunk`` — built and laid out — as strips plus positions.
+    """Capture ``chunk``, built and laid out, as strips plus positions.
 
     ``None`` means "not capturable, leave it live": either it is not laid out
     yet, or it contains a widget that scrolls INSIDE the chunk. A nested
-    viewport cannot be flattened onto a run of strips — the capture would hold
-    only the rows currently on screen — so such chunks stay as widgets. In
+    viewport cannot be flattened onto a run of strips (the capture would hold
+    only the rows currently on screen) so such chunks stay as widgets. In
     practice that is now nothing: Textual's DataTable used to cap itself at one
     viewport height, and lifting that (see FNDMarkdownTableDT) took the share of
     unfreezable chunks on a real corpus from 3.4% to zero. The guard stays
@@ -96,7 +96,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         return None
     # Refuse anything not actually being PAINTED. A hidden widget keeps its
     # geometry, so the size check above passes, but the compositor renders it
-    # blank — the capture then holds a correctly-sized run of empty strips and
+    # blank: the capture then holds a correctly-sized run of empty strips and
     # nothing downstream can tell. The background fill hides widgets while it
     # works and restores them in a `finally` that runs AFTER the freeze sweep,
     # so this is reachable on every file whose tail is filled that way, and it
@@ -116,7 +116,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         node = node.parent if isinstance(node.parent, Widget) else None
     for dt in chunk.query(DataTable):
         # A table that holds rows but has NO geometry has not been laid out, and
-        # capturing it yields the border with none of the contents — an empty
+        # capturing it yields the border with none of the contents: an empty
         # box, indistinguishable downstream from a table that is genuinely
         # empty. The nested-scroll check below cannot see this: an unlaid table
         # measures 0 both ways, so `virtual > size` is `0 > 0` and passes.
@@ -132,7 +132,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     if isinstance(chunk, FNDMarkdown):
         inner = chunk.first_match_block
         # The chunk's own spec, so this asks exactly what enumerate_stop_rows
-        # asks of the live blocks — a block whose spans were cleared after it
+        # asks of the live blocks: a block whose spans were cleared after it
         # registered would otherwise get a scanned row live and row 0 frozen.
         spec = chunk.match_spec
         if inner is not None and (block_row := row_within(inner, chunk)) is not None:
@@ -211,8 +211,8 @@ class FrozenChunkView(Widget):
     """One widget standing in for a frozen chunk's whole widget tree.
 
     Deliberately one widget PER CHUNK rather than one per document. Everything
-    the preview addresses is per chunk — ``chunk_widgets``, ``match_targets``,
-    the scroll strategy, lazy mount, prune — and all of it keeps working if a
+    the preview addresses is per chunk: ``chunk_widgets``, ``match_targets``,
+    the scroll strategy, lazy mount, prune, and all of it keeps working if a
     chunk stays a widget and merely stops being a *tree* of them. Measured at 400
     chunks: 41.7ms arrange today, 2.1ms this way, 0.04ms as a single
     document-wide widget. The last is another 50x, but it needs every one of
@@ -231,7 +231,7 @@ class FrozenChunkView(Widget):
 
         Posted by the view because the view is the only thing that knows. The
         pane-level resize hook runs from ``call_after_refresh``, which fires
-        BEFORE the re-layout — measured, the pane still reports its old width
+        BEFORE the re-layout: measured, the pane still reports its old width
         and every chunk its old size at that point, so nothing looks stale from
         there and no repair ever ran. A widget's own Resize arrives after it has
         been laid out, with the new size in hand.
@@ -242,7 +242,7 @@ class FrozenChunkView(Widget):
             self.view = view
 
     def on_resize(self, event: Resize) -> None:
-        # Strips cannot be re-wrapped, so this cannot repair itself — it can
+        # Strips cannot be re-wrapped, so this cannot repair itself: it can
         # only say so, and let the presenter decide.
         #
         # Once per width, not once per event: a window drag emits a resize per
@@ -258,7 +258,7 @@ class FrozenChunkView(Widget):
     def __init__(self, frozen: FrozenChunk, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.frozen = frozen
-        # A fixed height, equal to what the widget tree occupied — so swapping
+        # A fixed height, equal to what the widget tree occupied, so swapping
         # the tree for this moves nothing on screen and needs no scroll
         # compensation, unlike removing the chunk outright. The strips are the
         # chunk's whole box, padding rows included, so this widget carries no
@@ -275,7 +275,7 @@ class FrozenChunkView(Widget):
     def adopt(self, frozen: FrozenChunk) -> None:
         """Swap in strips cut at a different width, in place.
 
-        A resize changes presentation, not content — so the fix is to replace
+        A resize changes presentation, not content, so the fix is to replace
         the strips rather than the widget. Nothing is unmounted, so the pane
         cannot blank and the mounted run cannot develop a hole.
         """

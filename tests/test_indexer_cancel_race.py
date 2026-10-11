@@ -2,7 +2,7 @@
 clobber the chain queue a newer run just set up.
 
 Reproduces the user-reported bug where cancelling a single-collection
-rebuild and immediately launching 'Rebuild all collections' stalled —
+rebuild and immediately launching 'Rebuild all collections' stalled:
 the dying run's teardown reset _indexer_chain_remaining, wiping the new
 chain. The run-generation guard fixes it.
 """

@@ -3,7 +3,7 @@
 The layout text engine emits U+FFFD for ligature glyphs (ff/fi/fl/ffi/ffl)
 in fonts whose ToUnicode CMap lacks entries for them. The flat text layer
 (MuPDF's standard engine) resolves the same glyphs, so it is used as
-ground truth to rebuild only the words a ligature broke — standalone
+ground truth to rebuild only the words a ligature broke: standalone
 U+FFFD (non-ligature unmapped glyphs) is left untouched.
 """
 
@@ -52,7 +52,7 @@ def test_noop_when_no_replacement_char() -> None:
 
 def test_leaves_standalone_replacement_char_untouched() -> None:
     """A bare U+FFFD (a non-ligature unmapped glyph) has no word skeleton
-    to match — leave it rather than inventing 'ff'/'fi'."""
+    to match: leave it rather than inventing 'ff'/'fi'."""
     r = LigatureRepairer()
     md = f"see {FFFD} here"
     assert r.repair(md, "see X here") == md
@@ -60,21 +60,21 @@ def test_leaves_standalone_replacement_char_untouched() -> None:
 
 def test_bare_replacement_not_rewritten_even_when_vocab_has_ligature() -> None:
     """A standalone U+FFFD must stay put even when the flat layer contains
-    a bare 'ff'/'fi'/'fl' token — repairing only fires inside a word."""
+    a bare 'ff'/'fi'/'fl' token: repairing only fires inside a word."""
     r = LigatureRepairer()
     md = f"tempo {FFFD} marking ff dynamics"
     assert r.repair(md, "tempo X marking ff dynamics") == md
 
 
 def test_repair_preserves_capital_on_midword_ligature() -> None:
-    """Capitalised words with a mid-word ligature keep the capital — the
+    """Capitalised words with a mid-word ligature keep the capital: the
     real corpus case ('Miscon<?>gured', 'Con<?>dentiality')."""
     r = LigatureRepairer()
     assert r.repair(f"Miscon{FFFD}gured CAs", "a misconfigured ca") == "Misconfigured CAs"
 
 
 def test_repair_uppercases_ligature_in_all_caps_word() -> None:
-    """An all-caps token stays all-caps — the recovered ligature letters
+    """An all-caps token stays all-caps: the recovered ligature letters
     are not left lowercase mid-word."""
     r = LigatureRepairer()
     assert r.repair(f"TRA{FFFD}C ALERT", "inbound traffic alert") == "TRAFFIC ALERT"
@@ -89,7 +89,7 @@ def test_repair_capitalises_leading_ligature_from_ground_truth() -> None:
 
 def test_repair_handles_non_f_ligatures() -> None:
     """Not limited to f-ligatures: the standard 'st' and old-style 'ct'
-    ligatures (and the extended f-set) are recovered too — the repairer is
+    ligatures (and the extended f-set) are recovered too: the repairer is
     not hard-coded to this PDF's ff/fi/fl."""
     r = LigatureRepairer()
     assert r.repair(f"the fir{FFFD} step", "the first step") == "the first step"  # st
@@ -98,14 +98,14 @@ def test_repair_handles_non_f_ligatures() -> None:
 
 def test_repair_disambiguates_ligature_gap_from_non_ligature_twin() -> None:
     """A skeleton twin whose gap is NOT a ligature is ignored: '<?>ows'
-    fits 'flows' (fl, a ligature) and 'allows' (all, not) — pick 'flows'."""
+    fits 'flows' (fl, a ligature) and 'allows' (all, not): pick 'flows'."""
     r = LigatureRepairer()
     assert r.repair(f"mail {FFFD}ows here", "flows and allows") == "mail flows here"
 
 
 def test_repair_leaves_ambiguous_skeleton_untouched() -> None:
     """When two flat words fit AND both gaps are real ligatures, refuse to
-    guess — '<?>uff' fits 'fluff' (fl) and 'stuff' (st)."""
+    guess: '<?>uff' fits 'fluff' (fl) and 'stuff' (st)."""
     r = LigatureRepairer()
     md = f"some {FFFD}uff here"
     assert r.repair(md, "fluff and stuff") == md
@@ -120,7 +120,7 @@ def test_leaves_unmatched_word_untouched() -> None:
 
 def test_caps_pathological_multifffd_token() -> None:
     """A token with many U+FFFD slots would explode the candidate
-    product — leave it untouched past the cap rather than churn."""
+    product: leave it untouched past the cap rather than churn."""
     r = LigatureRepairer()
     md = "a" + FFFD * 8 + "b"
     assert r.repair(md, "anything here") == md
@@ -152,7 +152,7 @@ def test_tier_passthrough_when_markdown_empty() -> None:
 
 
 def test_tier_keeps_current_when_nothing_repairable() -> None:
-    """U+FFFD present but unrepairable (standalone) — don't restamp the
+    """U+FFFD present but unrepairable (standalone): don't restamp the
     tier or set the flag for a no-op."""
     tier = LigatureRepairTier(LigatureRepairer())
     current = PageExtraction(markdown=f"a {FFFD} b", tier="production-layout")

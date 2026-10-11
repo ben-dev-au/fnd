@@ -108,7 +108,7 @@ def test_kind_category_flag_expands_to_members(captured: dict[str, Any]) -> None
 def test_parse_filter_flags_expands_categories_for_the_tui_seed() -> None:
     """``parse_filter_flags`` expands category ids to fine-grained kinds in the
     LaunchScope, so the TUI (which seeds ``filter_kinds`` from it) emits
-    index-compatible ``kind:`` clauses — a raw ``kind:code`` matches nothing."""
+    index-compatible ``kind:`` clauses; a raw ``kind:code`` matches nothing."""
     from fnd.cli import parse_filter_flags
     from fnd.kinds import KINDS_IN_CATEGORY
 

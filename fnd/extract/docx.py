@@ -1,6 +1,6 @@
 """DOCX extractor: one chunk per heading section.
 
-Walks the body in document order — interleaving paragraphs and tables —
+Walks the body in document order, interleaving paragraphs and tables,
 and accumulates body until a Heading 1/2/3 paragraph appears, at which
 point it flushes the current section as a chunk and starts a new one.
 Tracks an ancestor stack so each chunk ships its full ``heading_path``
@@ -93,7 +93,7 @@ def _list_info(para: Paragraph) -> tuple[str, int] | None:
 
     Three signal sources are consulted (in priority order):
 
-    1. The paragraph style name — ``List Bullet``, ``List Bullet 2``…
+    1. The paragraph style name: ``List Bullet``, ``List Bullet 2``…
        map to bullet at increasing depths; ``List Number`` etc. map to
        numbered.
     2. The underlying ``w:pPr/w:numPr`` element (XML) for any paragraph
@@ -214,7 +214,7 @@ def _extract_inner(path: Path, parent_id: str) -> Iterator[Chunk]:
             doc = Document(str(path))
         except PackageNotFoundError as e:
             # `python-docx` raises this for encrypted / password-protected
-            # packages too — we can't reliably tell them apart, so the
+            # packages too: we can't reliably tell them apart, so the
             # umbrella message is the right shape.
             raise ExtractError(str(path), f"unreadable docx: {e}") from e
         yield from _walk_docx_body(path=path, parent_id=parent_id, times=times, doc=doc)
@@ -222,7 +222,7 @@ def _extract_inner(path: Path, parent_id: str) -> Iterator[Chunk]:
         raise
     except Exception as e:
         # Parser libs raise everything from RuntimeError to opaque C
-        # extension errors. Broad except is intentional — the goal is
+        # extension errors. Broad except is intentional: the goal is
         # "don't let one bad doc stop the index build."
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
 

@@ -52,7 +52,7 @@ jobs:
             echo "### Newest allowed vs committed uv.lock (${{ matrix.os }})"
             echo '```diff'
             if diff -u /tmp/before.txt /tmp/after.txt | tail -n +3 | grep -E '^[-+]'; then :; else
-              echo "(nothing moved — the lock is already at the newest allowed versions)"
+              echo "(nothing moved; the lock is already at the newest allowed versions)"
             fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -90,7 +90,7 @@ jobs:
           summary lists exactly which versions moved. Do not raise the
           affected pin in \`pyproject.toml\` until this is green again.
 
-          Users are unaffected while the pins stay as they are — that is what
+          Users are unaffected while the pins stay as they are: that is what
           the three-component \`~=\` ranges buy."
           # Comment on the standing issue rather than opening a fresh one each
           # Monday, so a long-lived upstream break is one thread, not twelve.

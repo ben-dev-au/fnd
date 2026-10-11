@@ -76,7 +76,7 @@ class DoclingDaemon:
     def extract_page(self, pdf_path: Path, page_index: int, *, timeout_s: float = 45.0) -> str:
         """Send one (pdf, page) request; return the Markdown response.
 
-        Returns "" on any failure — caller decides how to handle
+        Returns "" on any failure: caller decides how to handle
         (typically: keep the pymupdf4llm output it already has).
 
         The blocking stdout.readline() is bounded by a timeout (read in a
@@ -98,7 +98,7 @@ class DoclingDaemon:
             return ""
         # Read the response with a timeout. ``select()`` only accepts sockets
         # on Windows, so bound the blocking ``readline()`` with a throwaway
-        # daemon thread + a size-1 queue instead — portable across OSes.
+        # daemon thread + a size-1 queue instead: portable across OSes.
         result_q: queue.Queue[str | None] = queue.Queue(maxsize=1)
         stdout = self._proc.stdout
 
@@ -148,7 +148,7 @@ def _docling_python() -> Path | None:
 def _spawn_helper(python: Path, ready_timeout_s: float = 60.0) -> subprocess.Popen[str] | None:
     # -I = isolated mode: don't add the script's dir to sys.path[0] and
     # ignore PYTHONPATH. The helper lives in fnd/extract/, which contains
-    # fnd's own pptx.py extractor — without isolated mode, docling's
+    # fnd's own pptx.py extractor, without isolated mode, docling's
     # `import pptx` resolves to that file instead of the docling-slim
     # venv's python-pptx package, breaking the helper at import time.
     proc = subprocess.Popen(

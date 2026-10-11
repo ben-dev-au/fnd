@@ -2,7 +2,7 @@
 
 A row's ``value_getter`` runs synchronously inside the render path. When
 that getter walks the filesystem (cache size, extra disk usage, etc.)
-the first render blocks until the walk finishes — the user sees an
+the first render blocks until the walk finishes: the user sees an
 empty trailing column for ~200 ms.
 
 Solution: rows that touch the filesystem wrap their compute callable
@@ -79,7 +79,7 @@ def get_or_schedule(
         # work back onto the UI thread. Under test runs the worker can
         # complete before the event loop is fully up; close the returned
         # coroutine in that case to silence the "never awaited" warning.
-        # App may be shutting down or the screen stack reshuffled — safe
+        # App may be shutting down or the screen stack reshuffled: safe
         # to ignore; next render will pick up the cached value.
         import asyncio
 

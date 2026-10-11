@@ -98,7 +98,7 @@ class ScriptedPipeline:
         return self._stage is None
 
     def file_warm_state(self, _parent_id: str) -> Any:
-        """No capture store here, so readiness is unknowable — which is what
+        """No capture store here, so readiness is unknowable, which is what
         the real presenter returns before the pane has a width. The plan then
         falls back to the chunk cache, as it did before coverage existed."""
         return None
@@ -128,7 +128,7 @@ class _Task:
 
 class _Container:
     def __init__(self, parent_doc_id: str = "previous-file") -> None:
-        # The pane is showing a DIFFERENT file when the navigation starts —
+        # The pane is showing a DIFFERENT file when the navigation starts:
         # that is what makes this a cold navigation. Leaving it as "doc" had
         # the tracker pick the warm plan, whose seeds total 180 ms, and then
         # every phase of this 2.3 s schedule overran by an order of magnitude.
@@ -264,21 +264,21 @@ def test_an_instant_navigation_still_shows_a_complete_line() -> None:
 
 
 # A file far slower than anything recorded before: the build phase runs five
-# times its seed. This is the worst case for a timed phase — the first time
+# times its seed. This is the worst case for a timed phase: the first time
 # this machine ever meets such a file, nothing has been calibrated.
 OVERRUN_SCHEDULE = [("decode", 0.30), ("mount", 0.25), ("build", 3.50), ("land", 0.55)]
 # What the curve can honestly guarantee on that first, uncalibrated encounter.
 #
 # Raised from 0.60s deliberately, and the trade is worth stating. The fill now
 # reads ~0.8 of a phase when it runs to its estimate rather than ~0.5, which is
-# what stopped correctly-paced operations finishing with the bar partway — the
+# what stopped correctly-paced operations finishing with the bar partway: the
 # reported bug. Paying for that leaves less headroom in the tail, so a phase
 # running FIVE TIMES its estimate, on a machine that has never seen that file
 # before, can hold the same cell for about a second.
 #
 # That is bounded, it only applies before calibration has a sample, and
 # test_the_second_visit_is_paced_by_the_first pins the improvement on the
-# next encounter. The alternative — more tail range — makes every on-time
+# next encounter. The alternative, more tail range, makes every on-time
 # completion read lower, which is the worse failure.
 MAX_DEAD_UNCALIBRATED_S = 1.10
 

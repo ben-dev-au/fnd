@@ -50,7 +50,7 @@ def test_daemon_singleton_returns_none_when_docling_missing(
 def test_daemon_singleton_reuses_one_instance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F10: repeated .get() calls return the same singleton — model
+    """F10: repeated .get() calls return the same singleton, model
     loads exactly once per process."""
     from fnd.extract import _docling_daemon
 
@@ -93,7 +93,7 @@ def test_fallback_returns_empty_when_daemon_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NF4: when DoclingDaemon.get() returns None (docling missing),
-    _try_docling_fallback returns "" — caller keeps pymupdf4llm output."""
+    _try_docling_fallback returns "": caller keeps pymupdf4llm output."""
     from fnd.extract import _docling_daemon, pdf
 
     monkeypatch.setattr(_docling_daemon, "_docling_python", lambda: None)
@@ -138,7 +138,7 @@ def test_fallback_returns_daemon_output_on_success(
 
 def test_needs_docling_fallback_triggers_on_table_label_proximity() -> None:
     """The HBR p99 case: small (sub-15%) picture region but a TABLE
-    label nearby — should trigger fallback."""
+    label nearby: should trigger fallback."""
     from fnd.extract import pdf
 
     class FakePage:

@@ -74,10 +74,10 @@ class PrefetchEngine:
         Parallelism bounded by ``preview_decode_workers``.
 
         ``anchor_parent_id`` centres the window around the cursor's position
-        in the result list instead of starting from the top — lets the
+        in the result list instead of starting from the top: lets the
         buffer follow the user when they navigate past the initial range.
         """
-        # Discard mount jobs queued for the previous anchor — stale
+        # Discard mount jobs queued for the previous anchor: stale
         # work would otherwise keep the drainer (and the asyncio loop)
         # busy across navigation.
         q = self.sink_queue
@@ -132,7 +132,7 @@ class PrefetchEngine:
             # Filter by preview_cache (widget tree ready), not chunk_cache:
             # a file whose chunks are cached but whose mount got drained
             # by a prior cursor move must be re-queued. Also skip if it's
-            # the active preview — that one's owned by the user-side path.
+            # the active preview: that one's owned by the user-side path.
             in_preview = (
                 self._app._preview.preview_cache.get(g.parent_id, query_sig_for_filter) is not None
             )
@@ -166,9 +166,9 @@ class PrefetchEngine:
             pane_widget = self._app.query_one("#preview_pane", VerticalScroll)
             # Floor of 20 mirrors the cold-load + md-flat paths. Without
             # it, if the pane isn't laid out at prefetch time (content
-            # width 0–1) every flat-path file gets pre-rendered to
+            # width 0 to 1) every flat-path file gets pre-rendered to
             # 1-cell strips and paints as a single vertical column on
-            # first reveal — the "PDF only shows a single line" symptom.
+            # first reveal: the "PDF only shows a single line" symptom.
             measured = pane_widget.content_size.width - 1
             estimated_wrap_width = max(20, measured) if measured > 0 else 0
         except Exception:
@@ -180,7 +180,7 @@ class PrefetchEngine:
             import time as _time
 
             t0 = _time.perf_counter()
-            # Reuse cached chunk data if present — only the mount got dropped,
+            # Reuse cached chunk data if present: only the mount got dropped,
             # not the decode. Avoids re-running PDF/docx extraction.
             cached_chunks = app._preview.chunk_cache.get(parent_id)
             if cached_chunks is not None:
@@ -238,7 +238,7 @@ class PrefetchEngine:
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 futures = [ex.submit(_prefetch_one, pid, focus) for pid, focus in targets]
                 for f in as_completed(futures):
-                    # Drop everything on query change — _run_query has cleared
+                    # Drop everything on query change: _run_query has cleared
                     # caches and any in-flight work here is stale.
                     if query_sig != app._search.query_signature():
                         for other in futures:
@@ -300,7 +300,7 @@ class PrefetchEngine:
         doc: RenderedDocument,
         focus_chunk_seq: int,
     ) -> None:
-        """Stash the prefetched RenderedDocument in the value cache. No mount —
+        """Stash the prefetched RenderedDocument in the value cache. No mount:
         user activation installs into the shared widget on click."""
         _ = focus_chunk_seq  # focus is recomputed at install time
         if query_sig != self._app._search.query_signature():
@@ -326,13 +326,13 @@ class PrefetchEngine:
         No-op while the preview cache holds a single file. The pre-mount only
         pays off if the container it builds is still cached when the user gets
         there, and ``PREVIEW_CACHE_MAX_FILES == 1`` means the very next ``put``
-        evicts it — so every container built here is thrown away unused. It was
+        evicts it, so every container built here is thrown away unused. It was
         not free: measured on a real corpus, one Down inside a single file
         re-mounted the same four *neighbouring files* on every keypress (13
         prefetch passes over 11 presses, each of the four rebuilt 12-13 times),
         all of it on the event loop the navigation's own scroll is waiting on.
 
-        The decode and the flat bundles above are kept — those are cached by
+        The decode and the flat bundles above are kept: those are cached by
         ``chunk_cache`` / ``prebuilt_cache``, which are not bounded to one file
         and do survive to be used.
         """
@@ -529,7 +529,7 @@ class PrefetchEngine:
             job = await q.get()
             self._app._diag_log(f"drainer JOB pulled qsize={q.qsize()}")
             wait_iters = 0
-            # Cooperative wait — user-side mount always preempts.
+            # Cooperative wait: user-side mount always preempts.
             while self._app._preview.user_mount_in_flight():
                 wait_iters += 1
                 await asyncio.sleep(0.05)

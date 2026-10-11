@@ -3,8 +3,8 @@
 ``run_indexer`` printed ``[fnd skip …]`` to stderr unconditionally. Under
 the TUI that is the same terminal Textual owns, so a run with failures
 (one real corpus produced ~40 in a single collection) scribbles over the
-rendered UI. The skip already reaches the user twice — as a ``file_error``
-event and in the failure log — so the print belongs to the CLI alone.
+rendered UI. The skip already reaches the user twice, as a ``file_error``
+event and in the failure log, so the print belongs to the CLI alone.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
-"""Structured PDF section + confirm screen — tests follow
+"""Structured PDF section + confirm screen: tests follow
 dev/docs/test_patterns/settings_screen.md.
 
 The confirm screen body is state-dependent (install vs uninstall copy).
-Step 6b wires the actual install/uninstall worker — these tests only
+Step 6b wires the actual install/uninstall worker: these tests only
 verify the disclosure + Yes/Cancel pattern.
 """
 
@@ -53,7 +53,7 @@ def _fake_installed(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore
     monkeypatch.setattr("fnd.extras.installed_packages", lambda e: list(e.packages))
 
 
-# 1 — Indexing screen surfaces structured-PDF rows
+# 1: Indexing screen surfaces structured-PDF rows
 
 
 @pytest.mark.usefixtures("_fake_not_installed")
@@ -105,7 +105,7 @@ async def test_install_label_flips_when_installed(built_index: Path, cfg: Config
         assert "Uninstall" in row.label
 
 
-# 2 — Confirm screen chrome
+# 2: Confirm screen chrome
 
 
 @pytest.mark.usefixtures("_fake_not_installed")
@@ -154,7 +154,7 @@ async def test_uninstall_confirm_chrome_when_installed(built_index: Path, cfg: C
         assert screen.has_class("-recoverable")
 
 
-# 3 — Body content covers the cost narrative
+# 3: Body content covers the cost narrative
 
 
 @pytest.mark.usefixtures("_fake_not_installed")
@@ -162,7 +162,7 @@ async def test_uninstall_confirm_chrome_when_installed(built_index: Path, cfg: C
 async def test_install_disclosure_covers_costs(built_index: Path, cfg: Config) -> None:
     """Install body must mention disk + ML weights + per-PDF cost so
     the user knows what they're opting into. The body uses the
-    Outcome / Cost / Safety template — checks reflect that."""
+    Outcome / Cost / Safety template: checks reflect that."""
     from fnd.tui.menu import _open_pdf_install_confirm
 
     app = FNDApp(index_dir=built_index, config=cfg)
@@ -180,7 +180,7 @@ async def test_install_disclosure_covers_costs(built_index: Path, cfg: Config) -
         assert "structured" in body
 
 
-# 4 — Keyboard equivalence
+# 4: Keyboard equivalence
 
 
 @pytest.mark.usefixtures("_fake_not_installed")
@@ -216,7 +216,7 @@ async def test_install_esc_cancels(built_index: Path, cfg: Config) -> None:
         assert not isinstance(app.screen, StructuredPdfConfirmScreen)
 
 
-# 5 — Cross-section search
+# 5: Cross-section search
 
 
 @pytest.mark.usefixtures("_fake_not_installed")

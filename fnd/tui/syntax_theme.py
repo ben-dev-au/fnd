@@ -2,17 +2,17 @@
 
 Textual's stock fence highlighter (``textual.highlight.highlight``) lexes
 with Pygments then maps tokens through a sparse ``HighlightTheme`` that
-collapses most token types onto a handful of theme variables — flat-looking
+collapses most token types onto a handful of theme variables: flat-looking
 output. :func:`highlight_fenced` keeps the same single Pygments pass but:
 
 * maps through :class:`FNDSyntaxTheme`, a granular fixed-hex palette;
-* differentiates bare ``Name`` tokens by position — Pygments has no semantic
+* differentiates bare ``Name`` tokens by position, Pygments has no semantic
   analysis, so in C/C++/Java a namespace, type, and variable all arrive as a
   bare ``Name`` (a sea of blue). Cheap positional heuristics recover the
   distinction: ``name(`` is a call, ``name::`` a scope, ``::name`` a qualified
   type, ``PascalCase`` a type, ``ALL_CAPS`` a constant;
 * colours brackets ``()[]{}`` by nesting depth (rainbow brackets) so matching
-  pairs are obvious. Angle brackets are skipped — Pygments tags them as
+  pairs are obvious. Angle brackets are skipped: Pygments tags them as
   ambiguous operators.
 
 Colours are fixed truecolor, not ANSI: identical and legible for every user
@@ -31,7 +31,7 @@ from pygments.util import ClassNotFound
 from textual.content import Content, Span
 from textual.highlight import HighlightTheme, guess_language
 
-# Palette — shared by the theme map and the positional heuristics so a colour
+# Palette: shared by the theme map and the positional heuristics so a colour
 # is defined once. Seeded from the user's terminal/VSCode colours.
 _COMMENT = "#4E6B6E"
 _STRING = "#CACACA"
@@ -46,7 +46,7 @@ _CONSTANT = "#F37F97"
 _NEUTRAL = "#A9B1D6"  # separator punctuation (`;` `,` `.`)
 _ERROR = "#FF4971"
 
-# Rainbow-bracket depth cycle (the user's bright terminal hues — vivid enough
+# Rainbow-bracket depth cycle (the user's bright terminal hues: vivid enough
 # to track nesting, distinct from the token colours above).
 _BRACKET_CYCLE = ("#F2A272", "#B043D1", "#3FDCEE")
 _OPENERS = frozenset("([{")
@@ -63,7 +63,7 @@ class FNDSyntaxTheme(HighlightTheme):
         Token.Keyword: _KEYWORD,  # if/for/return/def/class
         Token.Keyword.Constant: _CONSTANT,  # True/False/None/nullptr
         Token.Keyword.Namespace: _KEYWORD,  # import/from
-        Token.Keyword.Type: _KEYWORD,  # void/double/int — built-in type keywords read as keywords; teal is reserved for named types
+        Token.Keyword.Type: _KEYWORD,  # void/double/int: built-in type keywords read as keywords; teal is reserved for named types
         Token.Operator: _OPERATOR,
         Token.Operator.Word: _OPERATOR,  # and/or/not/in/is
         Token.Name: _VARIABLE,  # bare identifiers; refined by _name_style
@@ -103,13 +103,13 @@ _Tok = tuple[Any, str]
 
 
 def _is_colon(tok: _Tok | None) -> bool:
-    """A lone ``:`` token — C/C++ lex ``::`` as two of these. Matched on text
+    """A lone ``:`` token, C/C++ lex ``::`` as two of these. Matched on text
     only (not token type), since lexers disagree (Operator vs Punctuation)."""
     return tok is not None and tok[1] == ":"
 
 
 def _is_scope(tok: _Tok | None) -> bool:
-    """A single ``::`` scope token — Rust lexes it as ``Punctuation '::'`` and
+    """A single ``::`` scope token, Rust lexes it as ``Punctuation '::'`` and
     Ruby as ``Operator '::'`` (C/C++ split it into two ``:`` instead)."""
     return tok is not None and tok[1] == "::"
 
@@ -120,18 +120,18 @@ def _name_style(before: Sequence[_Tok], after: Sequence[_Tok], text: str) -> str
     nearest non-whitespace neighbours, nearest-first."""
     nxt = after[0] if after else None
     prev = before[0] if before else None
-    # `name(` — a call.
+    # `name(`: a call.
     if nxt is not None and nxt[0] is Token.Punctuation and nxt[1] == "(":
         return _FUNCTION
-    # `name::` — a namespace / scope qualifier (one `::` token, or `:` then `:`).
+    # `name::`; a namespace / scope qualifier (one `::` token, or `:` then `:`).
     if _is_scope(nxt) or (_is_colon(nxt) and len(after) > 1 and _is_colon(after[1])):
         return _NAMESPACE
-    # `::name` — a qualified type or member.
+    # `::name`; a qualified type or member.
     if _is_scope(prev) or (_is_colon(prev) and len(before) > 1 and _is_colon(before[1])):
         return _TYPE
-    if len(text) >= 2 and text.isupper():  # ALL_CAPS — a constant / macro.
+    if len(text) >= 2 and text.isupper():  # ALL_CAPS: a constant / macro.
         return _CONSTANT
-    if text[:1].isupper():  # PascalCase — a type / class.
+    if text[:1].isupper():  # PascalCase: a type / class.
         return _TYPE
     return _VARIABLE
 
@@ -143,7 +143,7 @@ def highlight_fenced(code: str, language: str | None) -> Content:
     ``textual.highlight.highlight``, but maps through :class:`FNDSyntaxTheme`,
     refines bare ``Name`` tokens positionally, and rainbow-colours brackets."""
     # `guess_language` returns "text"/"default" (never falsy) and a bad name
-    # raises ClassNotFound below — so no crash today; the trailing "text" only
+    # raises ClassNotFound below, so no crash today; the trailing "text" only
     # guards against ever passing None if those contracts shift across versions.
     language = language or guess_language(code, None) or "text"
     code = "\n".join(code.splitlines())
@@ -162,7 +162,7 @@ def _build_spans(tokens: Sequence[_Tok], *, neutral_operators: bool = False) -> 
     Shared by the Pygments (fence) and regex (inline) tokenizers.
 
     ``neutral_operators`` renders operator/separator chars in the neutral
-    foreground instead of red — for inline code, where ``/`` ``-`` ``:`` are
+    foreground instead of red: for inline code, where ``/`` ``-`` ``:`` are
     usually path/flag separators in prose, not arithmetic. The ``::`` scope
     heuristic is unaffected (it keys on token type, not colour)."""
     # Compact view (whitespace dropped) for neighbour lookups, mapping each
@@ -186,7 +186,7 @@ def _build_spans(tokens: Sequence[_Tok], *, neutral_operators: bool = False) -> 
             style = _BRACKET_CYCLE[depth % len(_BRACKET_CYCLE)]
         elif token_type is Token.Name and index in compact_pos:
             # Blank/whitespace Name tokens (some lexers, e.g. Perl, emit them)
-            # aren't in ``compact_pos`` — skip the positional heuristic and let
+            # aren't in ``compact_pos``: skip the positional heuristic and let
             # them fall through to the parent-walk rather than KeyError.
             p = compact_pos[index]
             before = [(compact[q][1], compact[q][2]) for q in range(p - 1, max(p - 3, -1), -1)]

@@ -9,7 +9,7 @@ for content the collection no longer contains.
 Pruning must stay narrow: it is scoped to one collection so a shared vault
 keeps its sibling's chunks, it leaves the content-addressed texture cache
 alone (``fnd cache prune-orphans`` owns that, across all collections), and it
-is skipped whenever the walk was incomplete — a cancelled run or an offline
+is skipped whenever the walk was incomplete; a cancelled run or an offline
 source root would otherwise read as "every file was deleted".
 """
 
@@ -209,10 +209,10 @@ def test_pruned_pdf_keeps_texture_cache_entry_when_another_collection_holds_it(
     beta = CollectionConfig(sources=[SourceConfig(path=src, includes=["**/*.pdf"])])
     cfg = Config(collections={"alpha": alpha_narrowed, "beta": beta})
 
-    # Dropped from alpha, still reachable via beta — so still live content.
+    # Dropped from alpha, still reachable via beta, so still live content.
     assert sha in live_content_shas(cfg)
 
-    # Gone from every collection — now genuinely an orphan.
+    # Gone from every collection: now genuinely an orphan.
     cfg_none = Config(collections={"alpha": alpha_narrowed})
     assert sha not in live_content_shas(cfg_none)
 
@@ -224,7 +224,7 @@ async def _run(cfg: CollectionConfig, collection: str, index_dir: Path, **kw: ob
 
 @pytest.mark.asyncio
 async def test_runner_prunes_file_deleted_from_disk(tmp_path: Path) -> None:
-    """The TUI indexer path prunes too — it is what most re-indexes go through."""
+    """The TUI indexer path prunes too: it is what most re-indexes go through."""
     notes = tmp_path / "notes"
     _touch(notes / "keep.md", "# Keep\npenguin sandwich\n")
     _touch(notes / "gone.md", "# Gone\npenguin sandwich\n")
@@ -243,7 +243,7 @@ async def test_runner_prunes_file_deleted_from_disk(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_runner_does_not_prune_when_cancelled(tmp_path: Path) -> None:
     """A cancelled run walked only part of the corpus, so its live set is
-    incomplete — pruning against it would delete files that still exist."""
+    incomplete: pruning against it would delete files that still exist."""
     notes = tmp_path / "notes"
     for i in range(6):
         _touch(notes / f"n{i}.md", f"# N{i}\npenguin sandwich {i}\n")

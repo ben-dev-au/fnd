@@ -1,4 +1,4 @@
-"""Cloud-backed placeholder files — is this file's data actually here?
+"""Cloud-backed placeholder files: is this file's data actually here?
 
 Fourth platform seam, alongside :mod:`fnd.paths` (where files live),
 :mod:`fnd.launcher` (how to open them) and :mod:`fnd.os_labels` (what the
@@ -7,12 +7,12 @@ touching this file pull them down over the network?".
 
 Every sync client (iCloud Drive, OneDrive, Dropbox, Google Drive) can leave
 a *placeholder*: a normal-looking directory entry whose contents are not on
-disk. Opening one blocks until the provider materialises it — seconds for a
+disk. Opening one blocks until the provider materialises it: seconds for a
 note, minutes for a large PDF. The indexer needs to know that up front so it
 can tell the user what it is waiting for instead of looking wedged.
 
 Detection is a filesystem-attribute question, never a path question. On
-macOS an evicted file carries ``SF_DATALESS`` wherever it lives — inside
+macOS an evicted file carries ``SF_DATALESS`` wherever it lives: inside
 ``~/Library/Mobile Documents``, under "Desktop & Documents Folders" sync, or
 in a third-party provider mounted at ``~/Library/CloudStorage``. Attribution
 (*which* service) is the only path-dependent part, and it is cosmetic: it
@@ -59,7 +59,7 @@ _CANCEL_POLL_SECONDS: Final = 0.1
 
 
 class _CancelSignal(Protocol):
-    """Anything with ``is_set()`` — an ``asyncio.Event`` read from a worker
+    """Anything with ``is_set()``: an ``asyncio.Event`` read from a worker
     thread (a plain bool read, safe) or a ``threading.Event``."""
 
     def is_set(self) -> bool: ...
@@ -94,7 +94,7 @@ _WINDOWS_PLACEHOLDER_BITS: Final = (
 
 # Bound once so a test can swap the stat call without patching the shared
 # ``os`` module, which would hand a fake back to every caller in the
-# interpreter — pytest's own bookkeeping included.
+# interpreter: pytest's own bookkeeping included.
 _stat = os.stat
 
 # Path separators, both spellings: a Windows path inspected on POSIX (or a
@@ -103,7 +103,7 @@ _SEP_RE: Final = re.compile(r"[/\\]")
 
 _GENERIC_PROVIDER: Final = "cloud storage"
 
-# Provider names, matched against the START of a path component — never as
+# Provider names, matched against the START of a path component: never as
 # a bare substring, which made "box" claim ~/Documents/Inbox and Sandbox.
 # A prefix still catches the real spellings, which append an account:
 # "OneDrive-Personal", "OneDrive - Contoso", "GoogleDrive-user@host".
@@ -123,7 +123,7 @@ _PROVIDER_MARKERS: Final[tuple[tuple[str, str], ...]] = (
 def materialisation(path: Path) -> Materialisation:
     """Whether ``path``'s bytes are local, remote, or unknowable here.
 
-    Never raises and never opens the file — a stat is enough, and opening
+    Never raises and never opens the file: a stat is enough, and opening
     is the very thing callers are trying to decide about.
     """
     try:
@@ -151,7 +151,7 @@ def materialisation(path: Path) -> Materialisation:
 def is_placeholder(path: Path) -> bool:
     """True only when the platform positively says the bytes are remote.
 
-    ``UNKNOWN`` reads as "assume local" — the alternative would have Linux
+    ``UNKNOWN`` reads as "assume local": the alternative would have Linux
     treat every file as cloud-backed.
     """
     return materialisation(path) is Materialisation.PLACEHOLDER
@@ -233,7 +233,7 @@ def fetch[T](
     timeout_s: float,
     cancel: _CancelSignal | None = None,
 ) -> T:
-    """Run ``call`` — which will materialise ``path`` — under a deadline.
+    """Run ``call``, which will materialise ``path``, under a deadline.
 
     Publishes a :class:`FetchWait` for the duration so the UI can name what
     it is waiting on, and raises :class:`CloudFetchError` if the provider has
@@ -241,7 +241,7 @@ def fetch[T](
 
     ``cancel`` is polled while waiting, so a Cancel lands in well under a
     second instead of being held for the remainder of the timeout by a
-    stalled provider. Raises :class:`CloudFetchCancelledError` when it fires —
+    stalled provider. Raises :class:`CloudFetchCancelledError` when it fires;
     the run is ending, so the file is not a failure.
 
     The worker is a throwaway daemon thread rather than a pooled one: a

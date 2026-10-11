@@ -85,7 +85,7 @@ async def test_every_heading_level_uses_accent_color() -> None:
             # after alpha blend; the other five are flat $accent.
             if cls is not FNDMarkdownH6:
                 t = color_seen
-                # Tokyo-night-ish accent — peach (254, 166, 43); guard
+                # Tokyo-night-ish accent: peach (254, 166, 43); guard
                 # against the default Textual palette regression where H4-H6
                 # silently fell back to $text and lost colour entirely.
                 assert (t.red, t.green, t.blue) != (224, 224, 224), cls.__name__
@@ -110,7 +110,7 @@ async def test_bold_carries_contrasting_color_not_just_bold_weight() -> None:
         t = bold_seg.style.color.triplet
         assert t is not None
         # Body text colour for the rest of the paragraph; bold must not
-        # share that triplet — i.e. .strong picked up a contrasting
+        # share that triplet: i.e. .strong picked up a contrasting
         # colour from $primary, not just text-style: bold.
         body_seg = next(
             (s for s in strip if s.text.startswith("A line with ") and s.style),
@@ -153,7 +153,7 @@ async def test_italic_also_carries_contrasting_color() -> None:
 
 @pytest.mark.asyncio
 async def test_heading_marker_does_not_break_highlight_offsets() -> None:
-    """A query term inside a heading still highlights the right word —
+    """A query term inside a heading still highlights the right word:
     the marker prefix shifts the plain content but the highlight span
     is computed against the post-prefix plain, so offsets stay aligned.
     """

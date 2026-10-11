@@ -1,7 +1,7 @@
 """Report when the event loop stops answering, and say what was running.
 
 A freeze is an event loop that does not come back, and the hard part is never
-noticing one — it is knowing which piece of work held it. Guessing has a poor
+noticing one: it is knowing which piece of work held it. Guessing has a poor
 record here: an executor drain, a capture-store teardown and a chunk decode were
 each a confident explanation and each disproved by measurement, while the real
 one (coverage and lazy mount fighting over the same message pump) was found by a
@@ -50,7 +50,7 @@ def stack_key(stack: traceback.StackSummary) -> str:
 
     Separators are normalised first. Windows reports backslashes, and without
     this the filter below matches nothing, every sample keys off the same empty
-    string, and unrelated stalls merge into one meaningless bucket — a
+    string, and unrelated stalls merge into one meaningless bucket: a
     diagnostic that says nothing, on the platform where attaching a debugger is
     hardest.
     """
@@ -88,7 +88,7 @@ class StallWatch:
             threshold = _DEFAULT_THRESHOLD_MS
         # `=1` means "on", not "stall on everything over a millisecond".
         # `isfinite` because `inf`/`nan` pass the bound below and then silently
-        # disable every report — a diagnostic that says nothing looks like a
+        # disable every report: a diagnostic that says nothing looks like a
         # clean run.
         if not math.isfinite(threshold) or threshold <= 1:
             threshold = _DEFAULT_THRESHOLD_MS
@@ -107,7 +107,7 @@ class StallWatch:
 
         A thread, not a task, and that is the whole point: a coroutine cannot
         observe the loop it is itself blocked on, so the flags in
-        :meth:`_snapshot` can only ever say which of OUR markers was set — never
+        :meth:`_snapshot` can only ever say which of OUR markers was set, never
         which code was actually running. Sampling from outside answers that
         directly, and it is what finally attributed these stalls (108 of 110
         samples inside ``Stylesheet.apply``, over half of them the descendant
@@ -168,7 +168,7 @@ class StallWatch:
             if late >= self._threshold_ms:
                 # CPU consumed across the gap, reported rather than judged.
                 # A heartbeat alone cannot tell a blocked loop from a process
-                # the OS stopped running — an unfocused terminal gets its timers
+                # the OS stopped running: an unfocused terminal gets its timers
                 # coalesced, and a 7.7s gap nobody felt reads exactly like a
                 # 7.7s freeze. CPU close to the gap means Python work held the
                 # loop; CPU near zero means the process was either idle or
@@ -208,7 +208,7 @@ class StallWatch:
     def _prefetch_state(self) -> str:
         """What prefetch is doing: the running job's file, and the queue depth.
 
-        Prefetch mounts widgets on the loop, so it can hold it — and it is the
+        Prefetch mounts widgets on the loop, so it can hold it, and it is the
         one background actor no other flag here covers, which is why stalls kept
         being reported with everything False.
         """

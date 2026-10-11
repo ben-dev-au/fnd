@@ -1,7 +1,7 @@
 """``HeadingFolder`` folds a chunk's OWN heading, into every representation.
 
 Pre-fix, every PDF page of a TOC section had that section's heading prepended
-to the searchable ``body`` — but never to ``body_md``, which is what the
+to the searchable ``body``, but never to ``body_md``, which is what the
 structural preview renders. Continuation pages therefore matched a heading they
 neither owned nor displayed, and selecting one scrolled the preview to text
 with no highlight anywhere.
@@ -69,7 +69,7 @@ def test_new_heading_after_a_run_is_folded() -> None:
 
 
 def test_folder_state_does_not_span_documents() -> None:
-    """A fresh folder per document — otherwise the first chunk of file B
+    """A fresh folder per document, otherwise the first chunk of file B
     would be treated as a continuation of file A's last section."""
     first = HeadingFolder().fold(_chunk("Ch 1 > Alpha", "a"))
     second = HeadingFolder().fold(_chunk("Ch 1 > Alpha", "b"))
@@ -135,7 +135,7 @@ def test_emphasised_heading_is_recognised_as_already_present() -> None:
     """The structured extractor emits page headings with their typographic
     emphasis intact (``## **Foo**``) while the TOC gives the plain string.
     Comparing them literally folded a second copy in, and the preview showed
-    the same heading twice — seen live on the AWS guide's p.24."""
+    the same heading twice: seen live on the AWS guide's p.24."""
     folder = HeadingFolder()
     c = folder.fold(
         _chunk(
@@ -179,7 +179,7 @@ def test_searchable_text_the_markdown_lost_is_appended() -> None:
 
 
 def test_mirroring_is_idempotent() -> None:
-    """Re-running must not duplicate — the repair also runs on cache-served
+    """Re-running must not duplicate: the repair also runs on cache-served
     chunks, which may already carry it."""
     from fnd.extract.pdf import _mirror_body_into_md
 
@@ -214,7 +214,7 @@ def test_dispersed_terms_do_not_stand_in_for_a_phrase() -> None:
     Asking whether a line's tokens appear anywhere in the markdown let scattered
     words satisfy a phrase: "virtual memory" was treated as present because
     "virtual" and "memory" each occurred elsewhere. A phrase query then matched
-    the chunk with no contiguous rendered text for the highlighter to paint —
+    the chunk with no contiguous rendered text for the highlighter to paint:
     the exact failure this repair exists to prevent.
     """
     from fnd.extract.pdf import _mirror_body_into_md

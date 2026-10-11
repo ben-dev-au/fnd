@@ -3,11 +3,11 @@
 ODF files are ZIPs whose ``content.xml`` holds the body. We parse it with
 stdlib ``zipfile`` + ``lxml.etree`` (no odfpy) and, per subtype:
 
-* ``.odt`` — walk ``office:text`` into the shared ``HeadingSectioner`` (headings
+* ``.odt``: walk ``office:text`` into the shared ``HeadingSectioner`` (headings
   from ``text:h``/``text:outline-level``, paragraphs, lists, tables), the same
   structural shape as docx.
-* ``.odp`` — one chunk per ``draw:page`` slide, like pptx.
-* ``.ods`` — one chunk per ``table:table`` sheet rendered as a GFM table,
+* ``.odp``: one chunk per ``draw:page`` slide, like pptx.
+* ``.ods``: one chunk per ``table:table`` sheet rendered as a GFM table,
   honouring ``number-columns/rows-repeated`` so repeated empty cells don't
   explode into huge phantom ranges.
 """

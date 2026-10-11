@@ -3,7 +3,7 @@ graphically-complex born-digital pages (CyberCX threat report), so every
 indexed (flat-layer) token is present in the preview texture.
 
 The tier keeps the structured Markdown and appends ONLY the flat blocks it
-missed (in reading order) — it is not a wholesale flat replacement, so a
+missed (in reading order): it is not a wholesale flat replacement, so a
 well-extracted page is left untouched.
 """
 
@@ -43,7 +43,7 @@ def _tier(blocks: list[str], calls: list[int] | None = None) -> FlatFallbackTier
 
 def test_passthrough_on_complete_coverage() -> None:
     """A fully-captured page is never touched, and the flat blocks are not
-    even queried — the one exact short-circuit: if every flat token is in the
+    even queried: the one exact short-circuit: if every flat token is in the
     Markdown, no block can be missing."""
     flat = _distinct_words(0, 40)
     calls: list[int] = []
@@ -58,7 +58,7 @@ def test_passthrough_on_complete_coverage() -> None:
 def test_backfills_a_dropped_block_on_a_well_covered_page() -> None:
     """The regression this tier's old 0.90 page-level floor allowed through.
 
-    A page can be 92% covered and still have lost a whole block — searchable
+    A page can be 92% covered and still have lost a whole block: searchable
     prose the preview could never show. Block-level evidence decides now, not
     a page-level ratio.
     """
@@ -133,7 +133,7 @@ def test_no_op_when_nothing_missing() -> None:
 
 def test_flat_fallback_is_not_a_pipeline_tier() -> None:
     """Flat-fallback runs in _finalise_body_md AFTER the born-digital
-    docling fallback, not inside the recovery pipeline — so the prose it
+    docling fallback, not inside the recovery pipeline, so the prose it
     backfills can't be discarded by a later docling swap, and a
     flat-appended 'Table N' can't retro-trigger that docling."""
     from fnd.extract import pdf
@@ -145,7 +145,7 @@ def test_flat_fallback_is_not_a_pipeline_tier() -> None:
 
 def test_finalise_runs_docling_check_before_flat_backfill(monkeypatch: pytest.MonkeyPatch) -> None:
     """The born-digital docling decision must see the structured markdown
-    BEFORE flat-fallback appends — otherwise a backfilled 'Table 1' block
+    BEFORE flat-fallback appends, otherwise a backfilled 'Table 1' block
     could retro-trigger docling. Assert the markdown handed to
     _needs_docling_fallback carries no flat-appended prose, and that
     flat-fallback still backfills afterwards."""

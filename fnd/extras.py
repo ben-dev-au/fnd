@@ -106,21 +106,21 @@ def is_package_installed(pkg: Package) -> bool:
     Multiple layers of stale state can fool naive detection:
 
     - The path-importer cache keeps the FileFinder for a directory
-      after one module has been resolved — even when the files have
+      after one module has been resolved, even when the files have
       been removed by an out-of-process tool. ``invalidate_caches``
       clears that.
     - A regular package whose ``__init__.py`` has been removed but
       whose parent directory still exists (macOS Finder occasionally
       leaves ``__init__ 2.py`` after a sync conflict; uv's atomic
       rename has been observed to do similar) is matched as a
-      *namespace* package — origin is None, submodule_search_locations
+      *namespace* package: origin is None, submodule_search_locations
       points at an empty husk.
     - For ``cli:NAME`` detection, ``shutil.which`` returns ANY binary
       with that name on ``PATH``. A user with a system-wide
       ``docling`` (from another Python install) would be detected as
       "installed" even after ``uv tool uninstall docling-slim``
       removed fnd's copy. For uv-tool-installed packages, check the
-      uv tool install dir directly — that's what fnd manages.
+      uv tool install dir directly: that's what fnd manages.
 
     A "really installed" module needs either a real ``origin`` file
     or at least one submodule search location containing
@@ -147,7 +147,7 @@ def is_package_installed(pkg: Package) -> bool:
                 return True
         return False
     if kind == "cli":
-        # For uv-tool packages, ignore PATH — a system-wide binary
+        # For uv-tool packages, ignore PATH: a system-wide binary
         # with the same name isn't what fnd installed. Check the uv
         # tool root specifically.
         if pkg.install_via == "uv-tool":
@@ -209,7 +209,7 @@ def install_commands(extra: Extra) -> list[list[str]]:
     Strategy depends on whether fnd's runtime ``sys.executable`` lives
     inside a uv-managed project venv:
 
-    - **uv-managed project venv** (the developer case — ``sys.executable``
+    - **uv-managed project venv** (the developer case: ``sys.executable``
       is ``<project>/.venv/bin/python3.X`` and the project's
       ``pyproject.toml`` declares a matching ``[dependency-groups].<name>``):
       install via ``uv sync --group <name>``. The caller is also
@@ -217,7 +217,7 @@ def install_commands(extra: Extra) -> list[list[str]]:
       :func:`enable_pdf_structure_default_group` so subsequent
       ``uv sync`` calls (without a ``--group`` flag) don't wipe the
       install. This is the persistence fix for "I installed but fnd
-      says not installed after restart" — without the default-group
+      says not installed after restart", without the default-group
       flip, any ``uv run`` re-syncs the venv and removes the extra.
 
     - **uv-tool install / standalone** (``sys.executable`` is in a
@@ -281,7 +281,7 @@ def _group_exists_in_pyproject(pyproject: Path, group_name: str) -> bool:
 def enable_pdf_structure_default_group(pyproject: Path) -> None:
     """Add ``pdf-structure`` to ``[tool.uv] default-groups`` so a
     subsequent ``uv sync`` (without a ``--group`` flag) keeps the
-    install. Idempotent — no-op when the group is already in the
+    install. Idempotent: no-op when the group is already in the
     list. Preserves comments + ordering via tomlkit."""
     _ensure_group_membership(pyproject, "pdf-structure", present=True)
 
@@ -327,7 +327,7 @@ def _pip_install_specs(pkg: Package) -> list[str]:
         # lockfile / pyproject. pymupdf-layout rides in as a base
         # requirement of pymupdf4llm at ~=1.27 (the old `[layout]`
         # extra no longer exists), so installing the base package is
-        # enough — requesting the extra would only emit a uv warning.
+        # enough: requesting the extra would only emit a uv warning.
         primary = pkg.detect.split(":", 1)[1]
         return [primary] if primary == "pymupdf4llm" else list(pkg.uninstall_targets)
     return [pkg.detect.split(":", 1)[1]]

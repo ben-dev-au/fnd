@@ -3,7 +3,7 @@
 Markdown cells keep their source verbatim on ``body_md`` (rendered rich);
 code cells become a language fence with their text outputs appended. A running
 top-level markdown heading becomes each cell's ``heading_path`` so result
-labels read sensibly. Parsed with the stdlib ``json`` module — no nbformat.
+labels read sensibly. Parsed with the stdlib ``json`` module: no nbformat.
 """
 
 from __future__ import annotations

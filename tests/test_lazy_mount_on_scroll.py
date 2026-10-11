@@ -49,7 +49,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 
 @pytest.fixture
 def long_md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A 120-section markdown file — large enough that one lazy-mount
+    """A 120-section markdown file: large enough that one lazy-mount
     batch can't fill from the visible window to either end of the
     document. Only section 50 mentions the search term so the auto-
     load lands deterministically."""
@@ -78,7 +78,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
 ) -> None:
     """Scrolling close to the bottom of the mounted region mounts more
     chunks below it. Disable the active-file full-mount so the file stays
-    windowed — scroll-driven lazy-mount is the path for files beyond the
+    windowed: scroll-driven lazy-mount is the path for files beyond the
     full-mount budget (monster docs); for in-budget files the eager fill
     has already mounted everything below. Coverage is disabled too, so the
     chunks this mounts are built here rather than served from a capture."""
@@ -106,7 +106,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
         max_before = max(mounted_before)
         assert max_before < container.total_chunks - 1, "test setup needs unmounted below"
         target = max(0, pane.virtual_size.height - pane.size.height)
-        # release() models a focused user scroll taking control — one of the two
+        # release() models a focused user scroll taking control: one of the two
         # ways the gate opens (the other is the nav settling, covered by
         # test_lazy_mount_fires_after_settle_without_explicit_release).
         app._preview_scroll.release()
@@ -127,7 +127,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
         )
         mounted_after = set(container.mounted_indices)
         new_below = {i for i in mounted_after - mounted_before if i > max_before}
-        # Batch size is bounded — not unbounded fill.
+        # Batch size is bounded, not unbounded fill.
         assert len(new_below) <= LAZY_MOUNT_BATCH * 4
 
 
@@ -140,7 +140,7 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
     The dead-end bug gated lazy-mount on the anchor being armed; the anchor
     stays armed across navs and only a *focused* user scroll called release(),
     so wheel-scrolling the unfocused pane never extended the window. Now the
-    gate is is_settling — it clears when the nav's scroll commits — so this
+    gate is is_settling (it clears when the nav's scroll commits) so this
     test does NOT call release() and lazy-mount must still fire.
 
     Full-mount disabled so the file stays windowed (the >budget monster-file
@@ -166,7 +166,7 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
         )
         # The nav has landed: the gate must already be open, with NO release().
         assert not app._preview_scroll.is_settling, (
-            "nav settled but is_settling still True — lazy-mount would dead-end"
+            "nav settled but is_settling still True: lazy-mount would dead-end"
         )
         container = app._preview.active
         assert container is not None
@@ -221,7 +221,7 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
         assert min_initial > 0, (
             f"test setup needs unmounted above; mounted={sorted(mounted_initial)}"
         )
-        # Force scroll to the absolute top of the mounted region — that
+        # Force scroll to the absolute top of the mounted region: that
         # puts scroll_y inside the trigger margin so the watcher fires.
         # release() models a focused user scroll taking control (one of the two
         # ways the is_settling gate opens).
@@ -244,7 +244,7 @@ async def test_far_in_file_nav_lands_in_fresh_contiguous_region(
     cfg: Config, long_md_index: Path
 ) -> None:
     """Navigating to a far-apart match in the same file lands on the new
-    match in a FRESH, contiguous mounted region — not a second window
+    match in a FRESH, contiguous mounted region, not a second window
     prepended above the current one. The old same-container resume left a
     gap between two regions and, on an upward jump, slid the visible content
     (the reflow). A fresh container is built below the outgoing one and
@@ -260,7 +260,7 @@ async def test_far_in_file_nav_lands_in_fresh_contiguous_region(
             lambda: app._preview.active is not None and bool(app._preview.active.mounted_indices),
             message="active preview never mounted any chunks",
         )
-        # Auto-load focuses on section 50. Jump far UP to section 10 — the
+        # Auto-load focuses on section 50. Jump far UP to section 10: the
         # case that used to prepend a window above the view and reflow.
         group = app._search.groups[0]
         app._preview.render_full_doc(group.parent_id, focus_chunk_seq=10)
@@ -293,7 +293,7 @@ async def test_scroll_watcher_bridges_to_lazy_mounter(
     """``MatchAwareScroll.watch_scroll_y`` must actually reach the
     LazyMounter. The app-level delegation shim was removed and this
     watcher kept calling the dropped name, silently severing scroll-
-    driven lazy mount — undetected because the other tests drive
+    driven lazy mount: undetected because the other tests drive
     ``app._lazy.check()`` directly. This test exercises ONLY the bridge:
     a real scroll on the focused pane must invoke ``schedule_check``."""
     monkeypatch.setattr("fnd.tui.preview.tuning.FULLMOUNT_CHUNK_BUDGET", 0)
@@ -320,7 +320,7 @@ async def test_scroll_watcher_bridges_to_lazy_mounter(
         pane.focus()
         await pilot.pause()
         # A focused user scroll must bridge through to the mounter with
-        # user_initiated=True — NOT a direct check() call.
+        # user_initiated=True, NOT a direct check() call.
         pane.scroll_to(y=pane.scroll_y + 5, animate=False, immediate=True)
         await pilot.pause()
         assert calls, "watch_scroll_y never reached LazyMounter.schedule_check"
@@ -332,7 +332,7 @@ async def test_file_switch_cancels_lazy_mount(
     cfg: Config, tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A pending lazy-mount task is dropped when the user navigates to
-    a different file — no stray mounts on the previous container."""
+    a different file: no stray mounts on the previous container."""
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
         textwrap.dedent("""
@@ -402,7 +402,7 @@ async def test_a_fully_warmed_file_fills_downward_and_never_prepends_unattended(
 
     Content inserted above the viewport shoves the reader down and the scroll
     can only re-pin it a layout later, so an unattended above-fill jitters for
-    as long as it runs — measured at 19 of 21 painted frames showing the wrong
+    as long as it runs: measured at 19 of 21 painted frames showing the wrong
     part of the document. Upward stays user-driven, one batch per scroll.
     """
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
@@ -439,7 +439,7 @@ async def test_a_reader_scrolling_up_is_served_while_the_fill_runs(
 ) -> None:
     """The background fill must not wall the reader for its own duration.
 
-    It runs downward for seconds — 3.6s on a 727-chunk file — and upward is
+    It runs downward for seconds, 3.6s on a 727-chunk file, and upward is
     reachable only on demand, so standing the reader down until it finishes is
     the wall the windowed mount was built to remove.
     """
@@ -501,7 +501,7 @@ async def test_a_warmed_file_over_the_mount_ceiling_stays_windowed(
         assert len(container.mounted_indices) < len(chunks), (
             "the ceiling did not hold: a file over it mounted whole"
         )
-        # Only meaningful if a batch actually ran — if the scroll left the
+        # Only meaningful if a batch actually ran, if the scroll left the
         # viewport inside the mounted region no batch is spawned and a size
         # assertion would hold trivially.
         grew = len(container.mounted_indices) - len(before)
@@ -587,7 +587,7 @@ def test_a_run_already_in_the_store_gets_the_served_batch() -> None:
 
 def test_a_run_that_must_be_built_gets_the_small_batch() -> None:
     """FULL is counted over CAPTURABLE chunks, so a mostly flat-path file reads
-    FULL with almost none of it in the store — and the served batch is ten times
+    FULL with almost none of it in the store, and the served batch is ten times
     what a build batch can afford."""
     lazy, container, chunks = _stub_lazy(all_captured=False)
     assert lazy._served_batch(container, chunks, 50, -1) == tuning.LAZY_MOUNT_BATCH

@@ -4,7 +4,7 @@ Each test pins one of the gaps reviewers flagged so they can't drift
 back without breaking a guard:
 
 * (#1) Obsidian ``file_in_vault`` is computed relative to the actual
-  vault root, not the source root — fixes deep-link breakage when a
+  vault root, not the source root: fixes deep-link breakage when a
   source is configured as a subdirectory of the vault.
 * (#4) KIND_ACTION rows with empty ``action_id`` (widget-only doc
   rows in the keybindings cheat sheet) don't dismiss the settings
@@ -37,7 +37,7 @@ from fnd.apps import (
 )
 from tests._pilot_wait import settings_ready
 
-# ── #1 — vault-relative file_in_vault ──────────────────────────────────────
+# ── #1: vault-relative file_in_vault ──────────────────────────────────────
 
 
 def test_detect_obsidian_vault_path_returns_root_path(tmp_path: Path) -> None:
@@ -68,7 +68,7 @@ def test_open_smart_computes_file_in_vault_relative_to_vault_not_source(
     """The PR #4 bug: when source.path is a subdirectory of the
     vault (e.g. an Obsidian collection that indexes only one
     project's notes folder), ``file_in_vault`` was computed relative
-    to source.path — Advanced URI would then look for the file at
+    to source.path: Advanced URI would then look for the file at
     the wrong location in the vault."""
     from types import SimpleNamespace
 
@@ -95,7 +95,7 @@ def test_open_smart_computes_file_in_vault_relative_to_vault_not_source(
         return 0
 
     # Stub the obsidian handler to capture the OpenRequest that
-    # ``open_smart`` builds — we're testing OpenRequest assembly here,
+    # ``open_smart`` builds: we're testing OpenRequest assembly here,
     # not URL rendering.
     monkeypatch.setitem(
         BUILTIN_APPS,
@@ -127,7 +127,7 @@ def test_open_smart_computes_file_in_vault_relative_to_vault_not_source(
     assert req.file_in_vault == "Notes/Budget/ch1.md", req.file_in_vault
 
 
-# ── #4 — KIND_ACTION + empty action_id is a no-op ──────────────────────────
+# ── #4: KIND_ACTION + empty action_id is a no-op ──────────────────────────
 
 
 @pytest.mark.asyncio
@@ -161,13 +161,13 @@ async def test_enter_on_widget_only_row_does_not_close_settings_stack() -> None:
         lst.focus()
         await pilot.press("enter")
         await pilot.pause()
-        # Stack must still have Keybindings on top — user is reading
+        # Stack must still have Keybindings on top: user is reading
         # help, hitting Enter on a doc row shouldn't dismiss anything.
         assert isinstance(app.screen, SettingsScreen)
         assert app.screen._breadcrumb == ("Keybindings",)
 
 
-# ── #5 — per-source App picker filters unavailable ────────────────────────
+# ── #5, per-source App picker filters unavailable ────────────────────────
 
 
 @pytest.mark.asyncio
@@ -176,7 +176,7 @@ async def test_per_source_app_picker_filters_unavailable_apps(
 ) -> None:
     """Make Skim 'unavailable' and confirm the per-source App picker
     doesn't list it (matches the Preferences picker behaviour). System
-    stays — it's always available."""
+    stays: it's always available."""
     from fnd.config import CollectionConfig, Config, SourceConfig
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import SourceFormScreen
@@ -196,7 +196,7 @@ async def test_per_source_app_picker_filters_unavailable_apps(
         assert "system" in ids
 
 
-# ── #6 — isinstance check for SourceFormScreen ────────────────────────────
+# ── #6: isinstance check for SourceFormScreen ────────────────────────────
 
 
 def test_keybindings_context_hint_uses_isinstance_not_string_check() -> None:
@@ -214,7 +214,7 @@ def test_keybindings_context_hint_uses_isinstance_not_string_check() -> None:
     assert '"SourceFormScreen" in type(' not in src
 
 
-# ── #7 — keybinding row ids are unique ────────────────────────────────────
+# ── #7: keybinding row ids are unique ────────────────────────────────────
 
 
 def test_keybinding_row_ids_are_unique() -> None:
@@ -234,13 +234,13 @@ def test_keybinding_row_ids_are_unique() -> None:
     assert not dupes, dupes
 
 
-# ── #3 — user template validation at load ─────────────────────────────────
+# ── #3: user template validation at load ─────────────────────────────────
 
 
 def test_load_user_apps_rejects_unknown_placeholder_in_argv() -> None:
     """A typo'd placeholder in an argv template (e.g. {ptha}) must
     surface at config load as a clean ValueError naming the bad
-    placeholder — not at open time as an opaque KeyError."""
+    placeholder, not at open time as an opaque KeyError."""
     cfg = {
         "myapp": {
             "display_name": "MyApp",

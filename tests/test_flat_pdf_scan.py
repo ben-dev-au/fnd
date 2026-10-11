@@ -155,7 +155,7 @@ def test_concurrent_schedules_share_one_worker(monkeypatch: pytest.MonkeyPatch) 
 
 def test_cold_scan_failure_is_not_cached_as_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """A scan that raises before any success must not mint a fresh empty
-    result — that would show 'nothing to fix' and block retries for the TTL."""
+    result: that would show 'nothing to fix' and block retries for the TTL."""
     flat_pdf_scan.invalidate_all()
     calls = {"n": 0}
 
@@ -246,7 +246,7 @@ def test_texturise_flat_pushes_confirm_even_when_scan_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The Texturise-flat worker recomputes on a cold cache; if that scan
-    raises (transient index lock) it must not die silently — the update-all
+    raises (transient index lock) it must not die silently: the update-all
     confirm still has to be pushed."""
     import fnd.tui.menu as menu
 
@@ -279,7 +279,7 @@ async def test_indexer_modal_never_scans_on_ui_thread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mounting IndexerScreen and letting it tick must not call the
-    flat-PDF scan on the event-loop thread — that synchronous call was
+    flat-PDF scan on the event-loop thread: that synchronous call was
     the multi-second portal-open freeze. Any call must land on a worker
     thread."""
     from fnd.config import load
@@ -320,7 +320,7 @@ async def test_indexer_modal_never_scans_on_ui_thread(
         await _await_condition(pilot, lambda: False, timeout=0.3)
 
     assert loop_thread not in threads_seen, (
-        "flat-PDF scan ran on the event-loop thread — portal would freeze"
+        "flat-PDF scan ran on the event-loop thread: portal would freeze"
     )
 
 

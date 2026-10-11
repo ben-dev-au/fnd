@@ -11,7 +11,7 @@ Syncthing, and per-PDF extraction is multi-second so the one-time sha256 cost
 (~10ms for a 5MB file on M1 Max) is rounding error.
 
 History: directory was previously ``$XDG_CACHE_HOME/fnd/extraction/``;
-class previously ``ExtractionCache``. Both renamed for clarity — this
+class previously ``ExtractionCache``. Both renamed for clarity: this
 is fnd's PDF structure cache, not a generic extractor's. Old directory
 is migrated on first launch by :func:`_migrate_legacy_cache_dir` and
 ``ExtractionCache`` remains as a deprecated alias for one release.
@@ -90,9 +90,9 @@ def _safe_mtime(path: Path) -> float:
 # Windows rejects <>:"/\|?* in filenames; a cache key embeds an extractor
 # signature that can contain ``|`` (see fnd.extract.pdf.extractor_signature).
 # Percent-encode each illegal char there. This is:
-#   * reversible & collision-free — each illegal char maps to a unique token,
+#   * reversible & collision-free, each illegal char maps to a unique token,
 #     so distinct keys never alias (``a|b`` → ``a%7Cb`` ≠ ``a_b``);
-#   * idempotent — the ``%XX`` tokens contain no illegal char, so re-encoding a
+#   * idempotent; the ``%XX`` tokens contain no illegal char, so re-encoding a
 #     sanitised stem is a no-op, which the glob→entry_path round-trip relies on.
 # macOS/Linux keep the raw key so existing caches aren't orphaned.
 _WIN_ILLEGAL_STEM = str.maketrans(
@@ -127,13 +127,13 @@ class PdfStructureCache:
     Writes are atomic via ``os.replace`` from a tmpfile in the same
     directory, so a Ctrl+C during the write either leaves the
     previous entry intact (most likely) or no entry at all (worst
-    case the next extraction recomputes — still correct).
+    case the next extraction recomputes: still correct).
     """
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or default_cache_dir()
         # Per-instance counters for indexer-runner progress reporting.
-        # Not thread-safe — caller should snapshot before reading from
+        # Not thread-safe: caller should snapshot before reading from
         # another task.
         self.hits = 0
         self.misses = 0
@@ -165,7 +165,7 @@ class PdfStructureCache:
         and overwrites on next put().
 
         ``accept`` refuses an entry on what it holds and the engine recorded with
-        it — policy the cache has no business knowing. A refusal is a miss.
+        it: policy the cache has no business knowing. A refusal is a miss.
         """
         path = self.entry_path(key)
         if not path.exists():
@@ -206,7 +206,7 @@ class PdfStructureCache:
         shard_dir = self.root / content_sha256[:2]
         candidates = (
             # Guard stat(): an entry can be deleted (cache prune / manual
-            # cleanup) between glob and stat — missing → sorts oldest, the
+            # cleanup) between glob and stat: missing → sorts oldest, the
             # subsequent get() then misses cleanly rather than crashing.
             sorted(shard_dir.glob(f"{content_sha256}--*.json"), key=_safe_mtime, reverse=True)
             if shard_dir.exists()
@@ -254,11 +254,11 @@ class PdfStructureCache:
         )
 
     def prune_orphans(self, live_content_shas: set[str]) -> int:
-        """Delete entries whose content hash is NOT in ``live_content_shas``
-        — texturings for files no longer present under any collection's
-        sources (removed, renamed to different bytes, or de-configured).
-        Content-addressed, so the caller passes the shas of files that
-        still exist. Returns the number of entries removed."""
+        """Delete entries whose content hash is NOT in ``live_content_shas``:
+        texturings for files no longer present under any collection's
+                sources (removed, renamed to different bytes, or de-configured).
+                Content-addressed, so the caller passes the shas of files that
+                still exist. Returns the number of entries removed."""
         if not self.root.exists():
             return 0
         removed = 0
@@ -283,7 +283,7 @@ class PdfStructureCache:
         configs are left untouched so they correctly read as outdated.
 
         Idempotent. Returns ``(migrated, failed)``. The caller should only
-        mark the migration done (write its sentinel) when ``failed == 0`` —
+        mark the migration done (write its sentinel) when ``failed == 0``,
         otherwise a partial promotion would permanently misclassify the
         un-promoted current-engine entries as outdated. The signature strings
         are passed in so this module stays independent of
@@ -385,7 +385,7 @@ def _chunk_from_dict(d: dict[str, Any]) -> Chunk:
         body=d.get("body", ""),
         body_struct=blocks,
         body_md=d.get("body_md", ""),
-        # .get() not [] — the cache is durable and entries written before
+        # .get() not []: the cache is durable and entries written before
         # these fields existed must still load.
         created=d.get("created", 0),
         inode_changed=d.get("inode_changed", 0),

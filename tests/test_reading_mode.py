@@ -1,5 +1,5 @@
 """Reading mode hides the sidebar so the preview fills the full terminal
-width — a normal terminal text selection then covers only the preview
+width: a normal terminal text selection then covers only the preview
 (clean copy for text-to-speech), and it reads distraction-free. Toggling
 again restores the sidebar. Reading mode also owns mouse capture: it
 hands the terminal back its mouse on entry (so native selection / TTS
@@ -28,7 +28,7 @@ def _record_mouse_calls(app: FNDApp) -> Generator[list[str]]:
     (no delegation): the real hooks write mouse-tracking escape
     sequences and we don't want those side effects during tests.
     Patching just the two hooks (not swapping ``_driver`` wholesale)
-    keeps Textual's timer/bell code working — they read other driver
+    keeps Textual's timer/bell code working: they read other driver
     attrs like ``is_headless``."""
     calls: list[str] = []
     driver = app._driver  # type: ignore[attr-defined]
@@ -162,7 +162,7 @@ async def _step_after(pilot: Pilot[None], pane: VerticalScroll, press: Callable[
     """Lines the pane advances for one scroll-key press, from a resting top.
 
     Waits for the deferred target update rather than assuming one ``pause()``
-    covers it — under load it doesn't, and the delta then reads 0.
+    covers it: under load it doesn't, and the delta then reads 0.
     """
     from tests._pilot_wait import wait_until
 
@@ -182,7 +182,7 @@ async def _wait_preview_settled(app: FNDApp, pilot: Pilot[None], *, min_mounted:
 
     Not ``is_complete`` (``mounted >= total_chunks``): background fill does
     not reliably mount every chunk under headless test timing for large
-    docs, so a count-settled gate is the deterministic readiness signal —
+    docs, so a count-settled gate is the deterministic readiness signal,
     and waiting for the fill to settle keeps a later prune/toggle from
     racing an in-flight mount.
     """
@@ -252,7 +252,7 @@ async def test_reading_view_prunes_full_mount_to_window(
         await pilot.pause()
         mounted_after = len(active.mounted_indices)
         assert mounted_after < mounted_before, "reading view did not prune to a window"
-        # The same content is still on screen — prune compensated the scroll.
+        # The same content is still on screen: prune compensated the scroll.
         assert vis_before & visible_marks(), "visible content shifted/lost on prune"
 
 
@@ -375,7 +375,7 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
         await _rest_at_top(pilot, pane)
         normal_step = await _step_after(pilot, pane, pane.action_scroll_down)
         assert normal_step == 1, f"normal step should be 1 line, got {normal_step}"
-        # Reading view from the top: larger step (not pruned — few chunks).
+        # Reading view from the top: larger step (not pruned, few chunks).
         app.action_toggle_reading_mode()
         await _rest_at_top(pilot, pane)
         reading_step = await _step_after(pilot, pane, pane.action_scroll_down)
@@ -386,7 +386,7 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
 
 def test_apply_mouse_capture_is_safe_without_driver_hooks() -> None:
     """Helper must no-op when the driver lacks the private hooks (headless
-    test drivers, future driver changes) instead of raising — reading-mode
+    test drivers, future driver changes) instead of raising: reading-mode
     toggling stays usable even in such environments."""
     app = FNDApp(config=Config())
     app._driver = object()  # type: ignore[assignment]

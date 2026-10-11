@@ -7,7 +7,7 @@ into a pace matched to this machine and this corpus.
 
 Two departures from the indexer's calibrator, both deliberate:
 
-* **Median, not mean.** Navigation durations are heavy-tailed — one 8 s
+* **Median, not mean.** Navigation durations are heavy-tailed: one 8 s
   outlier (a cold monster PDF, a machine under load) would drag a
   five-sample mean far off the typical case and leave the bar crawling
   for every normal navigation afterwards.
@@ -37,7 +37,7 @@ from fnd import paths
 from fnd.tui.progress.model import OperationPlan
 
 # How many recent runs of an operation to summarise. Wider than the
-# indexer's 5 because these samples are individually noisy — a median over
+# indexer's 5 because these samples are individually noisy: a median over
 # 9 rides out a couple of outliers without going stale.
 _SAMPLE_SIZE = 9
 # Total records kept on disk across all operations.
@@ -71,7 +71,7 @@ def _usable(ms: float) -> bool:
 
     ``json.loads`` accepts ``Infinity`` and ``NaN``, and an infinite value
     passes a bare ``>=`` comparison. It then reaches ``OperationPlan.weights``,
-    where ``inf / inf`` is ``nan`` and the fraction stops advancing at all — a
+    where ``inf / inf`` is ``nan`` and the fraction stops advancing at all: a
     corrupt line in this file would freeze the bar rather than be ignored, and
     corrupt lines are already an expected case here.
     """
@@ -96,8 +96,8 @@ def _load() -> None:
                 continue
             # KeyError too: a line can be valid JSON and still lack "phases"
             # or "operation_id", and KeyError is a subclass of none of the
-            # others. It escaped _load, which runs from ProgressFacility.begin
-            # — and SearchController.run does not guard that call, so one
+            # others. It escaped _load, which runs from ProgressFacility.begin,
+            # and SearchController.run does not guard that call, so one
             # corrupt history line broke the next search. The module docstring
             # promises every parse path here is suppressed; it now is.
             with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError, KeyError):
@@ -133,7 +133,7 @@ def record(operation_id: str, observed_ms: Mapping[str, float]) -> None:
 
 def expected_ms(operation_id: str) -> dict[str, float]:
     """Median observed duration per phase over the recent runs of
-    ``operation_id``. Phases never observed are absent — the caller keeps
+    ``operation_id``. Phases never observed are absent: the caller keeps
     the plan's seed for those."""
     _load()
     recent = [r for r in _store.records if r.operation_id == operation_id][-_SAMPLE_SIZE:]

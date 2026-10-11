@@ -79,7 +79,7 @@ def test_no_offset_when_nothing_matches() -> None:
 
 
 def test_wrapped_prose_anchors_on_the_row_it_wraps_onto() -> None:
-    """One source line, many rendered rows — the case a newline count misses."""
+    """One source line, many rendered rows: the case a newline count misses."""
     words = [f"word{i:03d}" for i in range(300)]
     words[120] = "glimmer"
     block = cast(Widget, _Block(" ".join(words), 100, width=30))

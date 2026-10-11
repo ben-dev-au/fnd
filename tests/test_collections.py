@@ -19,7 +19,7 @@ def _make_md(p: Path, content: str) -> None:
 
 def _posix(path: str) -> str:
     """Stored path in forward-slash form so ``/``-based suffix/substring
-    assertions are separator-agnostic — the index stores native paths, which
+    assertions are separator-agnostic: the index stores native paths, which
     use backslashes on Windows."""
     return Path(path).as_posix()
 
@@ -32,13 +32,13 @@ def shaped_corpus(tmp_path: Path) -> Path:
 
         root/
           keep/
-            wanted.md       — body: "phrase keepable"
+            wanted.md, body: "phrase keepable"
           drafts/
-            skip-me.md      — body: "phrase keepable" (must be excluded)
+            skip-me.md, body: "phrase keepable" (must be excluded)
           archive/
-            old.md          — body: "phrase keepable" (must be excluded)
+            old.md, body: "phrase keepable" (must be excluded)
           .hidden/
-            hidden.md       — body: "phrase keepable" (must be excluded)
+            hidden.md, body: "phrase keepable" (must be excluded)
     """
     root = tmp_path / "root"
     _make_md(root / "keep" / "wanted.md", "# Wanted\nphrase keepable here.\n")

@@ -1,6 +1,6 @@
 """Structural markdown rendering in the preview pane.
 
-Replaces the legacy ``test_md_match_chunk_uses_per_line_layout`` —
+Replaces the legacy ``test_md_match_chunk_uses_per_line_layout``:
 matched markdown chunks now mount through ``FNDMarkdown`` (Textual's
 Markdown widget with highlight-aware block subclasses) so tables, code
 fences, lists, and blockquotes render structurally even when they
@@ -30,7 +30,7 @@ from tests._pilot_wait import settle, wait_until
 
 
 async def _settle(pilot) -> None:  # type: ignore[no-untyped-def]
-    """Wait until every mounted FNDMarkdown has finished BUILDING — ``build_done``,
+    """Wait until every mounted FNDMarkdown has finished BUILDING: ``build_done``,
     not existence: the block tree these tests assert on is populated
     asynchronously, so the widget is queryable a tick before its paragraphs."""
 
@@ -103,7 +103,7 @@ def paragraph_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 @pytest.mark.asyncio
 async def test_preview_md_match_only_highlights_term(cfg: Config, paragraph_index: Path) -> None:
     """A query that matches one word in a paragraph applies a span over
-    exactly that word's character range — not the whole paragraph."""
+    exactly that word's character range, not the whole paragraph."""
     app = FNDApp(
         index_dir=paragraph_index,
         config=cfg,
@@ -164,7 +164,7 @@ async def test_preview_md_renders_table_with_cell_highlight(cfg: Config, table_i
     MarkdownTH/MarkdownTD widgets' _content (with our spans already
     applied) into the MarkdownTableContent grid, so we read the spans
     off ``_headers`` / ``_rows`` directly rather than querying TH/TD
-    widgets — the latter aren't mounted as visible widgets, only
+    widgets: the latter aren't mounted as visible widgets, only
     referenced as Content sources."""
     app = FNDApp(
         index_dir=table_index,
@@ -233,7 +233,7 @@ def fence_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 @pytest.mark.asyncio
 async def test_preview_md_fence_highlights_inside_code(cfg: Config, fence_index: Path) -> None:
     """Query terms inside a fenced code block DO receive the highlight
-    overlay (``FNDMarkdownFence``), on top of the syntax colouring — so a
+    overlay (``FNDMarkdownFence``), on top of the syntax colouring, so a
     match in code is as findable as one in prose.
     """
     app = FNDApp(
@@ -339,7 +339,7 @@ def multi_para_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.fixture
 def docx_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A docx with a heading + bold + a table — exercises the docx
+    """A docx with a heading + bold + a table: exercises the docx
     extractor's body_md path end-to-end."""
     from docx import Document
 
@@ -363,7 +363,7 @@ def docx_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.fixture
 def pptx_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """Single-slide deck with a title, bulleted body, and a table —
+    """Single-slide deck with a title, bulleted body, and a table:
     exercises the pptx extractor's body_md path end-to-end."""
     from pptx import Presentation
     from pptx.util import Inches
@@ -426,7 +426,7 @@ async def test_pptx_preview_routes_through_fnd_markdown(cfg: Config, pptx_corpus
 @pytest.mark.asyncio
 async def test_docx_preview_routes_through_fnd_markdown(cfg: Config, docx_corpus: Path) -> None:
     """A docx chunk's preview mounts an FNDMarkdown widget and
-    renders the embedded table — proves the renderer dispatch wires
+    renders the embedded table: proves the renderer dispatch wires
     the docx kind through the new path."""
     from textual.widgets._markdown import MarkdownTable
 
@@ -452,8 +452,8 @@ async def test_update_resets_per_render_match_state() -> None:
     document-scoped match state: clear ``build_done`` (so a waiter can't
     return on the previous render) and drop ``first_match_block`` (so
     match-nav doesn't stay anchored on the old document). Both resets
-    happen at the top of ``update()`` — synchronously, before the rebuild
-    completes — so the reset is observable the moment the call returns.
+    happen at the top of ``update()`` (synchronously, before the rebuild
+    completes) so the reset is observable the moment the call returns.
     """
     from textual.app import App, ComposeResult
 
@@ -484,7 +484,7 @@ async def test_update_resets_per_render_match_state() -> None:
 @pytest.mark.asyncio
 async def test_update_superseded_future_does_not_set_build_done() -> None:
     """A superseded update's future completing (or being cancelled) must
-    NOT set ``build_done`` — only the latest update's completion may, or a
+    NOT set ``build_done``: only the latest update's completion may, or a
     waiter wakes on a stale/incomplete render. ``AwaitComplete._future`` is
     a fresh ``gather`` per call and fires its done-callbacks on cancellation
     too, so a rapid re-update would otherwise let the old future's callback
@@ -504,7 +504,7 @@ async def test_update_superseded_future_does_not_set_build_done() -> None:
         aw_first = md.update("# A\n\nfirst render alpha.\n")
         md.update("# B\n\nsecond render beta.\n")
         assert not md.build_done.is_set()
-        # Fire the stale (first) update's done-callback directly — without
+        # Fire the stale (first) update's done-callback directly, without
         # pumping the loop, so the legitimate second render stays pending.
         # The guard must keep build_done clear (a newer render is current).
         stale_future = aw_first._future  # type: ignore[attr-defined]

@@ -4,10 +4,10 @@ These tests assert the user-visible contracts the redesign promised:
 
 * The active widget for a PDF is a LineBufferPreview, not a tree of
   per-line Static widgets. Steady-state DOM under the preview pane is
-  O(1) widgets per file regardless of file size — the whole reason for
+  O(1) widgets per file regardless of file size: the whole reason for
   the redesign.
 * The buffer's own scrollbar (MatchAwareScrollBar) is fed line-precise
-  match positions automatically on ``set_file_view`` — the host doesn't
+  match positions automatically on ``set_file_view``: the host doesn't
   call ``set_match_map`` for flat files.
 * Cache hits flip ``-hidden`` instead of remounting (no rebuild cost).
 * Switching to a markdown file falls back to the structural pipeline
@@ -55,7 +55,7 @@ def _force_flat_for_pdf_tests(  # pyright: ignore[reportUnusedFunction]
     renderer. Tests asserting the flat-buffer invariant set
     _FND_FORCE_FLAT=1 via this fixture. Tests asserting MD/structural
     paths are unaffected (the env var only forces *PDFs/TXT* to flat;
-    actually it forces *all* files to flat — so we scope this fixture
+    actually it forces *all* files to flat, so we scope this fixture
     to tests whose name has "pdf" in it).
     """
     if (
@@ -74,7 +74,7 @@ def pdf_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.fixture
 def multi_match_pdf_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A multi-page PDF where ``zebra`` appears on every page — gives
+    """A multi-page PDF where ``zebra`` appears on every page: gives
     the tree multiple section hits under one file so cursor-between-
     sections tests have something to move between."""
     import pymupdf  # type: ignore[import-not-found]
@@ -187,7 +187,7 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
     """User reported: 'Selecting different matches within a file no
     longer displays those matches in the preview, only the first
     match'. Cursor moves between section hits under the same file
-    must call ``scroll_to_chunk`` with each new chunk_seq — testing
+    must call ``scroll_to_chunk`` with each new chunk_seq: testing
     that directly via a spy (independent of fixture viewport size /
     whether the buffer is tall enough to actually scroll)."""
     app = FNDApp(index_dir=multi_match_pdf_index, initial_query="zebra")
@@ -203,7 +203,7 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
         await safe_pause(pilot)
         buf = app._flat.active_buffer
         assert buf is not None
-        # The file should have multiple section children — bail clearly
+        # The file should have multiple section children: bail clearly
         # if the fixture didn't produce them.
         section_count = sum(
             1
@@ -245,7 +245,7 @@ async def test_only_one_flat_buffer_is_visible_at_a_time(
     Root cause: LineBufferPreview had no
     ``.-hidden`` CSS rule, so the ``-hidden`` class
     ``_activate_flat_buffer`` adds didn't actually remove non-active
-    buffers from the layout — they stacked in the pane, each with
+    buffers from the layout; they stacked in the pane, each with
     their own scrollbar. Pin the invariant: at most ONE buffer in the
     pane is visible (display != none) at any time."""
     app = FNDApp(index_dir=multi_match_pdf_index, initial_query="zebra")
@@ -339,7 +339,7 @@ async def test_switching_md_to_pdf_hides_structural_container(
 
 @pytest.mark.asyncio
 async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
-    """Re-cursoring back onto the same PDF doesn't remount — the
+    """Re-cursoring back onto the same PDF doesn't remount: the
     cached LineBufferPreview is flipped visible again."""
     app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
@@ -368,7 +368,7 @@ async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_md_preview_keeps_structural_path(cfg: Config, md_index: Path) -> None:
-    """Markdown files still mount the PreviewContainer — the structural
+    """Markdown files still mount the PreviewContainer: the structural
     path is unchanged by the flat-buffer wire-in."""
     app = FNDApp(index_dir=md_index, config=cfg, initial_query="susy")
     async with app.run_test() as pilot:

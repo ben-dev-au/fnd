@@ -1,4 +1,4 @@
-"""Switching results must refresh the ▲/▼ view markers immediately — even for
+"""Switching results must refresh the ▲/▼ view markers immediately, even for
 a warm nav whose reveal doesn't move the scroll. The bug: markers were only
 re-measured on scroll, so moving from a multi-view result to a single-view one
 left the old ▼ lingering (and a multi-view result sometimes showed nothing
@@ -130,7 +130,7 @@ async def test_the_markers_never_describe_a_layout_that_is_gone(
     cfg: Config, two_result_index: Path
 ) -> None:
     """The counts are a cache of a LAYOUT read, refreshed only by scroll and
-    mount events — so a reflow landing after the last scroll can strand it.
+    mount events, so a reflow landing after the last scroll can strand it.
 
     Asserted as the invariant rather than as a particular arrow: whatever the
     border says must be what a fresh measurement of the current viewport says.

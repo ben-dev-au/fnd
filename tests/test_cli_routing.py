@@ -97,7 +97,7 @@ class TestEndToEndRouting:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # `fnd buffer overflow` (no quotes) collects both positionals and
-        # joins them — matches the natural English shape without forcing
+        # joins them: matches the natural English shape without forcing
         # the user to quote.
         mock_app = MagicMock()
         monkeypatch.setattr("fnd.tui.FNDApp", mock_app)

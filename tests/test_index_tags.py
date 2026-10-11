@@ -122,7 +122,7 @@ def test_build_index_expands_nested_tags(tmp_path: Path) -> None:
 
 
 def test_build_index_from_config_writes_tags(tmp_path: Path) -> None:
-    """`fnd collection reindex` goes through build_index_from_config — a third
+    """`fnd collection reindex` goes through build_index_from_config: a third
     index path. It must write tags too, or a CLI reindex silently produces a
     tagless collection."""
     from fnd.config import CollectionConfig, SourceConfig

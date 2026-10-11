@@ -2,11 +2,11 @@
 
 Three new pieces land here:
 
-* :func:`fnd.fusion.rrf_fuse` — pure Reciprocal Rank Fusion of ranked Hit
+* :func:`fnd.fusion.rrf_fuse`, pure Reciprocal Rank Fusion of ranked Hit
   lists with per-source weights and a small rank-1/2/3 position bonus.
-* :func:`fnd.fusion.auto_subqueries` — derive sub-queries from a typed user
+* :func:`fnd.fusion.auto_subqueries`, derive sub-queries from a typed user
   query (phrase + lex + optional synonym).
-* :func:`fnd.fusion.parse_multi_input` — parse the ``:multi`` typed
+* :func:`fnd.fusion.parse_multi_input`, parse the ``:multi`` typed
   multi-line syntax (``lex:`` / ``phrase:`` / ``syn:``).
 
 Plus :func:`fnd.fusion.fusion_search` orchestrates the above against an
@@ -73,7 +73,7 @@ def test_rrf_fuse_dedupes_across_rankings() -> None:
     fused = rrf_fuse([r1, r2], weights=[1.0, 1.0], k=60)
     ids = [h.parent_id for h in fused]
     # Each id once; relative order: a and b have symmetric contributions, so
-    # tied — but one of them must come first deterministically.
+    # tied, but one of them must come first deterministically.
     assert sorted(ids) == ["a", "b"]
     assert len(fused) == 2
 
@@ -97,7 +97,7 @@ def test_equal_scores_in_a_pass_share_a_rank() -> None:
 
 def test_rrf_fuse_weight_dominance() -> None:
     """A doc only in the heavily-weighted sub-query must outrank a doc only
-    in the low-weight sub-query — the weight is the multiplier on each
+    in the low-weight sub-query: the weight is the multiplier on each
     sub-query's RRF contribution."""
     heavy = [_hit("h")]
     light = [_hit("l")]
@@ -152,8 +152,8 @@ def test_auto_subqueries_multiword_query_emits_phrase_and_lex() -> None:
 
 
 def test_auto_subqueries_single_word_skips_phrase() -> None:
-    """A single-word query has no meaningful phrase pass — phrase("foo") ==
-    term("foo") — so we only emit the lex pass."""
+    """A single-word query has no meaningful phrase pass: phrase("foo") ==
+    term("foo"), so we only emit the lex pass."""
     subs = auto_subqueries("foo", synonyms=None)
     sources = [s.source for s in subs]
     assert sources == ["lex"]
@@ -161,7 +161,7 @@ def test_auto_subqueries_single_word_skips_phrase() -> None:
 
 def test_auto_subqueries_user_supplied_quotes_skip_auto_phrase() -> None:
     """When the user already wraps their query in quotes, the lex pass routes
-    that through Tantivy as a PhraseQuery on its own — adding an auto-phrase
+    that through Tantivy as a PhraseQuery on its own: adding an auto-phrase
     pass would double-wrap (``""man in the middle""``) and crash the parser.
     Skip the auto-phrase pass in that case; the lex pass already carries the
     phrase semantics the user asked for.
@@ -241,7 +241,7 @@ def test_auto_subqueries_quoted_query_skips_synonym_pass() -> None:
 
 
 def test_auto_subqueries_plain_query_still_expands_synonyms() -> None:
-    """The guard must not suppress the syn pass for a plain bag-of-words query —
+    """The guard must not suppress the syn pass for a plain bag-of-words query:
     that is the whole point of the synonym feature."""
     table = SynonymTable.from_groups([["mfa", "multi-factor authentication"]])
     subs = auto_subqueries("reset mfa", synonyms=table)
@@ -267,7 +267,7 @@ def test_parse_multi_input_basic() -> None:
 
 
 def test_parse_multi_input_uses_default_weights_per_source() -> None:
-    """`lex:` defaults to weight 1.0, `phrase:` to 2.0, `syn:` to 0.6 —
+    """`lex:` defaults to weight 1.0, `phrase:` to 2.0, `syn:` to 0.6,
     matching the auto-mode weights."""
     result = parse_multi_input('lex: a\nphrase: "b c"\nsyn: a', synonyms=None)
     by_source = {s.source: s for s in result.subqueries}
@@ -304,10 +304,10 @@ def test_parse_multi_input_skips_blank_lines_and_unknown_prefixes() -> None:
 def fusion_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
     """Three docs that exercise phrase / lex / syn distinction.
 
-    * adjacent.md — both query terms next to each other (phrase pass wins)
-    * scattered.md — both terms in the doc but not adjacent (lex matches,
+    * adjacent.md: both query terms next to each other (phrase pass wins)
+    * scattered.md, both terms in the doc but not adjacent (lex matches,
       phrase does not)
-    * synonym.md — only the long-form synonym appears (syn pass surfaces)
+    * synonym.md: only the long-form synonym appears (syn pass surfaces)
     """
     root = tmp_path / "docs"
     root.mkdir(parents=True)
@@ -328,7 +328,7 @@ def fusion_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def test_fusion_search_returns_phrase_match_first(fusion_corpus: Path) -> None:
-    """The doc with adjacent terms must rank above the scattered one — the
+    """The doc with adjacent terms must rank above the scattered one: the
     phrase sub-query (weight 2.0) lifts it past the lex-only contribution."""
     s = Searcher(index_dir=fusion_corpus)
     hits = fusion_search(s, query="susy breaking", limit=10)
@@ -367,7 +367,7 @@ def test_fusion_search_subqueries_override_auto_derivation(
     fusion_corpus: Path,
 ) -> None:
     """Passing explicit sub-queries (e.g. from `:multi`) bypasses
-    auto_subqueries — only the supplied list runs.
+    auto_subqueries: only the supplied list runs.
 
     With a single ``lex`` sub-query, no hit can be primarily attributed to
     the synonym or phrase passes (those weren't issued).
@@ -406,7 +406,7 @@ def test_fusion_search_pass_index_2_for_synonym_primary(
 
 def test_fusion_search_degrades_malformed_subquery(fusion_corpus: Path) -> None:
     """A malformed sub-query must degrade to an empty ranking, never abort the
-    whole fused search — the other sub-queries still return their hits."""
+    whole fused search: the other sub-queries still return their hits."""
     s = Searcher(index_dir=fusion_corpus)
     subs = [
         SubQuery(query="susy breaking", weight=1.0, source="lex"),

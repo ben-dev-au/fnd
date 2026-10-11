@@ -91,7 +91,7 @@ ORDINALS: dict[str, str] = {
 def number_synonym_groups() -> list[list[str]]:
     """Bidirectional ``[digit, word]`` groups for every cardinal and ordinal.
 
-    Digit-first so ``expand`` renders ``(4 OR four)`` — the original surface
+    Digit-first so ``expand`` renders ``(4 OR four)``: the original surface
     form leads regardless, this just fixes the alternative's order."""
     return [[digit, word] for word, digit in (*CARDINALS.items(), *ORDINALS.items())]
 

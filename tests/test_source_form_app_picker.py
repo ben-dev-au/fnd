@@ -22,7 +22,7 @@ from fnd.tui.settings_screen import SourceFormScreen
 
 
 class _FakeSettingsList:
-    """Stand-in for the form's SettingsList — only refresh_values is
+    """Stand-in for the form's SettingsList: only refresh_values is
     called by the actions we exercise here."""
 
     def __init__(self) -> None:
@@ -118,7 +118,7 @@ def test_set_app_obsidian_leaves_vault_empty_when_no_vault_found(
 # save-close round-trip were collapsed into integration coverage:
 # the registry contents are already pinned by tests/test_apps_registry.py,
 # and the SourceFormScreen's persistence path is implicitly exercised
-# by tests/test_clone_source.py (every field — app + app_params
-# included — round-trips through write_collection + load). The form-
+# by tests/test_clone_source.py (every field, app + app_params
+# included, round-trips through write_collection + load). The form-
 # specific behaviour above (vault auto-detect, set/clear of the app
 # override) is what couldn't be reached via lower-level tests.

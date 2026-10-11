@@ -2,7 +2,7 @@
 
 The actual TUI flow (Ctrl+D → DeleteSourceScreen modal → confirm)
 needs Pilot for the keystroke path; this file pins the persistence
-side — invoking the same write_collection round-trip the modal does
+side: invoking the same write_collection round-trip the modal does
 and asserting the source is gone.
 """
 

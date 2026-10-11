@@ -41,7 +41,7 @@ def main() -> int:
             f"\n{len(bad)} user-facing dependency specifier(s) are not pinned.\n"
             "uv.lock reaches no installer, so these specifiers are what every user\n"
             "resolves. A widened range ships versions CI never ran.\n"
-            "Dependabot widens by default — correct the specifier before merging."
+            "Dependabot widens by default: correct the specifier before merging."
         )
         return 1
 

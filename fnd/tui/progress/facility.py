@@ -9,7 +9,7 @@ of that:
   feedback belongs to the keypress that caused it.
 * **Minimum visible duration.** Work that finishes inside
   :data:`_MIN_VISIBLE_S` still shows a complete fill instead of a flash.
-  Fast work is not hidden — a load the user can *see* complete is what
+  Fast work is not hidden: a load the user can *see* complete is what
   makes the app feel fast.
 * **Completion is always painted.** A session eases to 1.0 and holds
   before clearing, so the line never vanishes part-filled.
@@ -19,7 +19,7 @@ of that:
 
 Ownership: a session can only be closed by whoever holds it. The old
 facility closed whatever happened to be active, so any stale teardown
-path could retire a newer operation's bar — the "disappears after half a
+path could retire a newer operation's bar: the "disappears after half a
 second" failure.
 
 **Arbitration.** One line, two classes of work (see
@@ -53,7 +53,7 @@ _TICK_S = 1 / 20
 _MIN_VISIBLE_S = 0.40
 # How long the full line is held before it clears. This is the "done" the
 # user reads, so it has to survive a loop that may only tick a few times a
-# second — hence a hold rather than an animation.
+# second, hence a hold rather than an animation.
 _COMPLETE_HOLD_S = 0.35
 # A new session starting within this long of the last one ending inherits
 # its fill (see _HANDOFF_FLOOR_CAP).
@@ -65,14 +65,14 @@ _HANDOFF_FLOOR_CAP = 0.5
 # How long the line may stay up without a SUBSTANTIVE update before it is
 # retired: a phase change, a change in reported units, or a change of label.
 #
-# Deliberately not "since the last begin" — the paint check re-enters
+# Deliberately not "since the last begin": the paint check re-enters
 # ``render_full_doc`` on a failed reveal and a burst of navigation supersedes
 # constantly, so a per-session budget handed a stuck line a fresh one every
 # time and it outlived any cap.
 #
 # And deliberately not "since the fill last moved". The eased fraction creeps
 # for as long as a phase runs, so a stuck operation drifts a cell every second
-# or two indefinitely — movement that comes from the model guessing, not from
+# or two indefinitely: movement that comes from the model guessing, not from
 # anything actually happening. Only real events count.
 #
 # Set well clear of the measured phase durations (the slowest observed is a
@@ -83,18 +83,18 @@ _STALL_CAP_S = 10.0
 # ends the session on ``task.done()``, a real asyncio result, where the
 # preview tracker can only infer completion from heuristics. So this is a
 # pure safety net rather than the normal path, and it is set beyond any
-# plausible quiet stretch — a source walk over an evicted cloud vault can
+# plausible quiet stretch: a source walk over an evicted cloud vault can
 # genuinely report nothing for minutes.
 _AMBIENT_STALL_CAP_S = 600.0
 # An active session paints at most this much. A full line is reserved for the
-# completion animation, so "full" always means finished — and a stall while
+# completion animation, so "full" always means finished, and a stall while
 # working is visibly distinct from a stall in the clear.
 _ACTIVE_CEILING = 0.97
 # Independent one-shot backstop, on its own timer, so a fault in the tick loop
 # cannot leave a line on screen. Measured from the same instant as the stall
 # cap, so it MUST sit clearly above it: at 8 s against a 10 s stall cap it beat
 # the tick loop to every retirement, which made the stall path dead code and
-# routed every case through _force_clear — a superseded retirement, so the
+# routed every case through _force_clear; a superseded retirement, so the
 # operation lost both its completion animation and its calibration sample.
 # The tick loop is the normal path; this only covers a tick loop that is gone.
 _WATCHDOG_MARGIN_S = 5.0
@@ -118,8 +118,8 @@ class ProgressTracker(Protocol):
     """A subsystem's adapter onto the line.
 
     This is the one seam every subsystem shares. A tracker knows how to
-    read its own pipeline and translate whatever it counts — rendered
-    lines, mounted chunks, indexed files — into the plan's phases and a
+    read its own pipeline and translate whatever it counts (rendered
+    lines, mounted chunks, indexed files) into the plan's phases and a
     ``report(done, total)``; the facility knows nothing about any of them.
     That translation at the boundary is what lets a single line serve
     operations with no unit in common.
@@ -218,7 +218,7 @@ class ProgressSession:
         self._facility.render(self)
 
     def set_label(self, label: str) -> None:
-        """Set the trailing text. Empty clears it — the line carries no
+        """Set the trailing text. Empty clears it: the line carries no
         label unless it says something the user does not already know."""
         if self._closed or label == self._label:
             return
@@ -226,7 +226,7 @@ class ProgressSession:
         self._touch()
 
     def close(self) -> None:
-        """Finish this operation. A no-op if a newer session took over —
+        """Finish this operation. A no-op if a newer session took over:
         only the holder can retire its own bar."""
         if self._closed:
             return
@@ -238,7 +238,7 @@ class ProgressSession:
 
         Closing paints the line to full and records the run for calibration,
         which is right for work that completed and a lie about work the user
-        stopped — a cancelled warm filled its bar to 100% next to a toast
+        stopped: a cancelled warm filled its bar to 100% next to a toast
         saying it had been stopped.
         """
         if self._closed:
@@ -323,7 +323,7 @@ class ProgressFacility:
 
         Interactive first: an ambient run keeps ticking underneath but must
         never paint over the operation the user is waiting on. Nothing is
-        displayed during a completion hold — that full line has been earned
+        displayed during a completion hold: that full line has been earned
         by the session that just finished.
         """
         if self._completing_at is not None:
@@ -338,7 +338,7 @@ class ProgressFacility:
         """Whether ``session`` is the one the line is speaking for.
 
         Asked by slot rather than by :meth:`displayed`, because it is asked
-        during retirement — and ``close()`` sets the closed flag before the
+        during retirement, and ``close()`` sets the closed flag before the
         facility has cleared the slot, so ``displayed`` would already have
         moved on. That made every completing session look undisplayed, and
         the line stopped painting its own completion.
@@ -421,7 +421,7 @@ class ProgressFacility:
 
         Nothing in here may raise. Textual's ``Timer._tick`` hands a callback
         exception to ``App._handle_exception``, which takes the whole app
-        down — so an arithmetic slip in a progress bar would kill the session
+        down, so an arithmetic slip in a progress bar would kill the session
         the progress bar exists to serve.
         """
         try:
@@ -488,7 +488,7 @@ class ProgressFacility:
     def _on_close(self, session: ProgressSession) -> None:
         if session is not self._active and session is not self._ambient:
             # A stale holder retiring itself. Its bar already belongs to
-            # someone else — leave it alone.
+            # someone else: leave it alone.
             return
         self._retire(session, superseded=False)
 
@@ -511,14 +511,14 @@ class ProgressFacility:
         now = self._clock()
         if superseded:
             # Abandoned work teaches nothing. Recording its finished phases
-            # looked harmless — they are real measurements — but it feeds a
+            # looked harmless (they are real measurements) but it feeds a
             # loop: an operation that gets stuck and re-dispatched writes long
             # durations, which raise the plan's expected total, which raises
             # the visibility cap, which lets the next stuck one stay up longer.
             # Only operations that actually completed get to set the pace.
             #
             # The successor takes the line over immediately, so there is no
-            # completion animation — and it inherits the fill so a held-down
+            # completion animation, and it inherits the fill so a held-down
             # cursor doesn't saw the bar back to zero every keypress.
             if session.kind is OperationKind.INTERACTIVE:
                 self._last_end = now
@@ -542,7 +542,7 @@ class ProgressFacility:
         self._completing_ambient = session.kind is OperationKind.AMBIENT
         self._completing_shown_at = session._shown_at
         # Paint the full line NOW, synchronously, rather than easing to it over
-        # the next few ticks. The ease depended on the event loop being free —
+        # the next few ticks. The ease depended on the event loop being free,
         # and this loop is saturated during exactly the operations the line
         # reports on. Measured: at a 300ms tick gap (routine during a cold
         # navigation, where the loop blocks for 400-1274ms at a stretch) the
@@ -568,7 +568,7 @@ class ProgressFacility:
         if session is None or session is not self.displayed():
             return
         # An ACTIVE session never paints a full line. A full line means "this
-        # finished", and only the completion animation is entitled to say so —
+        # finished", and only the completion animation is entitled to say so,
         # otherwise a session whose phases have all eased out looks done while
         # it is still working, and a stall there is indistinguishable from a
         # stall in the clear.
@@ -584,8 +584,8 @@ class ProgressFacility:
     def _render_completing(self, now: float) -> None:
         """Hold the full line, then clear it.
 
-        The fill is already at 1.0 — painted synchronously when the session
-        retired — so this only decides WHEN to put it away. Holding until both
+        The fill is already at 1.0, painted synchronously when the session
+        retired, so this only decides WHEN to put it away. Holding until both
         budgets are spent is what turns a 40 ms cache hit from a flash into a
         legible "done", which is the point: fast work the user can see finish
         is what makes the app feel fast.
@@ -631,7 +631,7 @@ class ProgressFacility:
 
     def note_progress(self, session: ProgressSession | None = None) -> float:
         """Something real happened: a phase advanced, units changed, or the
-        label changed. That is what earns the line more time — the eased fill
+        label changed. That is what earns the line more time: the eased fill
         moving on its own does not. Returns the timestamp to record."""
         now = self._clock()
         kind = session.kind if session is not None else OperationKind.INTERACTIVE
@@ -646,7 +646,7 @@ class ProgressFacility:
         # Only touch the widget when the CELLS would differ. ``fraction`` is a
         # Textual reactive, and the eased value changes by a fraction of a
         # percent on every tick, so assigning it unconditionally repainted the
-        # row 20 times a second to draw the identical thing — event-loop work
+        # row 20 times a second to draw the identical thing: event-loop work
         # during exactly the navigation this line exists to make feel smoother.
         # Quantise against the width actually on screen.
         width = max(1, widget.content_size.width)
@@ -680,7 +680,7 @@ class ProgressFacility:
         """Whether the stored timer is still running.
 
         ``Timer.stop()`` cancels its task and drops the reference, so ``_task``
-        is the liveness signal. (``_active`` is NOT — that is the pause flag,
+        is the liveness signal. (``_active`` is NOT: that is the pause flag,
         and ``stop`` actually *sets* it.) Absent the attribute, assume alive:
         the watchdog is the guarantee here, not this check.
         """
@@ -689,7 +689,7 @@ class ProgressFacility:
             return False
         if not hasattr(timer, "_task"):
             # A Textual upgrade renamed or removed the attribute. Degrade to
-            # "assume alive" — the watchdog is the guarantee — but say so once,
+            # "assume alive" (the watchdog is the guarantee) but say so once,
             # because the degraded path is silent otherwise.
             if not self._warned_timer_probe:
                 self._warned_timer_probe = True
@@ -710,7 +710,7 @@ class ProgressFacility:
         Everything else here runs on the repeating timer, so any fault in that
         timer strands a visible line. This is a separate one-shot timer whose
         only job is to put the line away. Re-armed when the line MOVES, not
-        when a session begins — see the note on _STALL_CAP_S. Its delay tracks
+        when a session begins: see the note on _STALL_CAP_S. Its delay tracks
         the stall cap of whichever class of work is on the line, so an ambient
         run's much looser budget is not cut short by a backstop meant for a
         navigation.
@@ -732,7 +732,7 @@ class ProgressFacility:
         self._watchdog = None
         widget = self._widget()
         if widget is None:
-            # The line cannot be resolved right now — a modal screen on top of
+            # The line cannot be resolved right now: a modal screen on top of
             # the stack is the expected case, and an indexing run deliberately
             # sits behind one. Dropping the backstop here would retire it for
             # the rest of the session, because only real progress re-arms it
@@ -747,11 +747,11 @@ class ProgressFacility:
         if session is not None:
             # Retire it as COMPLETED, not superseded: a superseded retirement
             # skips the completion entirely, so the line would vanish
-            # part-filled — the exact symptom this whole backstop exists to
+            # part-filled: the exact symptom this whole backstop exists to
             # prevent. We have given up, but the user reads a line that
             # resolves; the diagnostic above records the truth.
             session.close()
-        # close() paints the full line and leaves the hold to the tick loop —
+        # close() paints the full line and leaves the hold to the tick loop,
         # but this backstop exists precisely for the case where that loop is
         # gone, so schedule the clear independently rather than trust it.
         with contextlib.suppress(Exception):

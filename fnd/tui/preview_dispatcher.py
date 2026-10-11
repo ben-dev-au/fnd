@@ -2,12 +2,12 @@
 
 The redesign keeps two parallel renderers:
 
-* **Flat buffer** (:class:`fnd.tui.line_buffer.LineBufferPreview`) —
+* **Flat buffer** (:class:`fnd.tui.line_buffer.LineBufferPreview`),
   one ScrollView per file, Strips cached per visual line. Used for
   ``.pdf`` and ``.txt`` files where there's no structure to render
   beyond plain text + match highlights. The win is that the post-load
   DOM is O(1) widgets per file regardless of file size.
-* **Structural** (per-block Markdown widget tree) — used for ``.md``,
+* **Structural** (per-block Markdown widget tree): used for ``.md``,
   ``.docx``, and ``.pptx``. These files index a markdown serialisation
   of their structure; the existing pipeline renders that through
   Textual's Markdown widget which honours headings, lists, fences,
@@ -31,7 +31,7 @@ class PreviewBody(Protocol):
 
     Both :class:`fnd.query.FileChunk` (what the preview mounts) and
     :class:`fnd.query.Hit` (what the results pane lists) satisfy it, so a
-    caller holding either can ask which text the user will end up reading —
+    caller holding either can ask which text the user will end up reading,
     see :mod:`fnd.tui.match_evidence`. Read-only properties, since both
     implementations are frozen dataclasses.
     """
@@ -47,7 +47,7 @@ class PreviewBody(Protocol):
 # Kinds whose extractor can emit a Markdown serialisation in ``body_md``;
 # these route through the structural Markdown widget when the chunk actually
 # has ``body_md`` populated (see the ``bool(c.body_md)`` guard below). Derived
-# from the central registry — PDF is included because the optional
+# from the central registry: PDF is included because the optional
 # ``pdf-structure`` extra populates ``body_md`` on PDF chunks; without it
 # ``body_md`` stays empty and the predicate keeps PDFs on the flat path.
 _MARKDOWN_RENDERED_KINDS: frozenset[str] = MARKDOWN_RENDERED_KINDS
@@ -57,7 +57,7 @@ PreviewMode = Literal["flat", "structural"]
 
 # Largest chunk, in markdown characters, that the structural renderer will build.
 # Measured on a real 727-chunk PDF: a 120,123-character chunk took 4,424ms to
-# build into 7,184 rendered rows, against a 5.3ms median — a multi-second freeze,
+# build into 7,184 rendered rows, against a 5.3ms median; a multi-second freeze,
 # observed live at 8.4s, because Textual builds the widget on the event loop.
 # Every ordinary chunk in that file was under 6,000 characters, so this sits an
 # order of magnitude clear of normal content.
@@ -67,13 +67,13 @@ PreviewMode = Literal["flat", "structural"]
 # applies only where there is no match, and the chunk you navigate to has one),
 # and mounting those is superlinear. Measured head-to-head on a synthetic
 # 120,036-character table, 1,596 lines: flat 224ms to render plus 725ms to mount
-# and settle, against 979ms structural — near parity at that shape. The win on
+# and settle, against 979ms structural, near parity at that shape. The win on
 # the real chunk comes from its structural cost being far above linear (4,424ms),
 # not from the flat path being fast. Do not raise this cap expecting the flat
 # path to absorb it for free.
 #
 # Lives here rather than in preview.tuning because this module is what every
-# path asks and it sits BELOW the preview package — importing tuning from here
+# path asks and it sits BELOW the preview package: importing tuning from here
 # is an import cycle.
 MARKDOWN_MAX_CHARS = 40_000
 
@@ -90,7 +90,7 @@ def uses_markdown_renderer(c: PreviewBody) -> bool:
     """
     if c.kind not in _MARKDOWN_RENDERED_KINDS or not c.body_md:
         return False
-    # And it must be small enough to BUILD — see MARKDOWN_MAX_CHARS above for
+    # And it must be small enough to BUILD: see MARKDOWN_MAX_CHARS above for
     # the measurements and for what the flat path over the cap actually costs.
     # What is lost over the cap is the table structure of something that was
     # never going to be usable as a 7,184-row widget anyway. Gating here rather

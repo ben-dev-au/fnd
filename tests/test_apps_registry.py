@@ -8,7 +8,7 @@ These tests pin the contract for ``fnd.apps``:
   the requested kind.
 * User-defined ``[apps.<id>]`` tables build runnable handlers via pure
   template substitution; mutually-exclusive ``argv`` / ``url`` is enforced.
-* No template handler ever spawns a shell — every dispatch goes through
+* No template handler ever spawns a shell: every dispatch goes through
   ``subprocess.run`` with an argv list.
 """
 
@@ -26,8 +26,8 @@ from fnd.apps import OpenRequest, build_registry, load_user_apps, resolve_app
 def _capture_url_dispatch(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     """Capture ``["open", url]`` for each URL a handler hands to the launcher's
     open-url seam. The ``"open"`` element is a stable marker for "dispatched as
-    a URL" — independent of the per-OS opener command (``open`` / ``xdg-open`` /
-    ``os.startfile``) — so URL-construction assertions read the same on every
+    a URL": independent of the per-OS opener command (``open`` / ``xdg-open`` /
+    ``os.startfile``), so URL-construction assertions read the same on every
     platform in the CI matrix."""
     captured: list[list[str]] = []
     monkeypatch.setattr(apps.launcher, "open_url", lambda url: captured.append(["open", url]) or 0)
@@ -164,7 +164,7 @@ def test_render_url_percent_encodes_path_and_query() -> None:
 
 
 def test_render_url_drops_empty_placeholders() -> None:
-    """Placeholders for empty fields render as the empty string — callers
+    """Placeholders for empty fields render as the empty string: callers
     that care about a clean URL should design templates accordingly."""
     req = OpenRequest(path=Path("/tmp/x.md"), kind="md", heading_path="")
     url = apps._render_url("obsidian://open?vault={vault_pct}&file={path_pct}", req)
@@ -197,7 +197,7 @@ def test_load_user_apps_rejects_argv_and_url_both(tmp_path: Path) -> None:
     cfg = {
         "broken": _user_app_cfg(
             argv=["x"],
-            url="custom://{path_pct}",  # both set — invalid
+            url="custom://{path_pct}",  # both set: invalid
         )
     }
     with pytest.raises(ValueError, match=r"argv|url"):
@@ -339,7 +339,7 @@ def test_obsidian_handler_without_vault_uses_path_form_not_system_fallback(
     the "Open with…" menu but no vault is configured, the handler
     MUST still fire Obsidian (via ``?path=<abs>``) rather than silently
     delegating to ``open <path>`` (which would open the macOS default
-    for that file kind — often VS Code for .md — and look like a
+    for that file kind, often VS Code for .md, and look like a
     silent app-swap to the user)."""
     captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
@@ -365,7 +365,7 @@ def test_obsidian_handler_converts_breadcrumb_to_chained_anchor(
 ) -> None:
     """``heading_path`` is a breadcrumb ("A > B > C") in the chunk;
     Obsidian's anchor syntax wants nested headings separated by ``#``
-    ("A#B#C"). Without this rewrite, the anchor reads ``#A > B > C`` —
+    ("A#B#C"). Without this rewrite, the anchor reads ``#A > B > C``:
     Obsidian opens the file but cannot find that heading and lands at
     the top. Regression test for the user-reported "Obsidian opened
     the file but not at the location"."""
@@ -381,7 +381,7 @@ def test_obsidian_handler_converts_breadcrumb_to_chained_anchor(
     argv = captured[0]
     # Chained-heading anchor (URL-encoded #): Q3%20Plans%23Mobile%20App%23Launch.
     assert "%23Mobile%20App%23Launch" in argv[1], argv[1]
-    # The raw " > " breadcrumb separator MUST NOT survive into the URL —
+    # The raw " > " breadcrumb separator MUST NOT survive into the URL:
     # spaces around ` > ` would percent-encode to %20%3E%20 and Obsidian
     # would fail to navigate.
     assert "%20%3E%20" not in argv[1], argv[1]
@@ -389,14 +389,14 @@ def test_obsidian_handler_converts_breadcrumb_to_chained_anchor(
 
 def test_advanced_uri_detector_finds_plugin(tmp_path: Path) -> None:
     """``_advanced_uri_available`` returns True when the plugin folder
-    sits under any ancestor's ``.obsidian/plugins/`` — the standard
+    sits under any ancestor's ``.obsidian/plugins/``: the standard
     Obsidian vault layout."""
     vault = tmp_path / "vault"
     (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
     sub = vault / "Notes" / "deep" / "nested"
     sub.mkdir(parents=True)
     assert apps._advanced_uri_available(sub) is True
-    # Detector takes a file too — walks up to the containing dir first.
+    # Detector takes a file too: walks up to the containing dir first.
     f = sub / "note.md"
     f.write_text("# x")
     assert apps._advanced_uri_available(f) is True
@@ -455,7 +455,7 @@ def test_obsidian_handler_uses_advanced_uri_when_plugin_and_line_present(
     assert "line=42" in argv[1]
     # New tab: opening a match must not hijack whatever's in the active tab.
     assert "openmode=tab" in argv[1], argv[1]
-    # Heading anchor MUST NOT be appended in advanced-uri form — line is
+    # Heading anchor MUST NOT be appended in advanced-uri form: line is
     # the only locator we need.
     assert "%23Findings" not in argv[1]
 
@@ -500,7 +500,7 @@ def test_resolve_match_line_finds_first_term_occurrence(tmp_path: Path) -> None:
 
 def test_resolve_match_line_returns_from_line_on_miss(tmp_path: Path) -> None:
     """When no line carries a query term we fall back to the chunk
-    start — better than randomly skipping ahead."""
+    start: better than randomly skipping ahead."""
     f = tmp_path / "n.md"
     f.write_text("# Heading\nline two\nline three\n")
     assert apps._resolve_match_line(f, "absentterm", 1) == 1
@@ -525,7 +525,7 @@ def test_resolve_match_line_is_case_insensitive(tmp_path: Path) -> None:
 
 def test_resolve_match_line_is_whole_word_not_substring(tmp_path: Path) -> None:
     """Whole-word matching avoids matching 'template' inside
-    'templating' — stays conservative on fuzzy/stem hits and lets the
+    'templating': stays conservative on fuzzy/stem hits and lets the
     handler fall back to chunk.line on miss."""
     f = tmp_path / "n.md"
     f.write_text("# Header\n\ntemplating engines are useful\nthe template here\n")
@@ -565,7 +565,7 @@ def test_obsidian_advanced_uri_uses_resolved_match_line_not_chunk_line(
     )
     apps.BUILTIN_APPS["obsidian"].handler(req)
     argv = captured[0]
-    # Match is on line 5 — Advanced URI URL must carry line=5, not line=1.
+    # Match is on line 5: Advanced URI URL must carry line=5, not line=1.
     assert "line=5" in argv[1], argv[1]
 
 

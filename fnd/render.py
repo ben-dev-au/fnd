@@ -29,7 +29,7 @@ _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # Colours are RGB, never ANSI names: Textual's opacity blend skips ANSI colours,
 # so an ANSI foreground shows through a preview hidden at opacity 0.
 HIGHLIGHT_STYLE = "bold #1a1a1a on #ffd866"
-# Mismatch overlay for fuzzy-pass hits — orange so the eye can read
+# Mismatch overlay for fuzzy-pass hits: orange so the eye can read
 # at a glance which char(s) in a near-match diverge from what the user
 # typed. Same black foreground as HIGHLIGHT_STYLE so adjacent
 # yellow/orange runs feel like one painted word.
@@ -47,7 +47,7 @@ MATCH_STYLES = [
 ]
 # Dimmed ("receded") variants, used for proximity-group matches that fall OUTSIDE
 # a qualifying co-occurrence window: each swatch is a ~50/50 blend of the full
-# colour and the dark app background, with a normal-weight body foreground — so
+# colour and the dark app background, with a normal-weight body foreground, so
 # the match stays clearly visible but reads as obviously secondary to the bright,
 # black-on-colour full highlights. Pre-computed (not SGR ``faint``) for
 # deterministic, terminal-independent rendering. Parallel to MATCH_STYLES.
@@ -109,7 +109,7 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
 
 def text_has_full_match(text: str, spec: MatchSpec) -> bool:
     """Like :func:`text_has_any_match`, but a proximity-group word that falls
-    OUTSIDE a qualifying co-occurrence window does NOT count — only a *full*
+    OUTSIDE a qualifying co-occurrence window does NOT count: only a *full*
     (in-window) match or a quoted-phrase span does. Lets a preview scroll
     target prefer a real co-occurrence cell over a lone dimmed term above it.
 
@@ -149,7 +149,7 @@ def phrase_gap_spans(
     by a per-term span. Phrase highlighting (a stopword between content words, or
     a quoted phrase) must never *overlap* a term span: in multi-colour mode the
     phrase colour and the term colour differ, and Textual's Content drops
-    overlapping differently-styled spans — so the whole word goes unhighlighted.
+    overlapping differently-styled spans, so the whole word goes unhighlighted.
     Filling only the gaps (e.g. the ``in`` of ``Defence-in-Depth``) keeps every
     span non-overlapping."""
     out: list[tuple[int, int]] = []
@@ -176,7 +176,7 @@ def _proximity_tiers(
     by a glob member such as ``respons*``), minus any the query also asserts
     outside the group; ``full`` are those inside a qualifying window. A member
     outside ``full`` renders dimmed. Returns empties when the query carries no
-    proximity operator — so plain queries skip stemming entirely."""
+    proximity operator, so plain queries skip stemming entirely."""
     if not spec.proximity_groups:
         return frozenset(), frozenset()
     from fnd.matching import proximity_tier_indices
@@ -198,7 +198,7 @@ def match_word_spans_multi(
 
     ``segments`` are consecutive slices of one document (the markdown blocks of
     a chunk, a chunk's rendered lines), so a ``{N}`` / ``NEAR/N`` / ``"a b"~N``
-    window has to be able to straddle a boundary — scoping it to one block is
+    window has to be able to straddle a boundary: scoping it to one block is
     what made an adjacent paragraph and list item render dimmed. Offsets in the
     result are segment-local.
 
@@ -303,7 +303,7 @@ def keep_shown(hits: list[Hit], query: str) -> list[Hit]:
 
 def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
     """Absolute ``(start, end, style)`` highlight runs for every matching word in
-    ``plain`` — the single-segment form of :func:`match_word_spans_multi`."""
+    ``plain``: the single-segment form of :func:`match_word_spans_multi`."""
     return match_word_spans_multi((plain,), spec)[0]
 
 
@@ -313,7 +313,7 @@ def apply_match_highlights_multi(rendered: Sequence[Text], spec: MatchSpec) -> l
 
     Per line: loose words via :func:`match_word_spans_multi` (proximity-aware
     across the WHOLE run, so a ``{N}`` window can straddle a line break), then
-    quoted/connector phrases in the GAPS between term spans — never overlapping
+    quoted/connector phrases in the GAPS between term spans, never overlapping
     them, so per-term colours survive. Phrases stay line-local because a quoted
     phrase is contiguous by definition."""
     from fnd.matching import phrase_char_spans
@@ -365,11 +365,11 @@ def word_highlight_runs(
 ) -> list[tuple[int, int, str]]:
     """Per-char highlight runs for ``word``, coloured by *how* it matched:
 
-    * wildcard / glob — literal chars in the term's colour, ``*``/``?``-filled
+    * wildcard / glob: literal chars in the term's colour, ``*``/``?``-filled
       chars orange;
-    * exact-stem / fuzzy — chars aligning to the typed term in its colour, the
+    * exact-stem / fuzzy: chars aligning to the typed term in its colour, the
       typo / stem-suffix divergence orange;
-    * regex (or any match with no clean char attribution) — whole word in colour.
+    * regex (or any match with no clean char attribution): whole word in colour.
 
     In a multi-word query each term has its own colour (see :data:`MATCH_STYLES`);
     single-term queries use slot 0 (yellow). ``dim`` selects the receded palette
@@ -393,7 +393,7 @@ def word_highlight_runs(
     # suffix shows as orange. Checked BEFORE the wildcard mask so a word that
     # exactly matches a typed term (e.g. ``discount`` under ``discount discoun*``)
     # renders as a clean exact hit rather than having its tail painted as
-    # wildcard variance. Only for words that matched THIS way (not regex) —
+    # wildcard variance. Only for words that matched THIS way (not regex),
     # otherwise an unrelated raw term would paint the whole word orange.
     s = index_token(word)
     matched_exact_or_fuzzy = s in spec.exact_stems or spec.fuzzy_admits(s)
@@ -458,7 +458,7 @@ def _terms_from_query(query: str, *, keep_stopwords: bool = False) -> list[str]:
     # Tokenize the same way the highlighter splits doc text (``DOC_WORD_RE``,
     # which mirrors the index analyser and splits on underscore too) so a term
     # carrying adjacent punctuation ("3." / "Monitoring,") or an underscore
-    # ("recursive_directory_iterator") yields the bare sub-words — their stems
+    # ("recursive_directory_iterator") yields the bare sub-words: their stems
     # then match the clean doc-word stems instead of silently failing.
     # Stopwords are dropped: they carry ~zero IDF and highlighting every
     # "and"/"in" doc-wide is noise (quoted phrases keep their stopwords via the
@@ -529,13 +529,13 @@ def render_chunk_pieces(
       can mount per-line widgets and ``scroll_to_widget`` targets the
       specific matched line.
     * **Chunk has no match**: emit a single piece containing the whole
-      chunk body — far fewer widgets to mount on long PDFs (a 105-page
+      chunk body: far fewer widgets to mount on long PDFs (a 105-page
       winelist is ~3000 widgets all-per-line vs ~280 with this split).
 
     The returned line Texts already have query-term highlights applied.
     When ``match_spec`` is provided (an :class:`fnd.matching.MatchSpec`),
     fuzzy-AUTO and synonym variants are highlighted in addition to
-    literal stems — same semantics the cascade fuzzy / synonym passes
+    literal stems, same semantics the cascade fuzzy / synonym passes
     use. Fall-back to literal-only stem matching when ``match_spec``
     is ``None`` (preserves the old test surface).
     """
@@ -562,7 +562,7 @@ def render_chunk_pieces(
         return header, pieces
 
     # Match-bearing chunk: per-line pieces so we have precise scroll targets.
-    # Build every line first, then highlight them as one run — a proximity
+    # Build every line first, then highlight them as one run: a proximity
     # window has to be able to straddle a line break, which per-line
     # highlighting made impossible at any slop.
     lines: list[Text] = []
@@ -620,7 +620,7 @@ def render_chunk_body_only(chunk: Any, *, query: str = "") -> Text:
 
 
 def render_chunk_rich(chunk: Any, *, query: str = "") -> Text:
-    """Render one chunk as a Rich :class:`Text` — section header + body
+    """Render one chunk as a Rich :class:`Text`, section header + body
     blocks + query-term highlights. Used by the TUI's preview pane (one
     Static widget per chunk so scroll_to_widget targets work precisely
     regardless of how lines wrap visually)."""
@@ -674,7 +674,7 @@ def _chunk_header(c: object) -> str:
     breaking"); falls back to whichever piece is present otherwise.
 
     PDF page locator prefers the printed ``page_label`` (e.g. "292" or
-    "iv") when the PDF carries explicit labels — that's what the
+    "iv") when the PDF carries explicit labels: that's what the
     reader actually sees on the page. ``page`` (the PDF page index) is
     used only for the opener and as a fallback when no label exists.
     """

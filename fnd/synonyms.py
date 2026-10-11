@@ -10,7 +10,7 @@ Two design rules:
 * Multi-word synonyms come back wrapped in double quotes so the Tantivy
   parser treats them as phrases, not three independent OR'd terms.
 * Terms inside an existing quoted phrase in the user's query are NOT
-  expanded — the user already asked for an exact match, and overriding
+  expanded: the user already asked for an exact match, and overriding
   that would surprise them.
 
 Group entries are bidirectional: any one form expands to the rest.
@@ -33,7 +33,7 @@ from fnd.text_canon import fold
 class SynonymTable:
     """Canonical lookup table built from user TOML.
 
-    Stored as an immutable tuple of normalized groups — fully immutable (not
+    Stored as an immutable tuple of normalized groups: fully immutable (not
     just ``frozen``) so the memoised default table cannot be poisoned by an
     in-place mutation. Lookups are case-insensitive on the surface form but
     the original casing of the synonyms is preserved in the expansion output
@@ -75,7 +75,7 @@ class SynonymTable:
 
 
 def load_synonyms(path: Path) -> SynonymTable:
-    """Load a synonyms TOML file. Missing files yield an empty table — the
+    """Load a synonyms TOML file. Missing files yield an empty table: the
     user opts in by creating the file."""
     if not path.exists():
         return SynonymTable()
@@ -182,7 +182,7 @@ def expand(query: str, table: SynonymTable) -> str:
     Matches single words, multi-word phrases (hyphen/space-agnostic, so both
     ``multi-factor authentication`` and ``multi factor authentication`` expand),
     and whole quoted phrases. Words inside a user's quoted phrase are not
-    expanded individually — that span is already an exact-match request. The
+    expanded individually: that span is already an exact-match request. The
     original term stays in the disjunction so an exact hit still scores.
     """
     if not table.groups:
@@ -207,7 +207,7 @@ def expand(query: str, table: SynonymTable) -> str:
             continue
         # Token-tuple lookup (not exact string) so a quoted phrase expands
         # regardless of hyphen/space, matching the bare-word path below. A
-        # single quoted token (e.g. "4", "mfa") is left literal — quoting one
+        # single quoted token (e.g. "4", "mfa") is left literal: quoting one
         # word is the clearest exact-match request, so it never expands; only
         # genuine multi-word phrases ("multi factor authentication") do.
         key = tuple(re.findall(r"\w+", fold(m.group(1))))

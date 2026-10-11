@@ -144,7 +144,7 @@ class FrontmatterTagProvider:
     """YAML frontmatter tags. Portable to every platform.
 
     Reads ``tags:`` / ``tag:`` always. ``extra_keys`` opts additional
-    frontmatter keys in as tag sources — many vaults keep their real taxonomy
+    frontmatter keys in as tag sources: many vaults keep their real taxonomy
     in fields like ``Project:`` or ``Type:`` rather than ``tags:``.
 
     Extra-key values are namespaced under the key (``project/kitchen``) so they
@@ -197,7 +197,7 @@ class FrontmatterTagProvider:
 # Finder tags live in an xattr holding a binary plist. os.getxattr is
 # Linux-only and absent on macOS, and /usr/bin/xattr costs a process spawn
 # per file (measured ~192x slower), so this calls libc directly. macOS's
-# getxattr takes two extra arguments (position, options) versus Linux —
+# getxattr takes two extra arguments (position, options) versus Linux:
 # one reason the call stays inside the platform-specific provider.
 _XATTR_USER_TAGS = b"com.apple.metadata:_kMDItemUserTags"
 
@@ -206,7 +206,7 @@ def _load_getxattr() -> object | None:
     try:
         lib = ctypes.util.find_library("c")
         if not lib:
-            # CDLL(None) loads the running program, not libc — bail rather
+            # CDLL(None) loads the running program, not libc: bail rather
             # than resolve getxattr against the wrong image.
             return None
         libc = ctypes.CDLL(lib, use_errno=True)
@@ -310,7 +310,7 @@ def providers_for(
 def read_tags(ctx: TagContext, providers: Sequence[TagProvider]) -> dict[str, frozenset[str]]:
     """Tags per provider id.
 
-    A failing provider contributes an empty set — tag reading must never fail
+    A failing provider contributes an empty set: tag reading must never fail
     an index run.
     """
     out: dict[str, frozenset[str]] = {}

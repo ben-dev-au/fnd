@@ -2,7 +2,7 @@
 
 Textual normally clears ``ISIG`` in termios so ``^C`` arrives as a byte
 on stdin, handled via a regular key binding. That binding can only fire
-when the event loop is responsive — if a coroutine ever blocks the loop
+when the event loop is responsive, if a coroutine ever blocks the loop
 (slow filesystem walk, hung syscall, downstream silent crash) the user's
 ``^C`` does nothing and the only escape is killing the terminal emulator.
 
@@ -18,7 +18,7 @@ Implementation notes:
 - Signal handlers run on the **main thread** (the same thread as the
   asyncio loop). Textual's ``call_from_thread`` rejects calls from the
   loop's own thread with ``RuntimeError``. A direct ``app.exit()`` call
-  sets the exit flag but doesn't actually unwind the loop — the loop
+  sets the exit flag but doesn't actually unwind the loop: the loop
   has to process its own message queue first, and ``post_message``
   inside a signal-handler frame doesn't reliably do so. The working
   primitive is ``loop.call_soon_threadsafe(app.exit)``: thread-safe by
@@ -61,13 +61,13 @@ def install(app: App[Any]) -> Iterator[None]:
     installs a SIGINT handler that:
 
     - First press: schedule ``app.exit`` via
-      ``loop.call_soon_threadsafe`` — the only call that reliably fires
+      ``loop.call_soon_threadsafe``; the only call that reliably fires
       the asyncio wakeup pipe from inside a signal-handler frame on the
       loop's own thread (a direct ``app.exit()`` sets the flag but the
       loop doesn't necessarily notice; ``call_from_thread`` raises). If
       no loop is running yet (or it has already torn down), fall back
       to a direct ``app.exit()`` so the next press still hard-exits.
-    - Any subsequent press: ``os._exit(130)``. No timing window — every
+    - Any subsequent press: ``os._exit(130)``. No timing window: every
       ^C after the first hard-exits, so a wedged loop can never trap the
       user even if they pace presses slowly.
 

@@ -4,7 +4,7 @@ Warming needs somewhere to build a chunk widget so it can be captured. Doing
 that in the on-screen container is what made warming compete with navigation,
 and hiding that container is not an option either:
 
-* ``display: none`` zeroes the layout, so ``freeze`` correctly refuses — a
+* ``display: none`` zeroes the layout, so ``freeze`` correctly refuses; a
   capture needs real geometry;
 * ``opacity: 0`` keeps the geometry but blends every foreground into the
   background. Measured, the capture carries all 241 characters with fg == bg on
@@ -17,8 +17,8 @@ and hiding that container is not an option either:
 A screen that is installed but not current has none of those problems. Textual's
 compositor walks the active screen only, so a suspended screen costs nothing per
 tick, while its widgets stay alive and laid out. Measured against a visible
-capture: identical palette, correct ink, and an arbitrary capture width —
-36/60/96 columns for 40/64/100 requested — with the live screen untouched.
+capture: identical palette, correct ink, and an arbitrary capture width,
+36/60/96 columns for 40/64/100 requested, with the live screen untouched.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ __all__ = ["WarmHost"]
 
 # Height handed to the off-screen layout pass. Only an upper bound: freeze
 # captures at max(size.height, virtual_size.height), so a taller chunk is still
-# captured whole — this just has to be generous enough that the layout does not
+# captured whole; this just has to be generous enough that the layout does not
 # constrain a normal chunk.
 _LAYOUT_HEIGHT = 400
 
@@ -59,7 +59,7 @@ class WarmHost:
         self._screen: Screen[None] | None = None
         self._container: VerticalScroll | None = None
         # One capture at a time. The screen and the container are shared, and
-        # the width is set on the SCREEN — so two callers interleaving at any
+        # the width is set on the SCREEN, so two callers interleaving at any
         # of the awaits below would lay each other's widget out at the wrong
         # width. Coverage and the stale-strip repair are independent tasks and
         # nothing else serialises them: the repair waits on `pipeline_busy`,
@@ -76,7 +76,7 @@ class WarmHost:
             # Reuse an already-installed screen. The name is fixed, so a retry
             # after a partial failure (install succeeded, `mount` below raised)
             # would otherwise raise on the duplicate name, be swallowed by the
-            # `except`, and disable warming for the rest of the session — with
+            # `except`, and disable warming for the rest of the session, with
             # no error anywhere: captures simply stop and every lookup misses.
             screen = self._screen
             if screen is None or not self._app.is_screen_installed(_SCREEN_NAME):
@@ -89,7 +89,7 @@ class WarmHost:
                 #
                 # The push is NOT awaited, and the pop follows immediately in
                 # the same tick. Awaiting it lets this empty screen become
-                # current and PAINT — measured live, the whole app went blank
+                # current and PAINT: measured live, the whole app went blank
                 # for 35 consecutive frames (~1.75s) the first time warming ran,
                 # sidebar included.
                 self._app.push_screen(_SCREEN_NAME)
@@ -98,7 +98,7 @@ class WarmHost:
             # No scrollbar. This container is a measuring jig, not something
             # anyone scrolls: a chunk taller than `_LAYOUT_HEIGHT` overflows it,
             # it grows a bar, and the chunk then lays out a column narrower than
-            # the width asked for — so the capture is cut for one width and
+            # the width asked for, so the capture is cut for one width and
             # filed under another. Measured, the boundary is exactly the layout
             # box: 300 rendered rows captured at 76, 420 rows at 75.
             container.styles.scrollbar_size_vertical = 0
@@ -120,7 +120,7 @@ class WarmHost:
         """Build ``chunk`` off-screen at ``width`` and capture it.
 
         The widget is constructed exactly as the on-screen path constructs it,
-        because the capture IS that widget's own output — any divergence would
+        because the capture IS that widget's own output: any divergence would
         show up as a preview differing from the widget path's.
 
         ``match_spec`` should be the caller's SNAPSHOT, not the app's live one.
@@ -152,13 +152,13 @@ class WarmHost:
             async with asyncio.timeout(tuning.WARM_BUILD_TIMEOUT):
                 await widget.build_done.wait()
             # The screen is not current, so Textual will not lay it out on its
-            # own — Screen._on_timer_update gates relayout on is_current. Drive
+            # own: Screen._on_timer_update gates relayout on is_current. Drive
             # it explicitly at the width the preview pane will paint at.
             #
             # TWICE, with a yield to the message pump in between, and the yield
             # is the part that matters. A DataTable sizes itself in response to
             # its own posted refresh, so after a single pass it holds its rows
-            # with NO geometry at all — measured rows=3, size=0, virtual=0 — and
+            # with NO geometry at all (measured rows=3, size=0, virtual=0) and
             # the capture comes back with the table's border and none of its
             # contents. That is the "tables stopped being formatted" report:
             # an empty box where the table was. A second pass alone does not fix
@@ -176,7 +176,7 @@ class WarmHost:
         finally:
             # NOT awaited, and suppressing BaseException rather than Exception.
             # Cancellation is the normal way warming ends, CancelledError is a
-            # BaseException, and it lands ON the await — so an awaited removal
+            # BaseException, and it lands ON the await, so an awaited removal
             # here is skipped exactly when it is needed. Measured: 12 whole
             # widget trees (~28 widgets each) stranded across 29 cancellations,
             # unbounded over a session and invisible to the row budget.

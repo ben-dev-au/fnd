@@ -131,7 +131,7 @@ def test_reconcile_idempotent_same_target() -> None:
     c.reconcile()
     c.reconcile()
     c.reconcile()
-    assert strat.calls == [a, a, a]  # always the same target — order-independent
+    assert strat.calls == [a, a, a]  # always the same target: order-independent
 
 
 def test_reconcile_threads_on_settled_to_strategy() -> None:
@@ -145,7 +145,7 @@ def test_reconcile_threads_on_settled_to_strategy() -> None:
 
 
 def test_reconcile_fires_on_settled_even_when_released() -> None:
-    # Reveal callbacks ride on on_settled — a released (or strategy-less)
+    # Reveal callbacks ride on on_settled: a released (or strategy-less)
     # reconcile must still fire it, or the container is stranded hidden.
     c = PreviewScrollController(select_strategy=lambda: None)
     c.release()
@@ -297,7 +297,7 @@ def test_structural_strategy_drops_match_a_quarter_down_the_viewport() -> None:
 def test_a_last_match_landing_takes_a_plain_chunks_final_matching_line() -> None:
     """A pdf/txt chunk mounts one Static per line and records only its FIRST
     matching line as the match target, so the backward entry has to find the
-    last itself — the lines are flat siblings, bounded by the next chunk-first."""
+    last itself: the lines are flat siblings, bounded by the next chunk-first."""
     lines = [_FakeWidget(Region(0, 100 + i * 2, 80, 2)) for i in range(5)]
     for w in lines:
         w.add_class("chunk-line")
@@ -575,7 +575,7 @@ def test_controller_is_restoring_until_the_strategy_reports_done() -> None:
     class _SlowStrategy(FakeStrategy):
         def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
             self.restored.append(location)
-            held.append(on_done)  # not called — the reflow is still running
+            held.append(on_done)  # not called: the reflow is still running
 
     strat = _SlowStrategy()
     c = PreviewScrollController(select_strategy=lambda: strat)
@@ -589,7 +589,7 @@ def test_controller_is_restoring_until_the_strategy_reports_done() -> None:
 
 
 def test_controller_is_restoring_clears_when_the_strategy_raises() -> None:
-    # A raising strategy must not strand the flag — nothing would ever clear it.
+    # A raising strategy must not strand the flag: nothing would ever clear it.
     c = PreviewScrollController(select_strategy=lambda: _RaisingStrategy())
     c.scroll_to_location(ViewportLocation("flat", line=3))
     assert not c.is_restoring
@@ -664,7 +664,7 @@ class _RaisingStrategy:
 
 
 def test_reconcile_fires_on_settled_when_strategy_raises_then_reraises() -> None:
-    # The reveal/swap rides on_settled — it must fire even if the strategy
+    # The reveal/swap rides on_settled: it must fire even if the strategy
     # raises before settling, and the (unexpected) error is still surfaced.
     c = PreviewScrollController(select_strategy=lambda: _RaisingStrategy())
     c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=1))
@@ -690,7 +690,7 @@ def test_scroll_to_location_swallows_strategy_error() -> None:
 
 
 def test_structural_do_scroll_fires_on_done_even_if_scroll_raises() -> None:
-    # An exception in the scroll body must not drop on_done — otherwise the
+    # An exception in the scroll body must not drop on_done, otherwise the
     # pre-reveal container would stay hidden (blank, stuck) on a cold mount.
     class _BoomPane(_FakePane):
         def scroll_to_region(
@@ -713,7 +713,7 @@ def test_structural_do_scroll_fires_on_done_even_if_scroll_raises() -> None:
 
 
 class _CallsThenRaisesStrategy:
-    """Strategy that calls on_settled itself, THEN raises — the flat-path
+    """Strategy that calls on_settled itself, THEN raises: the flat-path
     shape where the synchronous on_settled() is the last thing before any
     error can escape. The controller's error path must not call it a second
     time (fire-once contract)."""
@@ -750,7 +750,7 @@ def test_scroll_waits_while_content_above_the_match_is_still_arriving() -> None:
     """The match's screen position is decided by how much content sits above it,
     and that content arrives late: chunk widgets mount at ~0 height and grow as
     their markdown lays out. Committing before it settles lands correctly and
-    then slides — measured at 17 rows on a real book page, leaving the match two
+    then slides: measured at 17 rows on a real book page, leaving the match two
     thirds down the pane instead of a quarter.
 
     ``build_done`` is NOT the signal to wait on: on that page the chunks above
@@ -785,7 +785,7 @@ def test_a_growing_region_above_defers_the_commit() -> None:
 
 
 def test_the_wait_is_bounded_so_a_restless_layout_still_lands() -> None:
-    """A page whose layout never quite settles must not hold the scroll open —
+    """A page whose layout never quite settles must not hold the scroll open:
     landing late is worse than landing a few rows off."""
     pane = _FakePane()
     above = _FakeWidget(Region(0, 0, 80, 27))
@@ -803,7 +803,7 @@ def test_an_unlaid_out_chunk_above_is_not_mistaken_for_settled() -> None:
 
     A preceding chunk mounts at height 0 and grows on a later refresh. Reading
     three zeroes as two stable ticks commits the scroll, and the chunk then lays
-    out and pushes the match down — the same class of drift the settle gate
+    out and pushes the match down: the same class of drift the settle gate
     exists to prevent, entered from the other side.
     """
     pane = _FakePane()
@@ -856,7 +856,7 @@ def test_a_frozen_chunk_does_not_get_the_focus_band() -> None:
     strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=3))
 
     assert not header.has_class("chunk-section-focused"), (
-        "a frozen chunk was given the focus band — it can only paint the padding "
+        "a frozen chunk was given the focus band: it can only paint the padding "
         "row the capture does not cover, which is the stray bar above the text"
     )
 
@@ -891,7 +891,7 @@ def test_a_frozen_chunk_lands_its_match_a_quarter_down_not_on_the_top_line() -> 
 
 
 def test_a_chunk_with_no_captured_row_keeps_the_chunk_top_landing() -> None:
-    """No recorded row means no match in the chunk — no margin, no context."""
+    """No recorded row means no match in the chunk: no margin, no context."""
     landing = _frozen_landing(first_match_row=None)
 
     assert landing is not None

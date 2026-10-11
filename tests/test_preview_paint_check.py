@@ -3,7 +3,7 @@
 Prevention at the consumption seams is the real fix for the blank-preview strand
 (see ``test_preview_condemned_container.py`` and ``fnd/tui/preview/liveness.py``).
 This is the backstop behind it: armed on every navigation, it verifies the
-OUTCOME — is the pane actually showing the cursor's file? — rather than any one
+OUTCOME, is the pane actually showing the cursor's file? rather than any one
 mechanism, so a strand introduced at some future seam costs the user one extra
 rebuild instead of a pane that stays blank until they navigate away and back.
 
@@ -64,17 +64,17 @@ async def test_paint_check_rebuilds_a_stranded_blank_preview(built_index: Path) 
         await _settled(pilot, preview)
 
         target = preview.cursor_target()
-        assert target is not None, "setup — the cursor should be on a result"
+        assert target is not None, "setup: the cursor should be on a result"
 
         # Strand it exactly as the race did: the active container leaves the DOM
         # while ``active`` keeps pointing at it. Nothing in the normal pipeline
-        # repaints this — the reveal watchdog only lifts ``-pre-reveal``.
+        # repaints this: the reveal watchdog only lifts ``-pre-reveal``.
         stranded = preview.active
         assert stranded is not None
         stranded.remove()
         for _ in range(6):
             await safe_pause(pilot)
-        assert not preview.is_painted(), "setup — the pane should now be blank"
+        assert not preview.is_painted(), "setup: the pane should now be blank"
 
         preview._verify_painted()
         await wait_until(
@@ -111,7 +111,7 @@ async def test_paint_check_is_a_noop_when_the_preview_is_painted(built_index: Pa
 
 @pytest.mark.asyncio
 async def test_paint_check_repairs_a_preview_showing_the_wrong_file(built_index: Path) -> None:
-    """The invariant is not merely "something is painted" — it is "the pane
+    """The invariant is not merely "something is painted": it is "the pane
     shows the file the cursor is on". A stale dispatch (a late cursor echo, a
     debounce timer firing for a row the user has already left) paints a
     different file; that must be corrected too."""
@@ -123,7 +123,7 @@ async def test_paint_check_repairs_a_preview_showing_the_wrong_file(built_index:
         target = preview.cursor_target()
         assert target is not None
 
-        # A perfectly healthy container — for the wrong file.
+        # A perfectly healthy container: for the wrong file.
         other = next(
             (g for g in app._search.groups if g.parent_id != target[0]),
             None,
@@ -132,7 +132,7 @@ async def test_paint_check_repairs_a_preview_showing_the_wrong_file(built_index:
         assert preview.active is not None
         preview.active.parent_doc_id = other.parent_id
 
-        assert preview.is_painted(), "setup — the pane is painted, just with the wrong file"
+        assert preview.is_painted(), "setup: the pane is painted, just with the wrong file"
         assert preview.showing_parent() != target[0]
 
         rebuilt: list[tuple[str, int]] = []
@@ -181,12 +181,12 @@ async def test_paint_check_repairs_at_most_once_per_target(built_index: Path) ->
         assert target is not None
 
         rebuilt: list[str] = []
-        # A rebuild that never paints — the pathological case the cap exists for.
+        # A rebuild that never paints: the pathological case the cap exists for.
         preview.render_full_doc = lambda parent_id, *, focus_chunk_seq: rebuilt.append(  # type: ignore[assignment,method-assign]
             parent_id
         )
         preview.active = None
-        assert not preview.is_painted(), "setup — pane is blank"
+        assert not preview.is_painted(), "setup: pane is blank"
 
         for _ in range(5):
             preview._verify_painted()
@@ -213,13 +213,13 @@ async def test_paint_check_defers_while_the_pipeline_is_busy(built_index: Path) 
             parent_id
         )
         preview.active = None
-        assert not preview.is_painted(), "setup — pane is blank"
+        assert not preview.is_painted(), "setup: pane is blank"
 
         parked = asyncio.Event()
         task = asyncio.create_task(parked.wait())
         preview.mount_task = task
         try:
-            assert preview.pipeline_busy(), "setup — a live mount task means busy"
+            assert preview.pipeline_busy(), "setup: a live mount task means busy"
             preview._verify_painted()
             assert not rebuilt, "must not repair while a mount is still in flight"
             assert preview._paint_check is not None, "the check must re-arm instead"

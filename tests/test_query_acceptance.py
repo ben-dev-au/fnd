@@ -3,11 +3,11 @@
 Encodes the desired end-state behaviour for every capability the README claims,
 verified against BOTH live search paths:
 
-  * Searcher.search   — single-pass (CLI `fnd search`)
-  * search_layered    — probe→fusion→cascade (TUI / --explain)
+  * Searcher.search, single-pass (CLI `fnd search`)
+  * search_layered, probe→fusion→cascade (TUI / --explain)
 
 Rows that pass today are regression guards. Rows that are broken today are marked
-``xfail(strict=True)`` with the phase that will fix them — flip the marker to a plain
+``xfail(strict=True)`` with the phase that will fix them: flip the marker to a plain
 test as each phase lands (a strict xfail that starts passing fails the suite, so we
 can't forget).
 
@@ -236,7 +236,7 @@ def _layered(s: Searcher, q: str) -> set[str]:
 
 
 # (id, query, predicate, broken_paths). ``broken_paths`` lists the paths that
-# are expected to FAIL today (strict xfail) — empty means "must pass on both".
+# are expected to FAIL today (strict xfail): empty means "must pass on both".
 # As each phase lands, shrink the set; a strict xfail that starts passing fails
 # the suite, so a fixed capability can't silently stay marked broken.
 type _Case = tuple[str, str, Callable[[set[str]], bool], frozenset[str]]
@@ -267,7 +267,7 @@ _CASES: list[_Case] = [
     ),
     ("path-tokens", "path_tokens:thesis", lambda r: "fld-path" in r, _OK),
     ("heading-path", "heading_path:proofs", lambda r: "fld-heading" in r, _OK),
-    # weighted-default ranking is order-sensitive — see test_weighted_default_ranking_*.
+    # weighted-default ranking is order-sensitive: see test_weighted_default_ranking_*.
     # --- P2: filter context + ranges (now live) ---
     ("filter-kind", "kind:docx diffusion", lambda r: r == {"kind-docx"}, _OK),
     (
@@ -394,7 +394,7 @@ _CASES: list[_Case] = [
     ),
     ("has-field", "has:author", lambda r: r == {"fld-author"}, _OK),
     # Field grouping composed with a boolean stays in content (filter extraction
-    # leaves it) — it must reach Tantivy's parser, not the AST (which would crash
+    # leaves it): it must reach Tantivy's parser, not the AST (which would crash
     # splitting ``title:`` from its group).
     (
         "field-group-in-boolean",
@@ -410,12 +410,12 @@ _CASES: list[_Case] = [
         lambda r: r == {"fld-title"},
         _OK,
     ),
-    # Presence on a numeric field is "has a real (non-zero) value" — pages 5/15/25,
+    # Presence on a numeric field is "has a real (non-zero) value": pages 5/15/25,
     # not the page:0 default of every other doc.
     ("has-uint-presence", "has:page", lambda r: r == {"pg-5", "pg-15", "pg-25"}, _OK),
     # --- Operators composing INSIDE booleans/parens (boolean AST compiler) ---
     # The discriminator in each: the dropped ``*``/no-op ``~N`` of the old
-    # parse_query handoff would intersect on the *literal* stem and return {} —
+    # parse_query handoff would intersect on the *literal* stem and return {},
     # only a real wildcard/fuzzy/regex leaf inside the AND yields the doc.
     (
         "and-wildcard",
@@ -582,7 +582,7 @@ def test_weighted_default_ranking_cli(searcher: Searcher) -> None:
 
 
 def test_unparsable_numeric_filter_does_not_crash() -> None:
-    """An invalid numeric/date bound must not blow up extraction — the clause
+    """An invalid numeric/date bound must not blow up extraction: the clause
     falls back to content (0 filters) instead of raising. Guards the `>N` /
     `[lo TO hi]` branches that previously let `ValueError` escape."""
     from fnd.query_filters import extract_filters

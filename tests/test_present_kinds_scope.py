@@ -1,5 +1,5 @@
-"""present_kinds must scope by the full active scope — full collections AND the
-active sources of partially-selected collections — so the file-type filter never
+"""present_kinds must scope by the full active scope: full collections AND the
+active sources of partially-selected collections, so the file-type filter never
 reveals kinds from unselected sources of the same collection."""
 
 from __future__ import annotations

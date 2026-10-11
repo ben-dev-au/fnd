@@ -5,7 +5,7 @@ tri-state and parent↔child cascade" so the file-type filter and the
 source-creation Includes picker share identical, bug-free behaviour instead of
 each re-deriving it (and re-deriving the same bugs).
 
-Correct by construction — each property kills a class of bug the ad-hoc trees hit:
+Correct by construction: each property kills a class of bug the ad-hoc trees hit:
 
 * ``auto_expand = False`` and Enter = *toggle only*; ←/→ = expand/collapse.
   Toggling a category can never also expand/collapse it.

@@ -4,7 +4,7 @@ space when Reading View hides the sidebar.
 The live preview renders markdown tables via ``FNDMarkdownTableDT`` → a
 ``DataTable`` whose column widths are computed from the pane width and
 recomputed by ``on_resize`` when the pane widens. The reflow's core is the
-pure ``_compute_table_col_widths`` function — unit-tested here headlessly.
+pure ``_compute_table_col_widths`` function: unit-tested here headlessly.
 The full-app integration runs under ``app.run_test``: the DataTable preview
 path is the live default (``FNDMarkdown.BLOCKS["table_open"]``) and DOES
 mount headless, verified 2026-06-13. (It was previously gated behind

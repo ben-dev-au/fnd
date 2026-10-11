@@ -1,4 +1,4 @@
-"""Unified Settings & Commands menu — data model.
+"""Unified Settings & Commands menu: data model.
 
 The menu is a tree of :class:`MenuItem` records, one row per item the user
 sees in the Settings screen. ``kind`` decides what ``Enter`` does:
@@ -15,7 +15,7 @@ sees in the Settings screen. ``kind`` decides what ``Enter`` does:
   ``toggle``    Flip a boolean inline. Menu stays open so the user sees the
                 new value.
   ``picker``    Push a picker sub-screen with a list of choices.
-  ``external``  Run a custom callable that takes the app — used to push
+  ``external``  Run a custom callable that takes the app: used to push
                 custom screens (per-source form, delete confirm, rename).
 
 The root menu is one flat scrollable list grouped with ``KIND_HEADER``
@@ -241,7 +241,7 @@ def header(
 
     ``hint=True`` stamps the header (and every body row until the next
     header) with a ``-hint-section`` CSS class via the SettingsList's
-    rendering loop — used by the Keybindings cheat sheet to highlight
+    rendering loop: used by the Keybindings cheat sheet to highlight
     the section relevant to the screen that called ``?``.
     """
     keywords: tuple[str, ...] = ("_hint_section_",) if hint else ()
@@ -263,7 +263,7 @@ def walk_leaves(
     breadcrumb: tuple[str, ...] = (),
 ) -> Iterator[tuple[tuple[str, ...], MenuItem]]:
     """Yield ``(breadcrumb, leaf)`` pairs for every selectable item in
-    the tree. Headers are skipped — they're visual structure, not
+    the tree. Headers are skipped: they're visual structure, not
     discoverable content.
     """
     path = (*breadcrumb, item.label)
@@ -281,7 +281,7 @@ def walk_leaves(
 # Each row is a (key, action_id_or_empty, description) tuple. Activating
 # the row dispatches the action if action_id is set; built-in widget
 # keys (tree navigation, scroll) are listed for discoverability with an
-# empty action_id — Enter on those is a no-op (the user invokes them
+# empty action_id: Enter on those is a no-op (the user invokes them
 # directly when the relevant pane has focus).
 
 
@@ -310,7 +310,7 @@ _KEY_PRETTY: dict[str, str] = {
 
 def _pretty_key(key: str) -> str:
     # A comma-separated ``default_key`` lists alternatives (same action, more
-    # than one key) — render each and join them.
+    # than one key): render each and join them.
     if "," in key:
         return " / ".join(_pretty_key(k.strip()) for k in key.split(",") if k.strip())
     if key in _KEY_PRETTY:
@@ -329,7 +329,7 @@ def _pretty_key(key: str) -> str:
     return "+".join(parts) if len(parts) > 1 else key
 
 
-# Sections that wrap bindings NOT in the Action registry — widget-level
+# Sections that wrap bindings NOT in the Action registry: widget-level
 # bindings from SettingsList, SourceFormScreen, OpenWithScreen,
 # AccessibilityPermissionScreen, etc. Listed here so the Keybindings
 # screen surfaces them too.
@@ -631,7 +631,7 @@ def _key_row(
 ) -> MenuItem:
     """Build a Keybindings cheat-sheet row. ``label`` is the short title
     shown in the row list; ``description`` is the long-form explanation
-    surfaced in the DetailStrip when the row is focused — DON'T pass
+    surfaced in the DetailStrip when the row is focused: DON'T pass
     the same string for both, or the DetailStrip just echoes the row.
 
     ``section`` disambiguates widget-only rows (action_id="") that
@@ -640,7 +640,7 @@ def _key_row(
     and the second mount would shadow the first.
     """
     # Slug the row id from the *un*localised key/label so ids stay identical on
-    # every OS — "⌥ ↑" and "Alt ↑" must not mint two different ids for one row.
+    # every OS: "⌥ ↑" and "Alt ↑" must not mint two different ids for one row.
     item_id = f"key.{action_id}" if action_id else "key." + _slug(section, key, label)
     # An action that works in several panes is listed in each of them; the
     # first keeps the plain id so nothing referring to it moves.
@@ -678,20 +678,20 @@ def _action_label(action: Any) -> str:
 
 def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> tuple[MenuItem, ...]:
     """Build the Keybindings list from the live ``Action`` registry plus
-    static widget-binding tables.
+        static widget-binding tables.
 
-    Single source of truth = ``fnd.tui.actions.REGISTRY``. Sub-sections:
+        Single source of truth = ``fnd.tui.actions.REGISTRY``. Sub-sections:
 
-    * Global — actions with no ``contexts`` constraint.
-    * Per-pane sections (Results / Outline / Preview / Query / Filters / Collections)
-      — actions whose primary (first) context matches that pane.
-    * Static sections — Settings menu, Source form, Open-with modal,
-      Accessibility prompt. These live in widget BINDINGS, not the
-      registry, so they're hand-curated; they're at least short.
+        * Global: actions with no ``contexts`` constraint.
+        * Per-pane sections (Results / Outline / Preview / Query / Filters / Collections):
+    actions whose primary (first) context matches that pane.
+        * Static sections: Settings menu, Source form, Open-with modal,
+          Accessibility prompt. These live in widget BINDINGS, not the
+          registry, so they're hand-curated; they're at least short.
 
-    ``context_hint`` is the section label that should be moved to the
-    top (right after Global) — e.g. "Source form" when the user pressed
-    ``?`` from inside the source-edit form. Empty sections are dropped.
+        ``context_hint`` is the section label that should be moved to the
+        top (right after Global): e.g. "Source form" when the user pressed
+        ``?`` from inside the source-edit form. Empty sections are dropped.
     """
     from fnd.tui.actions import REGISTRY
 
@@ -706,7 +706,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     }
     for action in REGISTRY:
         if action.default_key is None:
-            continue  # palette-only — no key to show
+            continue  # palette-only: no key to show
         # Every pane it works in, not just the first: ←/→ expand and collapse
         # in all three trees but were documented under Results alone, so the
         # Filters section named neither of the keys that move around it.
@@ -731,7 +731,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
         _key_row(*row, section="outline_widget") for row in _KEYS_OUTLINE_WIDGET
     ]
 
-    # Static widget bindings — append AFTER the registry-derived
+    # Static widget bindings: append AFTER the registry-derived
     # sections in declaration order; reordering happens below.
     # Pass section name so widget-only rows that share labels across
     # sections (multiple "Cancel" rows) get distinct MenuItem ids.
@@ -743,7 +743,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     ]
     sections["Open with… modal"] = [_key_row(*row, section="open_with") for row in _KEYS_OPEN_WITH]
     # AX permission gates the macOS Preview AppleScript page-jump, so the modal
-    # can never surface on Linux/Windows — listing its keys there would point
+    # can never surface on Linux/Windows: listing its keys there would point
     # users at a System Settings pane their OS doesn't have.
     if os_labels.is_macos():
         sections["Accessibility prompt"] = [
@@ -896,7 +896,7 @@ def _set_highlights(app: FNDApp, value: bool) -> None:
 
 
 def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
-    """Content of the Preferences sub-screen — scalars / toggles / pickers
+    """Content of the Preferences sub-screen: scalars / toggles / pickers
     grouped by area."""
     return (
         header("Search behaviour", level=2),
@@ -1236,7 +1236,7 @@ def _choices_apps_for_kind(app: FNDApp, kind: str) -> list[ChoiceOption]:
             continue
         if not app_def.available():
             continue
-        # `reveal` acts on the file without opening it — offering it here would
+        # `reveal` acts on the file without opening it: offering it here would
         # let a default silently stop Open from opening this kind. It stays in
         # the Open-with picker, which is a one-shot choice.
         if not app_def.selectable_default:
@@ -1260,7 +1260,7 @@ def _get_app_default_for_kind(app: FNDApp, kind: str) -> str:
 
 def _set_app_default_for_kind(app: FNDApp, kind: str, value: Any) -> None:
     """Persist the picker choice. Empty value (auto-resolve sentinel)
-    clears the explicit default — done by reloading config, removing
+    clears the explicit default: done by reloading config, removing
     the key, and writing the whole [app_defaults] back via tomlkit."""
     from fnd.config import default_config_path, load, write_setting
 
@@ -1268,7 +1268,7 @@ def _set_app_default_for_kind(app: FNDApp, kind: str, value: Any) -> None:
     if value:
         write_setting(config_path=cfg_path, dotted_path=("app_defaults", kind), value=value)
     else:
-        # No write_unset helper — round-trip via tomlkit to drop the key.
+        # No write_unset helper: round-trip via tomlkit to drop the key.
         import tomlkit
 
         if cfg_path.exists():
@@ -1306,7 +1306,7 @@ def interrupted_index(name: str) -> tuple[int, int] | None:
 
 
 def _collection_summary(app: FNDApp, name: str) -> str:
-    """Trailing slot for a collection row in the Collections sub-screen —
+    """Trailing slot for a collection row in the Collections sub-screen:
     shows scope dot, source count, ranking profile, and whether the last
     index of it stopped part-way."""
     cfg = app._config  # type: ignore[attr-defined]
@@ -1470,7 +1470,7 @@ def _open_keybindings_file_action(app: FNDApp) -> None:
 def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
     """Content of the Collections sub-screen.
 
-    Two actions at the top — Add collection + Update all collections —
+    Two actions at the top, Add collection + Update all collections,
     then one drill-in row per configured collection."""
     cfg = app._config  # type: ignore[attr-defined]
     names = sorted(cfg.collections.keys()) if cfg else []
@@ -1601,7 +1601,7 @@ def _compute_flat_pdfs_for(name: str) -> str:
 
 
 def _summary_update_all(app: FNDApp) -> str:
-    """Trailing context for the Update all collections action — count
+    """Trailing context for the Update all collections action: count
     of collections + rough total file count if known."""
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None:
@@ -2083,7 +2083,7 @@ def _summary_keybindings_path(_app: FNDApp) -> str:
 
 
 def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
-    """Indexing sub-screen — app-wide search-index actions and behaviour.
+    """Indexing sub-screen: app-wide search-index actions and behaviour.
 
     The combined screen prepends an "Update everything (index +
     texturise)" action at the top via ``_provider_indexing_pdf_texture``;
@@ -2154,7 +2154,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
 
 
 def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
-    """PDF Texture sub-screen — engine, status / actions, cache, and
+    """PDF Texture sub-screen: engine, status / actions, cache, and
     texturising-while-indexing behaviour.
 
     Texturising is the act of turning a PDF's pages into structured
@@ -2643,7 +2643,7 @@ def _pdf_install_verb() -> str:
 
 def _open_pdf_install_confirm(app: FNDApp) -> None:
     """Push the disclosure + Yes/Cancel confirm. On Yes the install (or
-    uninstall) progress modal lands — wired in step 6b."""
+    uninstall) progress modal lands: wired in step 6b."""
     from fnd.tui.settings_screen import StructuredPdfConfirmScreen
 
     app.push_screen(StructuredPdfConfirmScreen())
@@ -2660,7 +2660,7 @@ def _get_cache_at_index_time(app: FNDApp) -> bool:
 
 
 def _summary_cache_update(app: FNDApp) -> str:
-    """Trailing context for the Update cache action — number of PDFs
+    """Trailing context for the Update cache action: number of PDFs
     that don't yet have a cache entry, with a rough time estimate.
     Lazy-loaded since it scans every source dir."""
     from fnd.tui.lazy_trailing import get_or_schedule
@@ -2760,7 +2760,7 @@ def _forget_cache_for_flat_pdfs() -> None:
     file doesn't take down the whole texturise run.
 
     Reuses the most recent background scan when one is cached; otherwise
-    computes inline (this runs on a worker thread, never the event loop —
+    computes inline (this runs on a worker thread, never the event loop:
     see ``_run_update_cache``)."""
     import contextlib
 
@@ -2797,7 +2797,7 @@ def _forget_cache_for_flat_pdfs() -> None:
 
 
 def _summary_indexing(app: FNDApp) -> str:
-    """Auto-resume chip — still used by tests after the section combine."""
+    """Auto-resume chip: still used by tests after the section combine."""
     return "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
 
 
@@ -2812,7 +2812,7 @@ def _engine_chip() -> str:
 
 
 def _summary_pdf_texture(app: FNDApp) -> str:
-    """Engine + cache chip — still used by tests after the section combine."""
+    """Engine + cache chip: still used by tests after the section combine."""
     from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
 
     parts: list[str] = []
@@ -2831,7 +2831,7 @@ def _summary_pdf_texture(app: FNDApp) -> str:
 def _structured_engine_active() -> bool:
     """Whether the current extractor actually produces structured output
     (pymupdf4llm importable). Distinct from _is_pdf_structure_installed(),
-    which tracks the in-app install marker — re-texturisability depends on
+    which tracks the in-app install marker: re-texturisability depends on
     the live capability that extractor_signature() encodes, so re-texturise
     counts gate on this. A 'flat' signature means re-texturising would only
     re-produce flat output, so there's nothing to offer."""
@@ -2842,7 +2842,7 @@ def _structured_engine_active() -> bool:
 
 def _stale_count_short() -> str:
     """Compact '⟳ N old-engine' chip counting SAVED TEXTURINGS (cache
-    entries) on an older engine version — a reason to rebuild. Counts
+    entries) on an older engine version: a reason to rebuild. Counts
     cache entries, not PDFs, so it stays honest about its source."""
     if not _structured_engine_active():
         return ""
@@ -2854,9 +2854,9 @@ def _stale_count_short() -> str:
 
 def _summary_rebuild_all(app: FNDApp) -> str:
     """Trailing for the 'Rebuild all collections' row. Nudges with the
-    number of SAVED TEXTURINGS (cache entries) on an older engine version
-    — counts cache entries, not PDFs (an orphaned entry counts too), so it
-    states its source honestly rather than implying a PDF tally."""
+        number of SAVED TEXTURINGS (cache entries) on an older engine version:
+    counts cache entries, not PDFs (an orphaned entry counts too), so it
+        states its source honestly rather than implying a PDF tally."""
     from fnd.tui.lazy_trailing import get_or_schedule
 
     def _compute() -> str:
@@ -2900,7 +2900,7 @@ def _summary_cache_size_row(app: FNDApp) -> str:
 
 
 def _summary_cache_location_row(_app: FNDApp) -> str:
-    """Trailing for the Cache location row — abbreviated home-dir path.
+    """Trailing for the Cache location row: abbreviated home-dir path.
 
     Cheap (string ops only) so no lazy wrapper needed."""
     from fnd.cache import default_cache_dir
@@ -3006,7 +3006,7 @@ def _compute_pdfs_textured() -> str:
         if total == 0:
             return "no PDFs"
 
-        # X: PDFs in the index with at least one chunk carrying body_md —
+        # X: PDFs in the index with at least one chunk carrying body_md;
         # the Markdown texturing payload that drives the structural
         # preview. body_struct (flat Blocks) is present on EVERY indexed
         # PDF, so it can't distinguish textured from flat; body_md is the
@@ -3053,7 +3053,7 @@ def _run_prune_orphans(app: FNDApp) -> None:
     """Remove texturings for files no longer on disk. Hashing the corpus
     to find what's live is slow, so run it off the UI thread and notify
     the result. Orphans are entries for files that no longer exist, so
-    removal is safe — re-indexing re-creates them only if a file returns."""
+    removal is safe: re-indexing re-creates them only if a file returns."""
     import contextlib
     import threading
 
@@ -3196,7 +3196,7 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
 
 
 def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
-    """Root settings menu — a clean, short list of categories. No
+    """Root settings menu: a clean, short list of categories. No
     content piled on top of each other. Each drill-in row pushes its
     own sub-screen."""
     return (
@@ -3303,7 +3303,7 @@ def build_root_items(app: FNDApp) -> tuple[MenuItem, ...]:
     return _provider_root(app)
 
 
-# Section providers exposed by id — used by `open_settings_section` and
+# Section providers exposed by id: used by `open_settings_section` and
 # the `?` shortcut to push a specific sub-screen directly.
 _SECTION_PROVIDERS: dict[str, Callable[[FNDApp], tuple[MenuItem, ...]]] = {
     SECTION_PREFERENCES: _provider_preferences,
@@ -3385,7 +3385,7 @@ def walk_all_sections(app: FNDApp) -> Iterator[tuple[tuple[str, ...], MenuItem]]
     """Yield ``(breadcrumb, leaf)`` pairs for every selectable item across
     every section. The basis for cross-section search.
 
-    Headers are skipped. Per-collection sub-screens are NOT descended —
+    Headers are skipped. Per-collection sub-screens are NOT descended:
     finding a collection in search drills into its editor anyway.
     """
     for section_id, label in _SECTION_LABELS.items():

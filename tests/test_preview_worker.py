@@ -81,7 +81,7 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
         # Cache hit path: no new worker, no progress, no spinner.
         before_workers = len(app.workers)
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
-        # A cache hit dispatches nothing, so there is no outcome to wait for —
+        # A cache hit dispatches nothing, so there is no outcome to wait for:
         # one drain is the whole point, and the assertions are about absence.
         await pilot.pause()
         assert app._preview.load_progress is None
@@ -137,7 +137,7 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
         assert active_session.total >= 1
         # The line now holds a completed fill for a minimum duration before it
         # clears (so short loads read as "done" rather than flashing), so a
-        # fixed number of pauses is no longer a sound way to wait for it —
+        # fixed number of pauses is no longer a sound way to wait for it:
         # under load it under-waits, and it says nothing about WHY it cleared.
         # Gate on the widget's own state instead.
         await wait_until(
@@ -169,7 +169,7 @@ async def test_switching_files_mid_load_cancels_mount_task(
         first_task: Any = app._preview.mount_task
         # Switch to small.md before big's mount finishes.
         app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
-        # task.cancel() only *requests* cancellation — the task settles to
+        # task.cancel() only *requests* cancellation: the task settles to
         # cancelled()/done() one loop tick later, so asserting those here
         # races that settle (flakes under load). cancelling() flips to >0
         # synchronously on cancel and stays until the task finishes, so it
@@ -190,10 +190,10 @@ async def test_switching_files_mid_load_cancels_mount_task(
 @pytest.mark.asyncio
 async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Path) -> None:
     """A previously-mounted file (with chunk count above the cache
-    threshold) should NOT remount on revisit — its PreviewContainer
+    threshold) should NOT remount on revisit: its PreviewContainer
     stays in the LRU and a return visit is an O(1) class flip."""
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
-    # The shipped cache caps at 1 (see _PREVIEW_CACHE_MAX_FILES) — leaving a file
+    # The shipped cache caps at 1 (see _PREVIEW_CACHE_MAX_FILES), leaving a file
     # then returning rebuilds rather than reusing its container, which measured
     # faster (a larger cache adds arrange overhead without a faster revisit).
     # Lift the cap here to exercise the LRU-reuse path this test guards.
@@ -203,7 +203,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
-        # First visit to big — fully mount. Gated on the cache entry appearing
+        # First visit to big: fully mount. Gated on the cache entry appearing
         # rather than on a tick count: a fixed number of pauses is a wait only
         # while the machine is idle, and degrades to a no-op under suite load,
         # which is exactly when this test used to fail.
@@ -235,7 +235,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
             timeout=30.0,
             message="never switched away to small.md",
         )
-        # Return to big — the strip shows briefly during the cache-hit reveal
+        # Return to big: the strip shows briefly during the cache-hit reveal
         # cycle, then idles once _finalise_pre_reveal's on_done fires. Wait for
         # BOTH signals together: idling is what says the reveal finished, and
         # checking it on a tick count is what made this flaky.
@@ -267,7 +267,7 @@ async def test_rapid_file_switching_does_not_raise_duplicate_ids(
         await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
-        # Toggle several times in quick succession — each call cancels
+        # Toggle several times in quick succession: each call cancels
         # the in-flight mount and starts a new one. None of these calls
         # should raise.
         for _ in range(5):
@@ -284,7 +284,7 @@ async def test_rapid_file_switching_does_not_raise_duplicate_ids(
 async def test_preview_title_no_longer_carries_progress_text(
     cfg: Config, two_file_index: Path
 ) -> None:
-    """The border title stays clean — never says 'loading N/M chunks'.
+    """The border title stays clean: never says 'loading N/M chunks'.
     Progress lives on the ProgressBar widget instead."""
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
@@ -298,7 +298,7 @@ async def test_preview_title_no_longer_carries_progress_text(
         assert "chunks" not in title.lower()
         # After load the title shows the file basename. Gated on that, not on
         # three pauses: the load is a decode worker and a mount, and Windows
-        # finished neither in three ticks — four attempts, four failures, the
+        # finished neither in three ticks, four attempts, four failures, the
         # title still naming the cursor-parked file.
         await wait_until(
             pilot,

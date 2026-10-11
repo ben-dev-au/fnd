@@ -1,7 +1,7 @@
 """Build the test-fixture corpus.
 
 Run with ``uv run python -m tests.build_fixtures``. Outputs are committed so the
-contract is reproducible without running this script — but running it must produce
+contract is reproducible without running this script, but running it must produce
 byte-identical content (no timestamps in PDF metadata, no random ordering).
 
 Anchor phrases are deliberately weird so they cannot appear naturally elsewhere.
@@ -23,7 +23,7 @@ from pptx.util import Inches, Pt
 # picked up now that .py is an indexed type); outputs go to tests/fixtures/.
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# (path, page-or-section, content) — anchor phrases must be unique across the corpus.
+# (path, page-or-section, content): anchor phrases must be unique across the corpus.
 # The generator inserts them so the test layer knows where to find them.
 PDF_PAGES: dict[int, str] = {
     1: "Introduction. This is the first page of the test PDF document.",
@@ -102,7 +102,7 @@ def _write_pdf(path: Path, pages: dict[int, str]) -> None:
 
 # ── Invisible-text fixture (scanned-OCR mimic) ───────────────────────────────
 # Each page has a visible heading plus a body drawn in render-mode 3
-# (invisible) — exactly how scanned books store their OCR layer behind a
+# (invisible): exactly how scanned books store their OCR layer behind a
 # page image. pymupdf4llm's layout parser drops the invisible body
 # (coverage collapses), so this fixture exercises the InvisibleTextTier
 # recovery path deterministically without the real scanned corpus.
@@ -190,7 +190,7 @@ def _write_headings_pdf(path: Path) -> None:
         ):
             page.insert_text((72, y), line, fontsize=11, fontname="helv", render_mode=3)
             y += 16
-        # A visible running footer — real scanned pages carry a small
+        # A visible running footer: real scanned pages carry a small
         # visible page label, so the layout path emits something (the gate
         # requires production Markdown to be present before it fires).
         page.insert_text((72, 760), "page seven", fontsize=9, fontname="helv")
@@ -282,7 +282,7 @@ def build() -> None:
     _write_docx(FIXTURES / "docs" / "methods.docx", DOCX_PARAGRAPHS)
 
 
-# ── Anchor table — the test contract ─────────────────────────────────────────
+# ── Anchor table: the test contract ─────────────────────────────────────────
 # Each entry is (path-relative-to-FIXTURES, kind, locator, phrase).
 # `locator` is a page number for PDF and a heading_path for MD.
 ANCHORS: list[tuple[str, str, object, str]] = [

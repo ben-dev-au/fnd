@@ -1,4 +1,4 @@
-"""Tantivy schema definition — single source of truth for the index format.
+"""Tantivy schema definition: single source of truth for the index format.
 
 Changing fields = full reindex; the writer compares
 ``SCHEMA_VERSION`` against the index sidecar and refuses to load on mismatch.
@@ -47,7 +47,7 @@ from fnd.analysis import TEXT_ANALYSER, WORD_ANALYSER
 # freshness) and the two tag fields. Tags are split by provenance so
 # toggling a source in config is a query-time change, not a reindex.
 # v9 (2026-07-23): fine-grained kinds + new suffixes (epub, html, ipynb, odf,
-# per-language code, data/config). No field or schema-shape change — the bump
+# per-language code, data/config). No field or schema-shape change: the bump
 # forces a reindex so existing collections pick up the newly-supported files.
 # v10 (2026-09-18): normalise cross-collection storage. A file is stored once,
 # not once per collection: F_COLLECTION is multi-valued (the set a file belongs
@@ -89,7 +89,7 @@ F_PAGE_LABEL: Final = "page_label"
 F_SLIDE: Final = "slide"
 # 1-based source line of the chunk's first character (MD heading-open
 # line, TXT chunk window start). 0 for kinds without line tracking
-# (PDF, DOCX, PPTX) — they have page/slide/heading_path instead.
+# (PDF, DOCX, PPTX): they have page/slide/heading_path instead.
 F_LINE: Final = "line"
 F_HEADING_PATH: Final = "heading_path"
 F_TITLE: Final = "title"
