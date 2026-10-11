@@ -118,12 +118,19 @@ def _layout_current(app: FNDApp) -> bool:
 
 
 def _landed(app: FNDApp) -> bool:
+    """Settled and at the landing's offset: a glide's scroll can start after it commits."""
     pane = app.query_one("#preview_pane")
-    return not (
-        app._preview_scroll.is_settling
-        or app._preview.pipeline_busy()
-        or app.animator.is_being_animated(pane, "scroll_y")
-    ) and _layout_current(app)
+    destination = app._preview_scroll.landing_destination()
+    arrived = destination is None or int(app._outline._scroller().scroll_offset.y) == destination
+    return (
+        arrived
+        and not (
+            app._preview_scroll.is_settling
+            or app._preview.pipeline_busy()
+            or app.animator.is_being_animated(pane, "scroll_y")
+        )
+        and _layout_current(app)
+    )
 
 
 def _followed(app: FNDApp) -> bool:

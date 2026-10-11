@@ -38,6 +38,12 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # later as an empty preview.
 FREEZE_REVEAL_WAIT_TICKS = 40
 
+# How often, and how far apart, the freeze sweep comes back for chunks not yet
+# laid out (height 0). Its settle can time out on a loaded runner, and a sweep
+# that met only unlaid chunks froze none and never ran again.
+FREEZE_UNLAID_RETRIES = 20
+FREEZE_UNLAID_RETRY_SECONDS = 0.1
+
 # How long the freeze sweep may hold the event loop before yielding, in seconds.
 # The sweep swaps every out-of-window chunk's widget tree for its capture, and it
 # used to do the whole file in ONE synchronous loop — so the cold-to-frozen
