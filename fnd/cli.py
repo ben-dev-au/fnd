@@ -753,15 +753,6 @@ def collection_add(
         first = e.errors()[0]
         echo(f"invalid {'.'.join(map(str, first['loc'])) or 'source'}: {first['msg']}", err=True)
         raise typer.Exit(code=1) from e
-    from fnd.filters.dir_tree import exists_exactly
-
-    for folder in own.exclude_dirs or []:
-        if not exists_exactly(Path(source[0]).expanduser(), folder):
-            echo(
-                f"warning: {folder!r} is not a folder under the source (names match "
-                "exactly, case included); it excludes nothing until one exists",
-                err=True,
-            )
     # Read before the write: the sibling set is what the new source is being
     # compared against, and after the write it contains the new source itself.
     from fnd.config import load as _load
@@ -784,6 +775,15 @@ def collection_add(
         echo(f"nothing was written: {e}", err=True)
         raise typer.Exit(code=1) from e
     echo(f"added source {new_source.path} to collection {name} in {cfg_path}")
+    from fnd.filters.dir_tree import exists_exactly
+
+    for folder in own.exclude_dirs or []:
+        if not exists_exactly(new_source.path.expanduser(), folder):
+            echo(
+                f"warning: {folder!r} is not a folder under the source (names match "
+                "exactly, case included); it excludes nothing until one exists",
+                err=True,
+            )
     if overlap:
         relation = "already covers" if overlap_contains else "is already inside"
         echo(

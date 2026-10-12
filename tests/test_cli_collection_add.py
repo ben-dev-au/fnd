@@ -282,3 +282,21 @@ def test_collection_add_warns_when_an_excluded_folder_is_not_there(
     assert "'Archive' is not a folder under the source" in result.output
     assert "'archive' is not" not in result.output
     assert load(cfg_path).collection("l").sources[0].exclude_dirs == ["Archive", "archive"]
+
+
+def test_collection_add_does_not_warn_about_a_source_it_then_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A name clash exits 1 before any folder warning, since nothing is written."""
+    runner, _cfg = _runner_with_config(monkeypatch, tmp_path)
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    assert (
+        runner.invoke(app, ["collection", "add", "Learning", "--source", str(notes)]).exit_code == 0
+    )
+    result = runner.invoke(
+        app,
+        ["collection", "add", "learning", "--source", str(notes), "--exclude-dir", "missing"],
+    )
+    assert result.exit_code == 1
+    assert "is not a folder under the source" not in result.output

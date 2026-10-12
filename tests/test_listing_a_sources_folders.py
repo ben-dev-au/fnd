@@ -80,3 +80,60 @@ def test_a_folder_that_cannot_be_read_marks_the_listing_partial(
 def test_a_missing_root_is_not_a_partial_listing(tmp_path: Path) -> None:
     """Nothing there is a complete answer, unlike something unreadable."""
     assert not list_dirs(tmp_path / "nope", skip_dirs=frozenset()).truncated
+
+
+def test_a_full_listing_stops_scanning_the_rest_of_the_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once the cap clips a folder's children no later folder can add room, so none is read."""
+    import os
+
+    _tree(tmp_path, *[f"d{i}/x" for i in range(5)])
+    real = os.scandir
+    calls: list[str] = []
+
+    def counting(path: object) -> object:
+        calls.append(str(path))
+        return real(path)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("fnd.walk.os.scandir", counting)
+    got = list_dirs(tmp_path, skip_dirs=frozenset(), max_dirs=3)
+    assert got.truncated
+    assert len(calls) == 1
+
+
+def test_an_entry_that_cannot_be_typed_leaves_its_parent_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A child whose type is unknown might be a folder, so the parent cannot count as fully listed."""
+    import os
+
+    _tree(tmp_path, "a", "b")
+    real = os.scandir
+
+    class Entry:
+        def __init__(self, entry: os.DirEntry[str]) -> None:
+            self._entry = entry
+            self.name = entry.name
+            self.path = entry.path
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            if self.name == "a":
+                raise PermissionError(13, "denied")
+            return self._entry.is_dir(follow_symlinks=follow_symlinks)
+
+    class Scan:
+        def __init__(self, path: object) -> None:
+            self._it = real(path)  # type: ignore[arg-type]
+
+        def __enter__(self) -> list[Entry]:
+            return [Entry(e) for e in self._it]
+
+        def __exit__(self, *exc: object) -> None:
+            self._it.close()
+
+    monkeypatch.setattr("fnd.walk.os.scandir", Scan)
+    got = list_dirs(tmp_path, skip_dirs=frozenset())
+    assert got.dirs == ("b",)
+    assert got.truncated
+    assert "" not in got.read

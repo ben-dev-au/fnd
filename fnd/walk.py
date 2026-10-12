@@ -354,10 +354,12 @@ def list_dirs(
             truncated = True
             continue
         children: list[str] = []
+        unsure = False
         for entry in entries:
             try:
                 is_dir = entry.is_dir(follow_symlinks=follow_symlinks)
             except OSError:
+                unsure = True
                 continue
             name = entry.name
             if not is_dir or name.startswith(".") or name in skip_dirs or _is_index_dir(entry.path):
@@ -366,13 +368,17 @@ def list_dirs(
             if not exc.covers_dir(child):
                 children.append(child)
         room = max_dirs - len(dirs)
-        if len(children) > room:
+        clipped = len(children) > room
+        if clipped:
             children = children[:room]
+        if clipped or unsure:
             truncated = True
         else:
             read.add(rel)
         dirs.extend(children)
         queue.extend(children)
+        if clipped:
+            break
     return DirListing(tuple(dirs), frozenset(read), truncated)
 
 

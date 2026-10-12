@@ -41,13 +41,13 @@ def test_a_nested_path_excludes_just_that_folder(tmp_path: Path) -> None:
 
 
 def test_glob_characters_in_a_folder_name_are_literal(tmp_path: Path) -> None:
-    """A folder called `[draft]` excludes itself, and `a*b` does not act as a pattern."""
+    """A folder called `[draft]` excludes itself, and `a[bc]` does not act as a pattern."""
     _touch(tmp_path / "[draft]" / "a.md")
     _touch(tmp_path / "d" / "b.md")
-    _touch(tmp_path / "axb" / "c.md")
-    _touch(tmp_path / "a*b" / "e.md")
-    got = _names(tmp_path, exclude_dirs=["[draft]", "a*b"])
-    assert got == {"d/b.md", "axb/c.md"}
+    _touch(tmp_path / "ab" / "c.md")
+    _touch(tmp_path / "a[bc]" / "e.md")
+    got = _names(tmp_path, exclude_dirs=["[draft]", "a[bc]"])
+    assert got == {"d/b.md", "ab/c.md"}
 
 
 def test_an_include_glob_cannot_readmit_an_excluded_folder(tmp_path: Path) -> None:

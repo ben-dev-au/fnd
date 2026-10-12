@@ -73,10 +73,10 @@ def exists_exactly(root: Path, rel: str) -> bool:
     current = root
     for part in rel.split("/"):
         try:
-            names = os.listdir(current)
+            with os.scandir(current) as it:
+                if not any(entry.name == part for entry in it):
+                    return False
         except OSError:
-            return False
-        if part not in names:
             return False
         current = current / part
     return current.is_dir()
