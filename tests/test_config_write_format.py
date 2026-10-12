@@ -57,14 +57,16 @@ def test_every_commented_key_can_be_uncommented_and_still_load(tmp_path: Path) -
     # Derived, not a fixed floor: a renderer that stopped emitting commented
     # examples would still clear an arbitrary number. A field defaulting to
     # None renders as a bare `# key =`, which is not uncommentable, so only
-    # fields with a value count. `filters` is a table, not a key.
-    from fnd.config import DefaultFilters, Defaults
+    # fields with a value count. `filters` is a table, not a key; per-source fields have no defaults line.
+    from fnd.config import PER_SOURCE_ONLY, DefaultFilters, Defaults
 
     def with_values(model: type) -> int:
         return sum(
             1
             for name, info in model.model_fields.items()
-            if name != "filters" and info.get_default(call_default_factory=True) is not None
+            if name != "filters"
+            and name not in PER_SOURCE_ONLY
+            and info.get_default(call_default_factory=True) is not None
         )
 
     expected = with_values(Defaults) + with_values(DefaultFilters)

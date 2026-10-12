@@ -12,13 +12,17 @@ change what it holds as the clock moves.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from fnd.filters.excludes import retick, split_presets
 from fnd.filters.model import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.kinds import ALL_KIND_IDS, CATEGORIES, KIND_BY_ID, KINDS_IN_CATEGORY
+
+if TYPE_CHECKING:
+    from fnd.walk import DirListing
 
 # Source-neutral labels: there are no Finder tags off macOS, and the branch
 # should not name an OS the user is not on.
@@ -30,10 +34,12 @@ TAG_SOURCE_LABELS: dict[str, str] = {
 __all__ = [
     "BOUND_LEGEND",
     "BRANCHES",
+    "FOLDERS_LEGEND",
     "IGNORE_LEGEND",
     "KINDS_LEGEND",
     "LEGEND",
     "RULES_LEGEND",
+    "FolderOffer",
     "apply_selection",
     "custom_ids",
     "selection_for",
@@ -70,6 +76,10 @@ RULES_LEGEND = "⏎  opens a branch, then the editor for a rule in it"
 #: On the excludes branch ● means "skip", the reverse of "index ONLY these".
 EXCLUDES_LEGEND = (
     "●  never read   ◐  some of these   ○  read as usual   (typed globs: Rules you type)"
+)
+FOLDERS_LEGEND = (
+    "●  excluded, with everything in it   ◐  some folders below excluded, its own files indexed   "
+    "○  indexed"
 )
 #: `kinds` is an include-only list in the model, so `⊘` is unreachable here. The
 #: shared line would send a user looking for an exclude state that does not exist,
@@ -265,6 +275,7 @@ def spec_branches(
     spec: FilterSpec,
     sample: SourceSample | None = None,
     keep_custom: Mapping[str, str] | None = None,
+    folders: FolderOffer | None = None,
 ) -> list[Branch]:
     """The branches a filter screen should render for ``spec``.
 
@@ -323,6 +334,8 @@ def spec_branches(
         )
     )
     branches.append(_excludes_branch())
+    if folders is not None:
+        branches.append(_folders_branch(folders, spec.exclude_dirs))
     # Rows stay ordered by the bound they set, so a custom one lands among the
     # presets rather than ahead of them.
     sized = [(-1 if v is None else v, f"size:{i}", lbl) for i, lbl, v in _SIZES]
@@ -397,6 +410,7 @@ def spec_branches(
     _on, typed = split_presets(spec.excludes)
     set_rules = sum(1 for v in (spec.frontmatter, spec.expression) if (v or "").strip())
     set_rules += len(raw_rows) + (1 if typed else 0)
+    set_rules += 1 if (folders is not None and spec.exclude_dirs) else 0
     branches.append(
         Branch(
             "rules",
@@ -406,12 +420,70 @@ def spec_branches(
                 ("rule:frontmatter", _rule_label("Frontmatter rule", spec.frontmatter)),
                 ("rule:expression", _rule_label("Custom rule", spec.expression)),
                 ("rule:excludes", _rule_label("Excluded globs", ", ".join(typed))),
+                *(
+                    (
+                        (
+                            "rule:exclude_dirs",
+                            _rule_label(
+                                "Excluded folders (as paths)", ", ".join(spec.exclude_dirs)
+                            ),
+                        ),
+                    )
+                    if folders is not None
+                    else ()
+                ),
                 *raw_rows,
             ),
             legend=RULES_LEGEND,
         )
     )
     return branches
+
+
+@dataclass(frozen=True, slots=True)
+class FolderOffer:
+    """A source's folders for the picker; ``listing`` is ``None`` while they are still being listed."""
+
+    listing: DirListing | None
+
+
+def _folders_branch(offer: FolderOffer, chosen: Sequence[str]) -> Branch:
+    """The source's folders as nested rows, with any configured folder the scan missed."""
+    listing = offer.listing
+    paths = {*(listing.dirs if listing else ()), *chosen}
+    for path in list(paths):
+        parts = path.split("/")
+        paths.update("/".join(parts[:i]) for i in range(1, len(parts)))
+    children: dict[str, list[str]] = {}
+    for path in sorted(paths):
+        children.setdefault(path.rpartition("/")[0], []).append(path)
+    read = listing.read if listing else frozenset()
+
+    def build(parent: str) -> Branch:
+        kids = children.get(parent, [])
+        return Branch(
+            f"dir:{parent}",
+            parent.rpartition("/")[2],
+            "folders",
+            items=tuple((f"dir:{k}", k.rpartition("/")[2]) for k in kids if k not in children),
+            groups=tuple(build(k) for k in kids if k in children),
+            complete=parent in read,
+        )
+
+    top = build("")
+    empty = "scanning…" if listing is None else ("none" if paths else "no sub-folders")
+    partial = listing is not None and listing.truncated
+    return Branch(
+        "folders",
+        "Excluded folders" + (" · partial list, type a path for the rest" if partial else ""),
+        "folders",
+        top.items,
+        top.groups,
+        empty_label=empty,
+        noun="folders",
+        legend=FOLDERS_LEGEND,
+        complete=listing is not None and not listing.truncated,
+    )
 
 
 def _excludes_branch() -> Branch:
@@ -454,6 +526,7 @@ def selection_for(
     if fndignore:
         selected.add("ignore:fnd")
     selected |= {f"exclude:{key}" for key in split_presets(spec.excludes)[0]}
+    selected |= {f"dir:{d}" for d in spec.exclude_dirs}
     selected.add(f"size:{_size_id(spec.max_size)}")
     selected.add(f"modified:{_window_id(spec.modified_after)}")
     selected.add(f"created:{_window_id(spec.created_after)}")
@@ -589,9 +662,12 @@ def apply_selection(
         bounds[f"{field_name}_after"] = today - dt.timedelta(days=days) if days else None
 
     presets = [i.removeprefix("exclude:") for i in selected if i.startswith("exclude:")]
+    picked_dirs = {i.removeprefix("dir:") for i in selected if i.startswith("dir:")}
+    kept_dirs = [d for d in spec.exclude_dirs if d in picked_dirs]
     updated = replace(
         spec,
         excludes=retick(spec.excludes, presets),
+        exclude_dirs=(*kept_dirs, *sorted(picked_dirs - set(kept_dirs))),
         kinds=kinds,
         include_tags=keep,
         exclude_tags=tags,

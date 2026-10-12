@@ -213,3 +213,90 @@ def test_collection_add_writes_excludes_into_the_sources_filters(
     source = tomllib.loads(cfg_path.read_text(encoding="utf-8"))["collections"]["c"]["sources"][0]
     assert "excludes" not in source
     assert source["filters"]["excludes"] == ["**/.trash/**"]
+
+
+def test_collection_add_with_excluded_folders(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--exclude-dir is repeatable and lands on the source's filters, leaving excludes inherited."""
+    runner, cfg_path = _runner_with_config(monkeypatch, tmp_path)
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    result = runner.invoke(
+        app,
+        [
+            "collection",
+            "add",
+            "learning",
+            "--source",
+            str(notes),
+            "--exclude-dir",
+            "archive/",
+            "--exclude-dir",
+            "projects/old",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    source = load(cfg_path).collection("learning").sources[0]
+    assert source.exclude_dirs == ["archive", "projects/old"]
+    assert source.filters is not None
+    assert source.filters.excludes is None
+
+
+def test_collection_add_refuses_a_folder_outside_the_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A path that escapes the source exits 1 and says why."""
+    runner, _cfg = _runner_with_config(monkeypatch, tmp_path)
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    result = runner.invoke(
+        app, ["collection", "add", "learning", "--source", str(notes), "--exclude-dir", "../x"]
+    )
+    assert result.exit_code == 1
+    assert "must stay inside the source folder" in result.output
+
+
+def test_collection_add_warns_when_an_excluded_folder_is_not_there(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A typo or a wrong-case name is accepted but said to exclude nothing."""
+    runner, cfg_path = _runner_with_config(monkeypatch, tmp_path)
+    notes = tmp_path / "notes"
+    (notes / "archive").mkdir(parents=True)
+    result = runner.invoke(
+        app,
+        [
+            "collection",
+            "add",
+            "l",
+            "--source",
+            str(notes),
+            "--exclude-dir",
+            "Archive",
+            "--exclude-dir",
+            "archive",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "'Archive' is not a folder under the source" in result.output
+    assert "'archive' is not" not in result.output
+    assert load(cfg_path).collection("l").sources[0].exclude_dirs == ["Archive", "archive"]
+
+
+def test_collection_add_does_not_warn_about_a_source_it_then_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A name clash exits 1 before any folder warning, since nothing is written."""
+    runner, _cfg = _runner_with_config(monkeypatch, tmp_path)
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    assert (
+        runner.invoke(app, ["collection", "add", "Learning", "--source", str(notes)]).exit_code == 0
+    )
+    result = runner.invoke(
+        app,
+        ["collection", "add", "learning", "--source", str(notes), "--exclude-dir", "missing"],
+    )
+    assert result.exit_code == 1
+    assert "is not a folder under the source" not in result.output

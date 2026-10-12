@@ -29,6 +29,7 @@ from textual.message import Message
 from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
+from fnd.filters import dir_tree
 from fnd.tui.results_labels import _styled_state_row, state_colour
 from fnd.tui.ui_text import PlainTree
 from fnd.tui.widgets.arrow_expansion import HomeToFirstRow
@@ -40,11 +41,16 @@ _PARTIAL = "◐"
 _EMPTY = "○"
 _EXCLUDED = "⊘"
 _MARKER_GAP = "  "
+FOLDER_PREFIX = "dir:"
 
 #: The tag whose guard must not be invertible. "Index only files tagged
 #: no_index" empties a collection and needs a reindex to undo, and the tag
 #: ships excluded, so one press on the state a user finds would do it.
 NEVER_ONLY_TAGS = ("no_index",)
+
+
+def _folder_path(item_id: str) -> str:
+    return item_id.removeprefix(FOLDER_PREFIX)
 
 
 def _plural(noun: str, n: int) -> str:
@@ -227,6 +233,8 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
         self._action_items: set[str] = set()
         self._selected: set[str] = set()
         self._item_labels: dict[str, str] = {}
+        self._folder_known: frozenset[str] = frozenset()
+        self._folder_read: frozenset[str] = frozenset()
 
     # ── Model ────────────────────────────────────────────────────────────
     def set_model(
@@ -236,10 +244,25 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
         *,
         excluded: set[str] | frozenset[str] | None = None,
         expanded: set[str] | None = None,
+        folder_model: list[ToggleGroup] | tuple[ToggleGroup, ...] | None = None,
     ) -> None:
-        """Replace the tree contents. ``expanded`` = group ids to open."""
+        """Replace the tree contents. ``expanded`` = group ids to open.
+
+        ``folder_model`` is the unfiltered groups, so a row filter cannot hide a folder from a split.
+        """
         self._groups = tuple(groups)
         self._by_id = {d.id: d for g in self._groups for d in g.walk()}
+        whole = {d.id: d for g in (folder_model or self._groups) for d in g.walk()}
+        folders = [g for g in whole.values() if g.mode == "folders"]
+        self._folder_known = frozenset(
+            _folder_path(i)
+            for g in folders
+            for i in (g.id, *(it.id for it in g.items))
+            if i.startswith(FOLDER_PREFIX)
+        )
+        self._folder_read = frozenset(
+            _folder_path(g.id) for g in folders if g.id.startswith(FOLDER_PREFIX) and g.complete
+        )
         self._selected = set(selected)
         self._excluded = set(excluded or ())
         self._item_labels = {it.id: it.label for g in self._groups for it in g.leaves}
@@ -339,6 +362,8 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
         leaves would show no colour at all until a branch is expanded.
         """
         mode = self._mode(g)
+        if mode == "folders":
+            return self._folder_label(g)
         # A roll-up speaks for the whole branch; a row filter hides rows, it
         # does not shrink what "all of them" means.
         leaves = g.counted_leaves
@@ -378,6 +403,8 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
         )
 
     def _item_label(self, item_id: str) -> Any:
+        if item_id.startswith(FOLDER_PREFIX):
+            return self._folder_row(item_id, self._item_labels.get(item_id, item_id))
         if item_id in self._action_items:
             return f"⏎{_MARKER_GAP}{self._item_labels.get(item_id, item_id)}"
         if item_id in self._excluded:
@@ -388,6 +415,48 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
             marker, style = _EMPTY, ""
         label = f"{_MARKER_GAP}{self._item_labels.get(item_id, item_id)}"
         return _styled_state_row(marker, label, style)
+
+    def _stored_folders(self) -> tuple[str, ...]:
+        return tuple(_folder_path(i) for i in self._selected if i.startswith(FOLDER_PREFIX))
+
+    def _folder_row(self, item_id: str, name: str) -> Any:
+        marker = {"on": _FULL, "part": _PARTIAL, "off": _EMPTY}[
+            dir_tree.state(self._stored_folders(), _folder_path(item_id))
+        ]
+        return _styled_state_row(marker, f"{_MARKER_GAP}{name}", self._state_colour(marker))
+
+    def _folder_label(self, g: ToggleGroup) -> Any:
+        if g.id.startswith(FOLDER_PREFIX):
+            return self._folder_row(g.id, g.label)
+        stored = self._stored_folders()
+        marker = _PARTIAL if stored else _EMPTY
+        note = f"{len(stored)} excluded" if stored else g.empty_label
+        text = f"{_MARKER_GAP}{g.label}" + (f"  ({note})" if note else "")
+        return _styled_state_row(marker, text, self._state_colour(marker))
+
+    def _toggle_folder(self, item_id: str) -> bool:
+        """Flip a folder row; ``False`` (with a notice) when the flip needs folders never listed."""
+        updated = dir_tree.toggle(
+            self._stored_folders(), _folder_path(item_id), self._folder_known, self._folder_read
+        )
+        if updated is None:
+            self.notify(
+                "Not every folder inside was listed: untick the enclosing folder, "
+                "or edit the paths",
+                severity="warning",
+            )
+            return False
+        self._selected = {i for i in self._selected if not i.startswith(FOLDER_PREFIX)}
+        self._selected |= {FOLDER_PREFIX + d for d in updated}
+        return True
+
+    def _repaint_folders(self, node: TreeNode[dict[str, Any]]) -> None:
+        top = node
+        while top.parent is not None and top.parent is not self.root:
+            top = top.parent
+        group = self._group_by_id(str((top.data or {}).get("id")))
+        if group is not None:
+            self._repaint_group(top, group)
 
     def _state_colour(self, marker: str) -> str:
         """The colour this state marker carries, or none for a neutral one."""
@@ -419,7 +488,9 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
         group = self._group_by_id(str(data.get("id")))
         if group is None:
             return None
-        if self._mode(group) in ("actions", "cycle", "radio"):
+        if self._mode(group) in ("actions", "cycle", "radio") or (
+            self._mode(group) == "folders" and not group.id.startswith(FOLDER_PREFIX)
+        ):
             return "Collapse" if node.is_expanded else "Expand"
         return "Toggle"
 
@@ -437,6 +508,13 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
         if kind == "group":
             g = self._group_by_id(str(data.get("id")))
             if g is None:
+                return
+            if self._mode(g) == "folders":
+                if not g.id.startswith(FOLDER_PREFIX):
+                    node.toggle()
+                elif self._toggle_folder(g.id):
+                    self._repaint_folders(node)
+                    self.post_message(self.SelectionChanged(self, self.selected, self.excluded))
                 return
             ids = {it.id for it in g.leaves}
             if self._mode(g) == "actions":
@@ -463,6 +541,11 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
             item_id = str(data.get("id"))
             group = self._group_by_id(str(data.get("group")))
             mode = self._mode(group)
+            if mode == "folders":
+                if self._toggle_folder(item_id):
+                    self._repaint_folders(node)
+                    self.post_message(self.SelectionChanged(self, self.selected, self.excluded))
+                return
             if mode == "actions":
                 self.post_message(self.ActionSelected(self, item_id))
                 return

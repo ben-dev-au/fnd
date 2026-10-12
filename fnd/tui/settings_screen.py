@@ -2148,6 +2148,7 @@ def open_source_filter_browser(
     root: Any,
     on_change: Callable[[], None],
     globs: list[str] | None = None,
+    follow_symlinks: bool = False,
 ) -> None:
     """The source's *effective* filters, edited as branches.
 
@@ -2189,7 +2190,20 @@ def open_source_filter_browser(
             ignore_names=names,
             # The excludes the screen is showing, so a tick changes the counts at once.
             excludes=list(gating.excludes),
+            exclude_dirs=list(gating.exclude_dirs),
             gate=build_gate(dataclasses.replace(gating, kinds=())),
+        )
+
+    def _dirs() -> Any:
+        from fnd.walk import DirListing, list_dirs, resolve_skip_dirs
+
+        if root is None or path_is_absent(root):
+            return DirListing((), frozenset(), False)
+        return list_dirs(
+            root,
+            skip_dirs=resolve_skip_dirs(cfg.defaults if cfg else None),
+            excludes=list(resolved.excludes),
+            follow_symlinks=follow_symlinks,
         )
 
     def _save(spec: Any, gitignore: bool, fndignore: bool) -> None:
@@ -2214,6 +2228,8 @@ def open_source_filter_browser(
             gitignore=resolved.respect_gitignore,
             fndignore=resolved.respect_fndignore,
             sample_provider=_sample,
+            dirs_provider=_dirs,
+            root=root,
             no_tags_note="no tags found in this source",
             globs=list(globs or ()),
             inherited=(
@@ -2379,6 +2395,7 @@ class _SourceFields(Screen[None]):
             root,
             self._populate_fields,
             globs,
+            bool(self._fields.get("follow_symlinks")),
         )
 
     def _filters_summary(self) -> str:
@@ -5488,6 +5505,7 @@ _SPEC_FIELDS = (
     "frontmatter",
     "expression",
     "excludes",
+    "exclude_dirs",
 )
 
 
@@ -5697,6 +5715,8 @@ class GlobTextScreen(PartScreen):
     The presets are rows to tick; this holds whatever else the walk should skip.
     """
 
+    NOUN = "glob"
+    HINT = _GLOB_HINT
     CSS = RuleTextScreen.CSS.replace("RuleTextScreen", "GlobTextScreen").replace("rule_", "glob_")
 
     def __init__(
@@ -5710,9 +5730,9 @@ class GlobTextScreen(PartScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
             set_border_title(box, self._title)
-            yield TextArea("\n".join(join_list([g]) for g in self._value), id="glob_text")
+            yield TextArea("\n".join(self._shown(g) for g in self._value), id="glob_text")
             yield PlainStatic("", id="glob_status")
-            yield PlainStatic(_GLOB_HINT, id="glob_help")
+            yield PlainStatic(self.HINT, id="glob_help")
         yield PlainStatic("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -5729,30 +5749,97 @@ class GlobTextScreen(PartScreen):
         self.edited()
         self._refresh_status()
 
-    def _globs(self) -> tuple[str, ...]:
-        text = self.query_one("#glob_text", TextArea).text
-        return tuple(split_list(text))
+    def _shown(self, entry: str) -> str:
+        return join_list([entry])
 
-    def _problem(self) -> str:
-        return next((e for e in map(glob_error, self._globs()) if e), "")
+    def _line_error(self, line: str) -> str:
+        return glob_error(line)
+
+    def _entries(self) -> tuple[str, ...]:
+        return tuple(split_list(self.query_one("#glob_text", TextArea).text))
+
+    def _note(self, entries: tuple[str, ...]) -> str:
+        return ""
+
+    def _problem(self, entries: tuple[str, ...]) -> str:
+        return next((e for e in map(self._line_error, entries) if e), "")
 
     def _refresh_status(self) -> None:
         status = self.query_one("#glob_status", Static)
         status.remove_class("-ok", "-bad")
-        problem = self._problem()
+        entries = self._entries()
+        problem = self._problem(entries)
         status.add_class("-bad" if problem else "-ok")
-        count = len(self._globs())
-        status.update(f"✗ {problem}" if problem else f"✓ {count} glob{'s' if count != 1 else ''}")
+        noun = f"{self.NOUN}{'s' if len(entries) != 1 else ''}"
+        status.update(
+            f"✗ {problem}" if problem else f"✓ {len(entries)} {noun}{self._note(entries)}"
+        )
 
     def hand_back(self) -> str:
-        globs = self._globs()
-        if globs == self._value:
+        entries = self._entries()
+        if entries == self._value:
             return ""
-        if problem := self._problem():
+        if problem := self._problem(entries):
             return problem
-        self._on_save(globs)
-        self._value = globs
+        self._on_save(entries)
+        self._value = entries
         return ""
+
+
+_FOLDER_HINT = "one folder per line, relative to the source: 'archive' or 'notes/drafts'"
+
+
+class FolderTextScreen(GlobTextScreen):
+    """Excluded folders typed as paths under the source root, one per line."""
+
+    NOUN = "folder"
+    HINT = _FOLDER_HINT
+    CSS = GlobTextScreen.CSS.replace("GlobTextScreen", "FolderTextScreen")
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        value: Sequence[str],
+        on_save: Callable[[tuple[str, ...]], None],
+        root: Path | None,
+    ) -> None:
+        super().__init__(title=title, value=value, on_save=on_save)
+        self._root = root
+        self._found: dict[str, bool] = {}
+
+    def _shown(self, entry: str) -> str:
+        return entry
+
+    def _line_error(self, line: str) -> str:
+        from fnd.filters.dir_tree import normalise_dir
+
+        try:
+            normalise_dir(line)
+        except ValueError as e:
+            return str(e)
+        return ""
+
+    def _entries(self) -> tuple[str, ...]:
+        from fnd.filters.dir_tree import fold, normalise_dir
+
+        text = self.query_one("#glob_text", TextArea).text
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        try:
+            return fold(normalise_dir(line) for line in lines)
+        except ValueError:
+            return tuple(lines)
+
+    def _note(self, entries: tuple[str, ...]) -> str:
+        from fnd.filters import dir_tree
+
+        if self._root is None:
+            return ""
+        for entry in entries:
+            if entry not in self._found:
+                self._found[entry] = dir_tree.exists_exactly(self._root, entry)
+        missing = sum(1 for e in entries if not self._found[e])
+        return f" · {missing} not found in this source" if missing else ""
 
 
 #: Spec fields as the screens name them, so a message reads like the UI. Two
@@ -5770,6 +5857,7 @@ _FIELD_WORDS: dict[str, str] = {
     "frontmatter": "the frontmatter rule",
     "expression": "the custom rule",
     "excludes": "excluded paths",
+    "exclude_dirs": "excluded folders",
 }
 
 
@@ -5868,9 +5956,14 @@ class FilterBrowserScreen(Screen[None]):
         inherited: tuple[Any, bool, bool] | None = None,
         no_tags_note: str = "",
         unindexed_note: str = "",
+        dirs_provider: Callable[[], Any] | None = None,
+        root: Path | None = None,
         on_commit: Callable[[Any, bool, bool], None],
     ) -> None:
         super().__init__()
+        self._dirs_provider = dirs_provider
+        self._dirs: Any = None
+        self._root = root
         # What this source falls back to with nothing of its own. `None` on the
         # global defaults, which inherit from nothing.
         self._inherited = inherited
@@ -5938,6 +6031,9 @@ class FilterBrowserScreen(Screen[None]):
             return
         if ev.item_id == "rule:excludes":
             self._edit_typed_excludes()
+            return
+        if ev.item_id == "rule:exclude_dirs":
+            self._edit_exclude_dirs()
             return
         field_name = ev.item_id.removeprefix("rule:")
         titles = {
@@ -6032,6 +6128,27 @@ class FilterBrowserScreen(Screen[None]):
         self._rebuild()
         if self._sample_provider is not None:
             self.run_worker(self._load_sample, thread=True)
+        if self._dirs_provider is not None:
+            self.run_worker(self._load_dirs, thread=True, group="dirs")
+
+    def _folder_offer(self) -> Any:
+        from fnd.filters.tree_model import FolderOffer
+
+        return None if self._dirs_provider is None else FolderOffer(self._dirs)
+
+    def _load_dirs(self) -> None:
+        """Listing opens directories, so it runs on a worker like the sample."""
+        from fnd.walk import DirListing
+
+        try:
+            listing = self._dirs_provider() if self._dirs_provider is not None else None
+        except Exception:
+            listing = DirListing((), frozenset(), True)
+        self.app.call_from_thread(self._dirs_arrived, listing)
+
+    def _dirs_arrived(self, listing: Any) -> None:
+        self._dirs = listing
+        self._rebuild(focus_tree=False)
 
     def _render_footer(self) -> None:
         """The row keys are single letters, so a focused search box swallows
@@ -6156,11 +6273,12 @@ class FilterBrowserScreen(Screen[None]):
         keep = tree.expanded_group_ids if tree.root.children else set()
         line = tree.cursor_line
         self._kept_custom.update(custom_ids(self._spec))
-        branches = spec_branches(self._spec, self._sample, self._kept_custom)
+        branches = spec_branches(self._spec, self._sample, self._kept_custom, self._folder_offer())
         # Kept so a commit knows which kinds were actually on screen: ticking
         # every visible box means "all of them", not the sampled subset.
         self._branches = branches
         groups = [_branch_group(b) for b in branches]
+        whole = tuple(groups)
         if self._query:
             groups = [g for g in (_matching_group(g, self._query) for g in groups) if g]
             # Everything open, or a match two levels down is still invisible.
@@ -6168,7 +6286,7 @@ class FilterBrowserScreen(Screen[None]):
         selected, excluded = selection_for(
             self._spec, gitignore=self._gitignore, fndignore=self._fndignore
         )
-        tree.set_model(groups, selected, excluded=excluded, expanded=keep)
+        tree.set_model(groups, selected, excluded=excluded, expanded=keep, folder_model=whole)
         # The sample can land while the user is already navigating; keep them
         # where they were rather than snapping back to the first row.
         with contextlib.suppress(Exception):
@@ -6282,6 +6400,8 @@ class FilterBrowserScreen(Screen[None]):
         # Excludes drop files before any filter runs, so they are named here too.
         if self._spec.excludes:
             head.append("skipping paths: " + ", ".join(self._spec.excludes))
+        if self._spec.exclude_dirs:
+            head.append("skipping folders: " + ", ".join(self._spec.exclude_dirs))
         for clash in self._spec.impossible_bounds():
             # Decidable without a corpus, and the outcome is an empty index.
             head.append(f"nothing can match: {clash}")
@@ -6361,13 +6481,31 @@ class FilterBrowserScreen(Screen[None]):
 
         self.app.push_screen(GlobTextScreen(title="Excluded globs", value=typed, on_save=_save))
 
+    def _edit_exclude_dirs(self) -> None:
+        from dataclasses import replace as _replace
+
+        def _save(paths: tuple[str, ...]) -> None:
+            self._spec = _replace(self._spec, exclude_dirs=paths)
+            self._rebuild()
+
+        self.app.push_screen(
+            FolderTextScreen(
+                title="Excluded folders",
+                value=self._spec.exclude_dirs,
+                on_save=_save,
+                root=self._root,
+            )
+        )
+
     def action_edit_text(self) -> None:
         def _save(spec: Any) -> None:
             # Named when it lands, not only while typing: the text screen's
             # warning is gone by the time the tree is back.
             dropped = _protection_dropped(self._spec, spec)
-            # The text form cannot say excludes, so it never carries them: keep them.
-            self._spec = dataclasses.replace(spec, excludes=self._spec.excludes)
+            # The text form cannot say excludes or folders, so it never carries them: keep them.
+            self._spec = dataclasses.replace(
+                spec, excludes=self._spec.excludes, exclude_dirs=self._spec.exclude_dirs
+            )
             self._rebuild()
             if dropped:
                 self.app.notify(f"{dropped} files are no longer excluded", severity="warning")
