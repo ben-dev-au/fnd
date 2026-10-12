@@ -25,7 +25,7 @@ import contextlib
 import dataclasses
 import functools
 import re
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -250,7 +250,8 @@ class FileGroup:
     """One file with its ranked matched sections.
 
     The TUI tree renders the file as a parent node and ``hits`` as its sorted
-    children. ``top_score`` is ``hits[0].score``, the display score.
+    children. ``top_score`` is the file's best section score, the display score;
+    ``hits[0]`` is the section shown first, which a heading match can promote.
     """
 
     parent_id: str
@@ -783,14 +784,15 @@ class Searcher:
             # Should-clause: secondary fields boost score without gating visibility.
             # The same AST, lowered against them; skipped when a leaf resolves
             # against F_BODY's dictionary only, which would score the body twice.
-            if node is not None and not resolves_in_body_only(node):
+            boosts = {
+                f: DEFAULT_FIELD_BOOSTS[f]
+                for f in (F_HEADING_PATH, F_TITLE, F_PATH_TOKENS)
+                if DEFAULT_FIELD_BOOSTS[f] > 0
+            }
+            if node is not None and boosts and not resolves_in_body_only(node):
                 secondary_kwargs: dict[str, object] = {
-                    "default_field_names": [F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
-                    "field_boosts": {
-                        F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
-                        F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
-                        F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
-                    },
+                    "default_field_names": list(boosts),
+                    "field_boosts": boosts,
                 }
                 boost_secondary = compile_query(
                     node, searcher=self, schema=schema, parse_kwargs=secondary_kwargs
@@ -938,6 +940,77 @@ class Searcher:
         # Normalised storage keeps one document per (parent_id, chunk_seq), so
         # a shared file is not duplicated here; order by chunk_seq for the preview.
         return sorted(chunks, key=lambda c: c.chunk_seq)
+
+    @_engine_boundary
+    def heading_scores(
+        self, query: str, sections: Collection[tuple[str, int]]
+    ) -> dict[tuple[str, int], float]:
+        """BM25 of ``query``'s words against ``heading_path`` for each of ``sections``
+        (parent_id, chunk_seq) whose heading matches. Empty for a query with a pattern
+        word: those resolve against the body's words, so they have no heading score."""
+        import tantivy
+
+        from fnd.query_ast import parse_query_ast, resolves_in_body_only
+        from fnd.query_compile import compile_query
+        from fnd.query_dsl import preprocess
+        from fnd.query_filters import extract_filters
+        from fnd.stopwords import strip_query_stopwords
+
+        schema = build_schema()
+        content = strip_query_stopwords(
+            preprocess(extract_filters(query, schema, self._index).content)
+        )
+        wanted = set(sections)
+        node = parse_query_ast(content) if content.strip() and wanted else None
+        if node is None or resolves_in_body_only(node):
+            return {}
+        with _engine_refusals():
+            heading = compile_query(
+                node,
+                searcher=self,
+                schema=schema,
+                parse_kwargs={"default_field_names": [F_HEADING_PATH]},
+            )
+            seqs: dict[str, list[int]] = {}
+            for pid, seq in wanted:
+                seqs.setdefault(pid, []).append(seq)
+            # Exactly the asked sections: a file's other sections match its title's
+            # words too, and would crowd them out of the limit or cost a read each.
+            asked = tantivy.Query.boolean_query(
+                [
+                    (
+                        tantivy.Occur.Should,
+                        tantivy.Query.boolean_query(
+                            [
+                                (
+                                    tantivy.Occur.Must,
+                                    tantivy.Query.term_query(schema, F_PARENT_ID, pid),
+                                ),
+                                (
+                                    tantivy.Occur.Must,
+                                    tantivy.Query.term_set_query(schema, F_CHUNK_SEQ, s),
+                                ),
+                            ]
+                        ),
+                    )
+                    for pid, s in seqs.items()
+                ]
+            )
+            scoped = tantivy.Query.boolean_query(
+                [
+                    (tantivy.Occur.Must, heading),
+                    (tantivy.Occur.Must, tantivy.Query.const_score_query(asked, 0.0)),
+                ]
+            )
+            searcher = self._searcher
+            result = searcher.search(scoped, limit=len(wanted))
+        scores: dict[tuple[str, int], float] = {}
+        for score, address in result.hits:
+            doc = searcher.doc(address)
+            key = (str(doc.get_first(F_PARENT_ID)), int(doc.get_first(F_CHUNK_SEQ) or 0))
+            if key in wanted:
+                scores[key] = score
+        return scores
 
     def search_grouped(
         self,

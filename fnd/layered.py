@@ -51,6 +51,7 @@ from fnd.query import (
     group_by_file,
 )
 from fnd.render import keep_shown
+from fnd.schema import SECTION_HEADING_BOOST
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -306,12 +307,20 @@ def search_layered(
         else:
             widened = {}
 
+    # Every passing section is grouped, so the heading order picks the shown ones.
     groups = group_by_file(
         hits,
         limit=limit,
-        sections_per_file=sections_per_file,
+        sections_per_file=len(hits),
         score_threshold=sections_score_threshold,
         collapse_copies=collapse_copies,
+    )
+    groups = by_heading_within_file(
+        searcher,
+        f"{query} {respelt(query.split(), {**fixes, **widened})}" if fixes or widened else query,
+        groups,
+        sections_per_file=sections_per_file,
+        keep_pass_order=regime.startswith("cascade"),
     )
 
     if with_trace:
@@ -390,6 +399,37 @@ def _respelt_fill(
     )
     have = {h.parent_id for h in found}
     return [_with_pass(h, 1) for h in pool.hits if h.parent_id not in have]
+
+
+def by_heading_within_file(
+    searcher: Searcher,
+    query: str,
+    groups: list[FileGroup],
+    *,
+    sections_per_file: int,
+    keep_pass_order: bool = False,
+) -> list[FileGroup]:
+    """Each file's sections ordered by BM25 plus ``SECTION_HEADING_BOOST`` times their
+    heading match, then cut to ``sections_per_file``. A file with no heading match keeps
+    its order; ``keep_pass_order`` keeps a cascade's exact sections above looser ones."""
+    several = [(h.parent_id, h.chunk_seq) for g in groups if len(g.hits) > 1 for h in g.hits]
+    scores = (
+        searcher.heading_scores(query, several) if several and SECTION_HEADING_BOOST > 0 else {}
+    )
+
+    def key(h: Hit) -> tuple[int, float, int, int]:
+        lift = SECTION_HEADING_BOOST * scores.get((h.parent_id, h.chunk_seq), 0.0)
+        return (h.pass_index if keep_pass_order else 0, -(h.score + lift), h.chunk_seq, h.line)
+
+    out: list[FileGroup] = []
+    for g in groups:
+        hits = g.hits
+        if any((h.parent_id, h.chunk_seq) in scores for h in hits):
+            hits = sorted(hits, key=key)
+        if hits is not g.hits or len(hits) > sections_per_file:
+            g = dataclasses.replace(g, hits=hits[:sections_per_file])
+        out.append(g)
+    return out
 
 
 def by_best_bm25(hits: list[Hit]) -> list[Hit]:

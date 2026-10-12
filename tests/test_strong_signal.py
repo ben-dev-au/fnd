@@ -11,6 +11,10 @@ import pytest
 from fnd.config import Config, load
 from fnd.index import build_index
 
+_FILLER = (
+    "Filler content about another topic entirely, with a few ordinary words in a short sentence."
+)
+
 
 def _write_md(p: Path, body: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -33,7 +37,8 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 
 @pytest.fixture
 def unambiguous_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """One file owns 'mitochondrion' uniquely; 14 unrelated files exist."""
+    """One file owns 'mitochondrion' uniquely among 30 unrelated notes of ordinary length:
+    fewer, or two-word ones, leave the word too little IDF to clear the threshold."""
     a = tmp_path / "notes"
     _write_md(
         a / "biology-cell-organelles.md",
@@ -41,8 +46,8 @@ def unambiguous_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
         "of the cell. mitochondrion mitochondrion mitochondrion.\n\n"
         "## Other organelles\nNucleus, ribosome, golgi.\n",
     )
-    for i in range(14):
-        _write_md(a / f"unrelated-{i:02d}.md", f"# Note {i}\n\nFiller content.\n")
+    for i in range(30):
+        _write_md(a / f"unrelated-{i:02d}.md", f"# Note {i}\n\n{_FILLER}\n")
     build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
     return tmp_index_dir
 

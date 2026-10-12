@@ -53,8 +53,10 @@ def unambiguous_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
         "# Cell Organelles\n\n## Mitochondrion\nThe mitochondrion is the powerhouse "
         "of the cell. mitochondrion mitochondrion mitochondrion.\n",
     )
-    for i in range(14):
-        _write_md(a / f"unrelated-{i:02d}.md", f"# Note {i}\n\nFiller content.\n")
+    # Fewer, or shorter, unrelated notes leave the word too little IDF for the shortcut.
+    filler = "Filler content about another topic entirely, with a few ordinary words in a short sentence."
+    for i in range(30):
+        _write_md(a / f"unrelated-{i:02d}.md", f"# Note {i}\n\n{filler}\n")
     build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
     return tmp_index_dir
 

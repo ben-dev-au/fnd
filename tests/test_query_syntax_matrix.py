@@ -18,6 +18,7 @@ from typing import Final
 
 import pytest
 
+from fnd.config import Defaults
 from fnd.index import build_index
 from fnd.layered import search_layered
 from fnd.matching import MatchSpec
@@ -185,7 +186,7 @@ def run(searcher: Searcher, query: str, *, every_chunk: bool = False) -> _Result
         query=plan.lexical,
         limit=50,
         sections_per_file=1000 if every_chunk else 200,
-        sections_score_threshold=0.0 if every_chunk else 0.5,
+        sections_score_threshold=0.0 if every_chunk else Defaults().sections_score_threshold,
         metadata_filter=plan.metadata_filter,
         with_trace=True,
     )

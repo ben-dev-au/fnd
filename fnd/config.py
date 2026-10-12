@@ -841,7 +841,7 @@ class Defaults(_ConfigModel):
     """Trailing summaries on Settings rows: always_show, smart (only rows with
     content), or always_ellipsis."""
 
-    sections_score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    sections_score_threshold: float = Field(default=0.1, ge=0.0, le=1.0)
     """Keep a section when its score is at least this fraction of the file's best.
     1.0 keeps only the top one."""
 

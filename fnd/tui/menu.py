@@ -959,7 +959,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             setting_path="defaults.sections_score_threshold",
             hint="0.0-1.0",
             coerce=float,
-            value_getter=_get_float_default("sections_score_threshold", 0.5),
+            value_getter=_get_float_default("sections_score_threshold", 0.1),
             keywords=("section", "threshold", "score", "filter"),
         ),
         MenuItem(

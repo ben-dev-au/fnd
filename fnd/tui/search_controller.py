@@ -347,7 +347,7 @@ class SearchController:
             limit=cfg_defaults.result_limit if cfg_defaults else DEFAULT_RESULT_LIMIT,
             sections_per_file=cfg_defaults.sections_per_file_max if cfg_defaults else 200,
             sections_score_threshold=(
-                cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
+                cfg_defaults.sections_score_threshold if cfg_defaults else 0.1
             ),
             auto_fuzzy_enabled=auto_fuzzy,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
