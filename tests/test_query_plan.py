@@ -95,3 +95,25 @@ def test_unbalanced_structure_is_refused(query: str) -> None:
 )
 def test_balanced_structure_passes(query: str) -> None:
     QueryPlan.from_user_text(query)
+
+
+@pytest.mark.parametrize(
+    ("typed", "means"),
+    [
+        ("is the invoice due?", "is the invoice due "),
+        ("due?? soon", "due   soon"),
+        ("is it paid ?", "is it paid  "),
+        ('"invoice due?"', '"invoice due "'),
+        ("(paid OR due?)", "(paid OR due )"),
+        ("gr?y", "gr?y"),
+        ("a?b?", "a?b "),
+        ("/colou?r/ /due?/", "/colou?r/ /due?/"),
+        ("is it due?, soon", "is it due , soon"),
+        ("due?!", "due !"),
+        ("due?~1 due?^2 colo?*", "due?~1 due?^2 colo?*"),
+        ("co?-op e?-mail x?+y", "co?-op e?-mail x?+y"),
+        ("due? -paid", "due  -paid"),
+    ],
+)
+def test_a_question_mark_ending_a_word_is_punctuation(typed: str, means: str) -> None:
+    assert QueryPlan.from_user_text(typed).lexical == means

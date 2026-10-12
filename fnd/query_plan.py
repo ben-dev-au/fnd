@@ -17,7 +17,7 @@ from fnd.extract._limits import LIMIT_QUERY_BOOLEAN_TOKENS, LIMIT_QUERY_BYTES
 from fnd.filter_dsl import with_ascii_quotes
 from fnd.query_dsl import check_proximity, preprocess, split_metadata_filter
 from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
-from fnd.query_spans import literal_spans, without_literals
+from fnd.query_spans import literal_spans, map_outside, without_literals
 from fnd.text_canon import canonical, quote_view
 
 # Quotes (:func:`~fnd.text_canon.quote_view`) and full-width forms (``＊（）：``) as
@@ -30,13 +30,19 @@ _ASCII_SYNTAX = str.maketrans(
 # A range may mix bounds (``[lo TO hi}``), and ``｛｝`` are already ASCII here.
 _FULL_WIDTH_RANGE = re.compile(r"(?<=:)([［{])([^［］{}\[\]]*)([］}])")
 _RANGE_ENDS = str.maketrans("［］", "[]")
+# A ``?`` ending a word is a question mark: as a wildcard it made the last word
+# of a typed question unfindable. Inside a word (``gr?y``) it stays one.
+_QUESTION_MARK = re.compile(r"\?+(?![\w*~^?]|[-+/\"']\w)")
 
 
 def search_text(lexical: str) -> str:
     """``lexical`` (search text, no ``[…]`` filter) with typographic and full-width
-    syntax as ASCII."""
+    syntax as ASCII, and each word-ending ``?`` outside a regex as a space."""
     text = quote_view(lexical).translate(_ASCII_SYNTAX)
-    return _FULL_WIDTH_RANGE.sub(lambda m: m.group(0).translate(_RANGE_ENDS), text)
+    text = _FULL_WIDTH_RANGE.sub(lambda m: m.group(0).translate(_RANGE_ENDS), text)
+    return map_outside(
+        text, lambda part: _QUESTION_MARK.sub(lambda m: " " * len(m.group()), part), kinds={"regex"}
+    )
 
 
 def enforce_query_bounds(query: str) -> None:

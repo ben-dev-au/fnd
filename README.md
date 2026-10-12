@@ -653,13 +653,14 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 
 ### Wildcards and regex
 
-| You type     | Matches                                                   |
-| ------------ | --------------------------------------------------------- |
-| `garden*`    | Words starting with `garden`.                             |
-| `*ship`      | Words ending in `ship`.                                   |
-| `photo*aphy` | `photography`.                                            |
-| `gr?y`       | `?` = exactly one character: `gray`, `grey`.              |
-| `/colou?r/`  | A regular expression over whole words: `color`, `colour`. |
+| You type       | Matches                                                   |
+| -------------- | --------------------------------------------------------- |
+| `garden*`      | Words starting with `garden`.                             |
+| `*ship`        | Words ending in `ship`.                                   |
+| `photo*aphy`   | `photography`.                                            |
+| `gr?y`         | `?` = exactly one character: `gray`, `grey`.              |
+| `invoice due?` | A `?` ending a word is a question mark: `due`.            |
+| `/colou?r/`    | A regular expression over whole words: `color`, `colour`. |
 
 Wildcards and regexes match words as written (accents folded, any case), not
 their stems.

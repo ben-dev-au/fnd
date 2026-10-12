@@ -61,6 +61,7 @@ PIECES: list[tuple[str, str, str]] = [
     ("suffix", "*ization", "ZPR"),
     ("infix", "crypt*aphy", "Z"),
     ("one_char", "gr?y", "QP"),
+    ("question_mark", "lantern?", "QPTD"),
     ("regex", "/cryptograph(y|ic)/", "ZN"),
 ]
 # (name, query, expected files): constructs and README examples that stand alone.
@@ -344,6 +345,7 @@ README_EXAMPLES: dict[str, str] = {
     "*ship": "suffix",
     "photo*aphy": "infix",
     "gr?y": "one_char",
+    "invoice due?": "question_mark",
     "/colou?r/": "regex",
     "deadline [Project == 'Website']": "fm_equals",
     "[Type == 'Meeting' OR Type == 'Idea']": "fm_or",

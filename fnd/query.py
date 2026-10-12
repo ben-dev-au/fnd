@@ -39,7 +39,7 @@ from fnd.extract.base import Block
 from fnd.matching import DOC_WORD_RE, MatchSpec, prime, word_matches
 from fnd.query_errors import QueryEngineError, QueryError
 from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-export (back-compat)
-from fnd.query_plan import enforce_query_bounds
+from fnd.query_plan import enforce_query_bounds, search_text
 
 if TYPE_CHECKING:
     from fnd.synonyms import SynonymTable
@@ -69,6 +69,7 @@ from fnd.schema import (
     membership_token,
     parse_membership_token,
 )
+from fnd.text_canon import canonical
 
 _SNIPPET_CTX = 240
 #: Ticked sources per PARTLY selected collection. The collection key is the
@@ -956,6 +957,7 @@ class Searcher:
         """:func:`fnd.layered.search_layered`'s file groups, materialised."""
         from fnd.layered import search_layered
 
+        query = search_text(canonical(query))
         groups, trace = search_layered(
             self,
             query=query,
