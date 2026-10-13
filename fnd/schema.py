@@ -124,6 +124,9 @@ DEFAULT_FIELD_BOOSTS: Final[dict[str, float]] = {
     F_BODY: 1.0,
 }
 SECTION_HEADING_BOOST: Final = 3.0
+# A heading match only in a parent heading counts this share. Natural Questions, right
+# section first: 0, 0.25 and 0.5 score alike (0.382 to 0.383), full weight 0.372.
+PARENT_HEADING_WEIGHT: Final = 0.5
 
 
 # Unit Separator: forbidden in collection names (validated) and absent from

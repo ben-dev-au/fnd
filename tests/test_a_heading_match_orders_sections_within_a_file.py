@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 
 import fnd.layered
+from fnd.analysis import analyse
 from fnd.index import build_index
 from fnd.layered import search_layered
 from fnd.query import Searcher
+from fnd.schema import PARENT_HEADING_WEIGHT, SECTION_HEADING_BOOST
 
 _OTHER = "A note about something else entirely, in an ordinary sentence."
 _GARDEN = (
@@ -150,12 +152,33 @@ def test_a_section_holding_every_word_leads_a_heading_holding_one(course: Search
 def test_without_the_every_word_tier_the_partial_heading_leads(
     course: Searcher, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(Searcher, "holding_every_word", lambda self, query, sections: set())
+    monkeypatch.setattr(Searcher, "holding_every_word", lambda self, tokens, sections: set())
     assert _sections(course, "deep learning")["course.md"][0] == "Course > Learning activity"
 
 
 def test_an_excluded_word_does_not_count_as_wanted(course: Searcher) -> None:
-    groups = search_layered(course, query="deep learning", limit=40, sections_per_file=10)
-    asked = {(h.parent_id, h.chunk_seq) for g in groups for h in g.hits}
-    assert course.holding_every_word("learning -deep", asked) == set()
-    assert course.holding_every_word("deep learning", asked)
+    assert course.wanted_tokens("learning -deep") == analyse("learning")
+    assert course.wanted_tokens("deep learning") == analyse("deep learning")
+
+
+def test_a_parent_heading_lifts_its_subsections_by_a_share(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    searcher = _index(
+        tmp_path,
+        tmp_index_dir,
+        {
+            "plans.md": "# Plans\n\n## Budget\n\nThe budget overview.\n\n"
+            "### Timeline\n\nDates first, and the budget once, among other plain words.\n\n"
+            "## Costs\n\nThe budget, the budget and the budget again.\n",
+        },
+    )
+    groups = search_layered(searcher, query="budget", limit=40, sections_per_file=10)
+    hits = {h.heading_path: h for g in groups if g.path.endswith("plans.md") for h in g.hits}
+    own, child = hits["Plans > Budget"], hits["Plans > Budget > Timeline"]
+    heading = searcher.heading_scores("budget", [(h.parent_id, h.chunk_seq) for h in (own, child)])
+    own_lift, child_lift = (
+        SECTION_HEADING_BOOST * heading[(h.parent_id, h.chunk_seq)] for h in (own, child)
+    )
+    assert own.section_score == pytest.approx(own.score + own_lift)
+    assert child.section_score == pytest.approx(child.score + PARENT_HEADING_WEIGHT * child_lift)

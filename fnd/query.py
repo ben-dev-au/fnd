@@ -86,6 +86,7 @@ SourceScope = Mapping[str, Sequence[str]]
 _SNIPPET_SCAN_CHARS = 24_000
 _SNIPPET_REGION_CHARS = 6_000
 _DEFAULT_LIMIT: Final = 10
+_WORD_FIELDS: Final = (F_BODY, F_HEADING_PATH, F_TITLE)
 
 
 def _every_hit(searcher: Any, query: Query, expected: int) -> list[Any]:
@@ -235,6 +236,11 @@ class Hit:
     # The score the result list is ordered by: fused, positional or reranked.
     # None for a single pass's hit, which ranks by its BM25 ``score``.
     rank_score: float | None = None
+    # The score a file's sections are ordered by (BM25 plus the heading lift); None
+    # where that order is BM25's own.
+    section_score: float | None = None
+    # Lacks a query word another section of its file holds, so sorts below them.
+    misses_a_word: bool = False
 
     @property
     def rank_key(self) -> float:
@@ -1033,29 +1039,34 @@ class Searcher:
             )
             return {key: score for score, key in self._within_sections(heading, wanted)}
 
-    @_engine_boundary
-    def holding_every_word(
-        self, query: str, sections: Collection[tuple[str, int]]
-    ) -> set[tuple[str, int]]:
-        """Those of ``sections`` whose body, heading or title holds every indexed word
-        ``query`` asks for; empty when it asks for fewer than two."""
-        import tantivy
-
+    def wanted_tokens(self, query: str) -> list[str]:
+        """The index tokens of the plain words ``query`` asks for that some body, heading
+        or title holds: excluded words, filters and pattern words are left out."""
         from fnd.analysis import analyse
         from fnd.query_ast import wanted_words
 
-        wanted = set(sections)
-        node = self._content_node(query) if wanted else None
+        node = self._content_node(query)
         if node is None:
-            return set()
-        schema, raw, fields = build_schema(), self._searcher, (F_BODY, F_HEADING_PATH, F_TITLE)
-        tokens = [
+            return []
+        raw = self._searcher
+        return [
             t
             for t in dict.fromkeys(analyse(" ".join(wanted_words(node))))
-            if any(raw.doc_freq(f, t) for f in fields)
+            if any(raw.doc_freq(f, t) for f in _WORD_FIELDS)
         ]
-        if len(tokens) < 2:
+
+    @_engine_boundary
+    def holding_every_word(
+        self, tokens: Sequence[str], sections: Collection[tuple[str, int]]
+    ) -> set[tuple[str, int]]:
+        """Those of ``sections`` whose body, heading or title holds every one of
+        ``tokens``; empty for fewer than two."""
+        import tantivy
+
+        wanted = set(sections)
+        if len(tokens) < 2 or not wanted:
             return set()
+        schema = build_schema()
         every = tantivy.Query.boolean_query(
             [
                 (
@@ -1063,7 +1074,7 @@ class Searcher:
                     tantivy.Query.boolean_query(
                         [
                             (tantivy.Occur.Should, tantivy.Query.term_query(schema, f, t))
-                            for f in fields
+                            for f in _WORD_FIELDS
                         ]
                     ),
                 )

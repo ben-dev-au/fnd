@@ -59,6 +59,8 @@ def _populated_hit() -> Hit:
         stored_struct=b"\x03",
         rank_score=0.25,
         content_hash="ab" * 32,
+        section_score=3.5,
+        misses_a_word=True,
     )
 
 

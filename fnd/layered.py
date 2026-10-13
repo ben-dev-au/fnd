@@ -28,6 +28,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Literal, overload
 
+from fnd.analysis import analyse
 from fnd.cascade import _with_pass, cascade_search
 from fnd.explain import CascadeTrace, SearchTrace, StrongSignalTrace
 from fnd.fusion import (
@@ -51,7 +52,7 @@ from fnd.query import (
     group_by_file,
 )
 from fnd.render import keep_shown
-from fnd.schema import SECTION_HEADING_BOOST
+from fnd.schema import PARENT_HEADING_WEIGHT, SECTION_HEADING_BOOST
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -406,21 +407,32 @@ def by_heading_within_file(
     keep_pass_order: bool = False,
 ) -> list[FileGroup]:
     """Each file's sections holding every query word first, then by BM25 plus
-    ``SECTION_HEADING_BOOST`` times their heading match, cut to ``sections_per_file``.
+    ``SECTION_HEADING_BOOST`` times their heading match (``PARENT_HEADING_WEIGHT`` of it
+    when only a parent heading holds a query word), cut to ``sections_per_file``.
     ``keep_pass_order`` keeps a cascade's exact sections above looser ones."""
     several = [(h.parent_id, h.chunk_seq) for g in groups if len(g.hits) > 1 for h in g.hits]
+    tokens = searcher.wanted_tokens(query) if several else []
+    every = searcher.holding_every_word(tokens, several)
     scores = (
         searcher.heading_scores(query, several) if several and SECTION_HEADING_BOOST > 0 else {}
     )
-    every = searcher.holding_every_word(query, several) if several else set()
+    asked = set(tokens)
+
+    def ordered(h: Hit, tiered: bool) -> Hit:
+        heading = scores.get((h.parent_id, h.chunk_seq), 0.0)
+        if heading and not asked.intersection(analyse(h.heading_path.split(" > ")[-1])):
+            heading *= PARENT_HEADING_WEIGHT
+        return dataclasses.replace(
+            h,
+            section_score=h.score + SECTION_HEADING_BOOST * heading,
+            misses_a_word=tiered and (h.parent_id, h.chunk_seq) not in every,
+        )
 
     def key(h: Hit) -> tuple[int, bool, float, int, int]:
-        k = (h.parent_id, h.chunk_seq)
-        lift = SECTION_HEADING_BOOST * scores.get(k, 0.0)
         return (
             h.pass_index if keep_pass_order else 0,
-            k not in every,
-            -(h.score + lift),
+            h.misses_a_word,
+            -(h.section_score or 0.0),
             h.chunk_seq,
             h.line,
         )
@@ -429,8 +441,9 @@ def by_heading_within_file(
     for g in groups:
         hits = g.hits
         keys = {(h.parent_id, h.chunk_seq) for h in hits}
-        if keys & scores.keys() or (keys & every and keys - every):
-            hits = sorted(hits, key=key)
+        tiered = bool(keys & every and keys - every)
+        if keys & scores.keys() or tiered:
+            hits = sorted((ordered(h, tiered) for h in hits), key=key)
         if hits is not g.hits or len(hits) > sections_per_file:
             g = dataclasses.replace(g, hits=hits[:sections_per_file])
         out.append(g)
