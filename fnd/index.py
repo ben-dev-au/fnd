@@ -10,7 +10,7 @@ from collections.abc import Collection, Iterable, Sequence
 from functools import lru_cache
 from pathlib import Path
 
-from tantivy import Document, Index, IndexWriter, Query, Schema
+from tantivy import Document, Index, IndexWriter, Query, Schema, Searcher
 
 from fnd.analysis import register
 from fnd.config import CollectionConfig
@@ -526,10 +526,10 @@ def _path_parent_id(path: Path) -> str:
     return file_parent_id(path)
 
 
-# Terms-aggregation bucket cap when enumerating a collection's indexed files.
-# Truncation fails safe: fewer buckets means a smaller stale set, so we
-# under-prune rather than delete something still live.
-_MAX_INDEXED_FILE_BUCKETS = 200_000
+# Tantivy refuses a terms aggregation asking for more buckets than this, and
+# one at the limit is cut short, so files are counted in slices of their hex id.
+_AGG_BUCKET_LIMIT = 65_000
+_HEX_DIGITS = "0123456789abcdef"
 
 
 def sources_are_enumerable(roots: Iterable[Path]) -> bool:
@@ -591,12 +591,28 @@ def indexed_parent_ids(index: Index, collection: str) -> set[str]:
     """
     import tantivy as _tantivy
 
-    agg: dict[str, object] = {
-        "files": {"terms": {"field": F_PARENT_ID, "size": _MAX_INDEXED_FILE_BUCKETS}}
-    }
     scope = _tantivy.Query.term_query(index.schema, F_COLLECTION, collection)
-    raw = index.searcher().aggregate(scope, agg)
-    return {str(b["key"]) for b in raw["files"]["buckets"]}
+    return _parent_ids_under(index.searcher(), index.schema, scope, "")
+
+
+def _parent_ids_under(searcher: Searcher, schema: Schema, scope: Query, prefix: str) -> set[str]:
+    """The ``parent_id`` values in ``scope`` that start with ``prefix``, splitting
+    the prefix one hex digit further wherever a slice is cut short."""
+    import tantivy as _tantivy
+
+    query = scope
+    if prefix:
+        regex = _tantivy.Query.regex_query(schema, F_PARENT_ID, f"{prefix}.*")
+        query = _tantivy.Query.boolean_query(
+            [(_tantivy.Occur.Must, scope), (_tantivy.Occur.Must, regex)]
+        )
+    agg: dict[str, object] = {"files": {"terms": {"field": F_PARENT_ID, "size": _AGG_BUCKET_LIMIT}}}
+    files = searcher.aggregate(query, agg)["files"]
+    if files["sum_other_doc_count"]:
+        return set().union(
+            *(_parent_ids_under(searcher, schema, scope, prefix + h) for h in _HEX_DIGITS)
+        )
+    return {str(b["key"]) for b in files["buckets"]}
 
 
 def drop_collection(
@@ -707,9 +723,7 @@ def collections_still_holding(
         (_tantivy.Occur.Should, _tantivy.Query.term_query(schema, F_PARENT_ID, p))
         for p in parent_ids
     ]
-    agg: dict[str, object] = {
-        "cols": {"terms": {"field": F_COLLECTION, "size": _MAX_INDEXED_FILE_BUCKETS}}
-    }
+    agg: dict[str, object] = {"cols": {"terms": {"field": F_COLLECTION, "size": _AGG_BUCKET_LIMIT}}}
     raw = index.searcher().aggregate(_tantivy.Query.boolean_query(terms), agg)
     return tuple(sorted({str(b["key"]) for b in raw["cols"]["buckets"]} - {excluding}))
 
