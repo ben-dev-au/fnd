@@ -108,7 +108,6 @@ def _maximal() -> conf.Config:
             preview_chunks=6,
             debounce_ms=201,
             drill_summary_mode="smart",
-            sections_score_threshold=0.6,
             sections_per_file_max=201,
             preview_decode_workers=5,
             preview_warm_margin=3,

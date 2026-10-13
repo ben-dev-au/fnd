@@ -837,14 +837,6 @@ def _get_int_default(field_name: str, fallback: int) -> Callable[[FNDApp], str]:
     return _g
 
 
-def _get_float_default(field_name: str, fallback: float) -> Callable[[FNDApp], str]:
-    def _g(app: FNDApp) -> str:
-        cfg = app._config  # type: ignore[attr-defined]
-        return str(getattr(cfg.defaults, field_name)) if cfg else str(fallback)
-
-    return _g
-
-
 def _get_default_collection(app: FNDApp) -> Any:
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None:
@@ -948,27 +940,11 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             keywords=("preview", "chunks"),
         ),
         MenuItem(
-            id="pref.sections_score_threshold",
-            label="Section score threshold",
-            description=(
-                "Per-file: keep sections whose score is at least "
-                "(threshold × top section's score). 0.0 = show every "
-                "match (subject to cap); 1.0 = only the top section."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.sections_score_threshold",
-            hint="0.0-1.0",
-            coerce=float,
-            value_getter=_get_float_default("sections_score_threshold", 0.1),
-            keywords=("section", "threshold", "score", "filter"),
-        ),
-        MenuItem(
             id="pref.sections_per_file_max",
             label="Section cap per file",
             description=(
-                "Hard cap on sections surfaced for one file, applied "
-                "after the score threshold. Safety net for files with "
-                "thousands of matches."
+                "Hard cap on sections surfaced for one file. Safety "
+                "net for files with thousands of matches."
             ),
             kind=KIND_SCALAR,
             setting_path="defaults.sections_per_file_max",

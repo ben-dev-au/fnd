@@ -125,3 +125,37 @@ def test_a_pattern_word_has_no_heading_score(notes: Searcher, query: str) -> Non
 
 def test_a_respelt_word_still_lifts_its_heading(notes: Searcher) -> None:
     assert _sections(notes, "budgte")["garden.md"][0] == "Garden > Budget"
+
+
+_COURSE = (
+    "# Course\n\n## Learning activity\n\nOne learning task.\n\n"
+    "## Approaches\n\nDeep learning and deep learning again, set out in a longer "
+    "paragraph of ordinary words about the methods used in the course.\n"
+)
+
+
+@pytest.fixture
+def course(tmp_path: Path, tmp_index_dir: Path) -> Searcher:
+    return _index(
+        tmp_path,
+        tmp_index_dir,
+        {"course.md": _COURSE, "deep.md": "# Sea\n\n## Trench\n\nThe deep trench.\n"},
+    )
+
+
+def test_a_section_holding_every_word_leads_a_heading_holding_one(course: Searcher) -> None:
+    assert _sections(course, "deep learning")["course.md"][0] == "Course > Approaches"
+
+
+def test_without_the_every_word_tier_the_partial_heading_leads(
+    course: Searcher, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Searcher, "holding_every_word", lambda self, query, sections: set())
+    assert _sections(course, "deep learning")["course.md"][0] == "Course > Learning activity"
+
+
+def test_an_excluded_word_does_not_count_as_wanted(course: Searcher) -> None:
+    groups = search_layered(course, query="deep learning", limit=40, sections_per_file=10)
+    asked = {(h.parent_id, h.chunk_seq) for g in groups for h in g.hits}
+    assert course.holding_every_word("learning -deep", asked) == set()
+    assert course.holding_every_word("deep learning", asked)

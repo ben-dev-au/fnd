@@ -50,7 +50,7 @@ def test_an_existing_filters_list_is_kept() -> None:
 def test_the_step_is_reported() -> None:
     """The user is told what the upgrade did."""
     version, applied = migrate(_v2(excludes=["a/**"]))
-    assert version == CONFIG_VERSION == 3
+    assert version == CONFIG_VERSION
     assert any("excludes" in note for note in applied)
 
 

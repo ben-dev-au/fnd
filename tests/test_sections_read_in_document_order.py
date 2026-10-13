@@ -115,13 +115,10 @@ def test_sections_follow_the_rank_score_not_the_display_score() -> None:
     assert groups[0].top_score == 2.0
 
 
-def test_the_section_threshold_reads_the_display_score() -> None:
-    hits = [
-        dataclasses.replace(_hit(4, score=10.0), rank_score=0.05),
-        dataclasses.replace(_hit(9, score=4.0), rank_score=0.04),
-        dataclasses.replace(_hit(1, score=6.0), rank_score=0.03),
-    ]
+def test_a_weak_section_is_shown_after_a_strong_one() -> None:
+    """No section is hidden for scoring far below its file's best."""
+    hits = [_hit(4, score=30.0), _hit(9, score=2.0)]
 
-    groups = group_by_file(hits, limit=10, sections_per_file=10, score_threshold=0.5)
+    groups = group_by_file(hits, limit=10, sections_per_file=10)
 
-    assert [h.chunk_seq for h in groups[0].hits] == [4, 1]
+    assert [h.chunk_seq for h in groups[0].hits] == [4, 9]

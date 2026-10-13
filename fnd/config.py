@@ -841,13 +841,9 @@ class Defaults(_ConfigModel):
     """Trailing summaries on Settings rows: always_show, smart (only rows with
     content), or always_ellipsis."""
 
-    sections_score_threshold: float = Field(default=0.1, ge=0.0, le=1.0)
-    """Keep a section when its score is at least this fraction of the file's best.
-    1.0 keeps only the top one."""
-
     sections_per_file_max: int = Field(default=200, ge=1, le=2000)
-    """Hard cap on sections kept per file, whatever the score threshold
-    admits. A safety net against one huge file filling the results."""
+    """Hard cap on sections kept per file. A safety net against one huge
+    file filling the results."""
 
     preview_decode_workers: int = Field(default=4, ge=1, le=16)
     """Threads used to decode preview chunks. 1 is serial; raise for very large

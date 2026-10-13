@@ -42,11 +42,13 @@ from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-expo
 from fnd.query_plan import enforce_query_bounds, search_text
 
 if TYPE_CHECKING:
+    from fnd.query_ast import Node
     from fnd.synonyms import SynonymTable
     from fnd.tag_query import TagFilter
 
 from fnd.schema import (
     DEFAULT_FIELD_BOOSTS,
+    F_BODY,
     F_BODY_MD,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
@@ -84,6 +86,37 @@ SourceScope = Mapping[str, Sequence[str]]
 _SNIPPET_SCAN_CHARS = 24_000
 _SNIPPET_REGION_CHARS = 6_000
 _DEFAULT_LIMIT: Final = 10
+
+
+def _every_hit(searcher: Any, query: Query, expected: int) -> list[Any]:
+    """All of ``query``'s hits: a section indexed in several collections matches once
+    per copy, so ``expected`` is only the first guess at the limit."""
+    result = searcher.search(query, limit=max(expected, 1), count=True)
+    if result.count > len(result.hits):
+        result = searcher.search(query, limit=result.count)
+    return result.hits
+
+
+def _sections_query(schema: Schema, sections: Collection[tuple[str, int]]) -> Query:
+    """Exactly ``sections`` (parent_id, chunk_seq): a file's other sections would
+    crowd them out of a search's limit or cost a read each. A term pair per section:
+    a ``chunk_seq`` term set costs 3.6x as much, 6.9 against 1.9 ms on 160 NQ sections."""
+    import tantivy
+
+    return tantivy.Query.boolean_query(
+        [
+            (
+                tantivy.Occur.Should,
+                tantivy.Query.boolean_query(
+                    [
+                        (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_PARENT_ID, pid)),
+                        (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_CHUNK_SEQ, seq)),
+                    ]
+                ),
+            )
+            for pid, seq in sections
+        ]
+    )
 
 
 def scope_or(arms: list[Query]) -> Query:
@@ -941,6 +974,42 @@ class Searcher:
         # a shared file is not duplicated here; order by chunk_seq for the preview.
         return sorted(chunks, key=lambda c: c.chunk_seq)
 
+    def _content_node(self, query: str) -> Node | None:
+        """``query``'s text without its filters and stopwords, parsed; None when empty."""
+        from fnd.query_ast import parse_query_ast
+        from fnd.query_dsl import preprocess
+        from fnd.query_filters import extract_filters
+        from fnd.stopwords import strip_query_stopwords
+
+        content = strip_query_stopwords(
+            preprocess(extract_filters(query, build_schema(), self._index).content)
+        )
+        return parse_query_ast(content) if content.strip() else None
+
+    def _within_sections(
+        self, query: Query, wanted: set[tuple[str, int]]
+    ) -> list[tuple[float, tuple[str, int]]]:
+        """``query``'s score and (parent_id, chunk_seq) for each of ``wanted`` it matches."""
+        import tantivy
+
+        scoped = tantivy.Query.boolean_query(
+            [
+                (tantivy.Occur.Must, query),
+                (
+                    tantivy.Occur.Must,
+                    tantivy.Query.const_score_query(_sections_query(build_schema(), wanted), 0.0),
+                ),
+            ]
+        )
+        searcher = self._searcher
+        out: list[tuple[float, tuple[str, int]]] = []
+        for score, address in _every_hit(searcher, scoped, len(wanted)):
+            doc = searcher.doc(address)
+            key = (str(doc.get_first(F_PARENT_ID)), int(doc.get_first(F_CHUNK_SEQ) or 0))
+            if key in wanted:
+                out.append((score, key))
+        return out
+
     @_engine_boundary
     def heading_scores(
         self, query: str, sections: Collection[tuple[str, int]]
@@ -948,69 +1017,60 @@ class Searcher:
         """BM25 of ``query``'s words against ``heading_path`` for each of ``sections``
         (parent_id, chunk_seq) whose heading matches. Empty for a query with a pattern
         word: those resolve against the body's words, so they have no heading score."""
-        import tantivy
-
-        from fnd.query_ast import parse_query_ast, resolves_in_body_only
+        from fnd.query_ast import resolves_in_body_only
         from fnd.query_compile import compile_query
-        from fnd.query_dsl import preprocess
-        from fnd.query_filters import extract_filters
-        from fnd.stopwords import strip_query_stopwords
 
-        schema = build_schema()
-        content = strip_query_stopwords(
-            preprocess(extract_filters(query, schema, self._index).content)
-        )
         wanted = set(sections)
-        node = parse_query_ast(content) if content.strip() and wanted else None
+        node = self._content_node(query) if wanted else None
         if node is None or resolves_in_body_only(node):
             return {}
         with _engine_refusals():
             heading = compile_query(
                 node,
                 searcher=self,
-                schema=schema,
+                schema=build_schema(),
                 parse_kwargs={"default_field_names": [F_HEADING_PATH]},
             )
-            seqs: dict[str, list[int]] = {}
-            for pid, seq in wanted:
-                seqs.setdefault(pid, []).append(seq)
-            # Exactly the asked sections: a file's other sections match its title's
-            # words too, and would crowd them out of the limit or cost a read each.
-            asked = tantivy.Query.boolean_query(
-                [
-                    (
-                        tantivy.Occur.Should,
-                        tantivy.Query.boolean_query(
-                            [
-                                (
-                                    tantivy.Occur.Must,
-                                    tantivy.Query.term_query(schema, F_PARENT_ID, pid),
-                                ),
-                                (
-                                    tantivy.Occur.Must,
-                                    tantivy.Query.term_set_query(schema, F_CHUNK_SEQ, s),
-                                ),
-                            ]
-                        ),
-                    )
-                    for pid, s in seqs.items()
-                ]
-            )
-            scoped = tantivy.Query.boolean_query(
-                [
-                    (tantivy.Occur.Must, heading),
-                    (tantivy.Occur.Must, tantivy.Query.const_score_query(asked, 0.0)),
-                ]
-            )
-            searcher = self._searcher
-            result = searcher.search(scoped, limit=len(wanted))
-        scores: dict[tuple[str, int], float] = {}
-        for score, address in result.hits:
-            doc = searcher.doc(address)
-            key = (str(doc.get_first(F_PARENT_ID)), int(doc.get_first(F_CHUNK_SEQ) or 0))
-            if key in wanted:
-                scores[key] = score
-        return scores
+            return {key: score for score, key in self._within_sections(heading, wanted)}
+
+    @_engine_boundary
+    def holding_every_word(
+        self, query: str, sections: Collection[tuple[str, int]]
+    ) -> set[tuple[str, int]]:
+        """Those of ``sections`` whose body, heading or title holds every indexed word
+        ``query`` asks for; empty when it asks for fewer than two."""
+        import tantivy
+
+        from fnd.analysis import analyse
+        from fnd.query_ast import wanted_words
+
+        wanted = set(sections)
+        node = self._content_node(query) if wanted else None
+        if node is None:
+            return set()
+        schema, raw, fields = build_schema(), self._searcher, (F_BODY, F_HEADING_PATH, F_TITLE)
+        tokens = [
+            t
+            for t in dict.fromkeys(analyse(" ".join(wanted_words(node))))
+            if any(raw.doc_freq(f, t) for f in fields)
+        ]
+        if len(tokens) < 2:
+            return set()
+        every = tantivy.Query.boolean_query(
+            [
+                (
+                    tantivy.Occur.Must,
+                    tantivy.Query.boolean_query(
+                        [
+                            (tantivy.Occur.Should, tantivy.Query.term_query(schema, f, t))
+                            for f in fields
+                        ]
+                    ),
+                )
+                for t in tokens
+            ]
+        )
+        return {key for _score, key in self._within_sections(every, wanted)}
 
     def search_grouped(
         self,
@@ -1091,12 +1151,11 @@ def group_by_file(
     *,
     limit: int,
     sections_per_file: int = 5,
-    score_threshold: float = 0.0,
     collapse_copies: bool = False,
 ) -> list[FileGroup]:
     """Per-file groups in first-seen order, sections by :attr:`Hit.rank_key` cut to
-    ``sections_per_file`` and to ``score_threshold`` of the top section's score;
-    with ``collapse_copies`` an identical copy folds into :attr:`FileGroup.copies`."""
+    ``sections_per_file``; with ``collapse_copies`` an identical copy folds into
+    :attr:`FileGroup.copies`."""
     groups: dict[str, list[Hit]] = {}
     order: list[str] = []
     # Per kept file: each folded copy's path and the collections it is indexed under.
@@ -1119,9 +1178,6 @@ def group_by_file(
         # order ("Day 3 … Day 60, Day 1, Day 2"), and the preview lands on the first.
         ranked = sorted(groups[pid], key=lambda h: (-h.rank_key, h.chunk_seq, h.line))
         top = ranked[0]
-        if score_threshold > 0.0 and top.score > 0.0:
-            min_score = top.score * score_threshold
-            ranked = [h for h in ranked if h.score >= min_score]
         folded = copies[file_key(top, collapse_copies=collapse_copies)]
         out.append(
             FileGroup(
