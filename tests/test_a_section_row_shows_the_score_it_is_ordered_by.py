@@ -1,5 +1,4 @@
-"""A section row shows the score its file's sections are ordered by, dimmed when it
-misses a query word another section holds."""
+"""A section row shows the score its file's sections are ordered by."""
 
 from __future__ import annotations
 
@@ -24,10 +23,6 @@ def _hit(**changes: object) -> Hit:
     return dataclasses.replace(hit, **changes)  # type: ignore[arg-type]
 
 
-def _styles(label: object) -> set[str]:
-    return {str(span.style) for span in label.spans}  # type: ignore[attr-defined]
-
-
 def test_the_row_shows_the_ordering_score() -> None:
     label = _format_hit_label(_hit(section_score=16.33), max_score=20.0)
     assert str(label).lstrip().startswith("16.33")
@@ -35,11 +30,3 @@ def test_the_row_shows_the_ordering_score() -> None:
 
 def test_without_a_section_score_the_row_shows_bm25() -> None:
     assert str(_format_hit_label(_hit(), max_score=20.0)).lstrip().startswith("5.27")
-
-
-def test_a_section_missing_a_word_is_dimmed() -> None:
-    assert _styles(_format_hit_label(_hit(misses_a_word=True), max_score=20.0)) == {"dim"}
-
-
-def test_a_section_holding_every_word_is_not_dimmed() -> None:
-    assert "dim" not in _styles(_format_hit_label(_hit(), max_score=20.0))

@@ -89,6 +89,15 @@ _DEFAULT_LIMIT: Final = 10
 _WORD_FIELDS: Final = (F_BODY, F_HEADING_PATH, F_TITLE)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class WordEvidence:
+    """One query word across a set of sections, keyed (parent_id, chunk_seq)."""
+
+    rarity: float  # BM25 IDF over bodies
+    heading: dict[tuple[str, int], float]  # its heading-path BM25 where it is there
+    body: dict[tuple[str, int], float]  # its body BM25 where it is there
+
+
 def _every_hit(searcher: Any, query: Query, expected: int) -> list[Any]:
     """All of ``query``'s hits: a section indexed in several collections matches once
     per copy, so ``expected`` is only the first guess at the limit."""
@@ -96,28 +105,6 @@ def _every_hit(searcher: Any, query: Query, expected: int) -> list[Any]:
     if result.count > len(result.hits):
         result = searcher.search(query, limit=result.count)
     return result.hits
-
-
-def _sections_query(schema: Schema, sections: Collection[tuple[str, int]]) -> Query:
-    """Exactly ``sections`` (parent_id, chunk_seq): a file's other sections would
-    crowd them out of a search's limit or cost a read each. A term pair per section:
-    a ``chunk_seq`` term set costs 3.6x as much, 6.9 against 1.9 ms on 160 NQ sections."""
-    import tantivy
-
-    return tantivy.Query.boolean_query(
-        [
-            (
-                tantivy.Occur.Should,
-                tantivy.Query.boolean_query(
-                    [
-                        (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_PARENT_ID, pid)),
-                        (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_CHUNK_SEQ, seq)),
-                    ]
-                ),
-            )
-            for pid, seq in sections
-        ]
-    )
 
 
 def scope_or(arms: list[Query]) -> Query:
@@ -239,8 +226,6 @@ class Hit:
     # The score a file's sections are ordered by (BM25 plus the heading lift); None
     # where that order is BM25's own.
     section_score: float | None = None
-    # Lacks a query word another section of its file holds, so sorts below them.
-    misses_a_word: bool = False
 
     @property
     def rank_key(self) -> float:
@@ -992,53 +977,6 @@ class Searcher:
         )
         return parse_query_ast(content) if content.strip() else None
 
-    def _within_sections(
-        self, query: Query, wanted: set[tuple[str, int]]
-    ) -> list[tuple[float, tuple[str, int]]]:
-        """``query``'s score and (parent_id, chunk_seq) for each of ``wanted`` it matches."""
-        import tantivy
-
-        scoped = tantivy.Query.boolean_query(
-            [
-                (tantivy.Occur.Must, query),
-                (
-                    tantivy.Occur.Must,
-                    tantivy.Query.const_score_query(_sections_query(build_schema(), wanted), 0.0),
-                ),
-            ]
-        )
-        searcher = self._searcher
-        out: list[tuple[float, tuple[str, int]]] = []
-        for score, address in _every_hit(searcher, scoped, len(wanted)):
-            doc = searcher.doc(address)
-            key = (str(doc.get_first(F_PARENT_ID)), int(doc.get_first(F_CHUNK_SEQ) or 0))
-            if key in wanted:
-                out.append((score, key))
-        return out
-
-    @_engine_boundary
-    def heading_scores(
-        self, query: str, sections: Collection[tuple[str, int]]
-    ) -> dict[tuple[str, int], float]:
-        """BM25 of ``query``'s words against ``heading_path`` for each of ``sections``
-        (parent_id, chunk_seq) whose heading matches. Empty for a query with a pattern
-        word: those resolve against the body's words, so they have no heading score."""
-        from fnd.query_ast import resolves_in_body_only
-        from fnd.query_compile import compile_query
-
-        wanted = set(sections)
-        node = self._content_node(query) if wanted else None
-        if node is None or resolves_in_body_only(node):
-            return {}
-        with _engine_refusals():
-            heading = compile_query(
-                node,
-                searcher=self,
-                schema=build_schema(),
-                parse_kwargs={"default_field_names": [F_HEADING_PATH]},
-            )
-            return {key: score for score, key in self._within_sections(heading, wanted)}
-
     def wanted_tokens(self, query: str) -> list[str]:
         """The index tokens of the plain words ``query`` asks for that some body, heading
         or title holds: excluded words, filters and pattern words are left out."""
@@ -1056,32 +994,49 @@ class Searcher:
         ]
 
     @_engine_boundary
-    def holding_every_word(
+    def word_evidence(
         self, tokens: Sequence[str], sections: Collection[tuple[str, int]]
-    ) -> set[tuple[str, int]]:
-        """Those of ``sections`` whose body, heading or title holds every one of
-        ``tokens``; empty for fewer than two."""
+    ) -> dict[str, WordEvidence]:
+        """Each of ``tokens``' evidence across ``sections``: see :class:`WordEvidence`."""
+        import math
+
         import tantivy
 
-        wanted = set(sections)
-        if len(tokens) < 2 or not wanted:
-            return set()
-        schema = build_schema()
-        every = tantivy.Query.boolean_query(
-            [
-                (
-                    tantivy.Occur.Must,
-                    tantivy.Query.boolean_query(
-                        [
-                            (tantivy.Occur.Should, tantivy.Query.term_query(schema, f, t))
-                            for f in _WORD_FIELDS
-                        ]
-                    ),
-                )
-                for t in tokens
-            ]
+        wanted, schema, raw = set(sections), build_schema(), self._searcher
+        files = tantivy.Query.const_score_query(
+            tantivy.Query.term_set_query(schema, F_PARENT_ID, sorted({p for p, _ in wanted})), 0.0
         )
-        return {key for _score, key in self._within_sections(every, wanted)}
+        keys: dict[tuple[int, int], tuple[str, int]] = {}
+
+        def scored(field: str, token: str) -> dict[tuple[str, int], float]:
+            query = tantivy.Query.boolean_query(
+                [
+                    (tantivy.Occur.Must, tantivy.Query.term_query(schema, field, token)),
+                    (tantivy.Occur.Must, files),
+                ]
+            )
+            out: dict[tuple[str, int], float] = {}
+            for score, address in _every_hit(raw, query, len(wanted)):
+                at = (address.segment_ord, address.doc)
+                if at not in keys:
+                    doc = raw.doc(address)
+                    keys[at] = (
+                        str(doc.get_first(F_PARENT_ID)),
+                        int(doc.get_first(F_CHUNK_SEQ) or 0),
+                    )
+                if keys[at] in wanted:
+                    out[keys[at]] = score
+            return out
+
+        out: dict[str, WordEvidence] = {}
+        for t in tokens if wanted else ():
+            df = raw.doc_freq(F_BODY, t)
+            out[t] = WordEvidence(
+                rarity=math.log(1 + (raw.num_docs - df + 0.5) / (df + 0.5)),
+                heading=scored(F_HEADING_PATH, t),
+                body=scored(F_BODY, t),
+            )
+        return out
 
     def search_grouped(
         self,

@@ -204,7 +204,7 @@ def _styled_action_label(label: Any, colour: str) -> Any:
     return Text(str(label), style=style)
 
 
-def _build_label(text: str, score: float, max_score: float, *, dim: bool = False) -> Any:
+def _build_label(text: str, score: float, max_score: float) -> Any:
     """Tree label combining a coloured numeric score (left, fixed width)
     with the file/section text (right, may truncate cleanly).
 
@@ -221,11 +221,11 @@ def _build_label(text: str, score: float, max_score: float, *, dim: bool = False
     text = display_line(text)
     label = Text()
     if max_score > 0 and score > 0:
-        label.append(f"{score:5.2f}", style="dim" if dim else _score_style(score, max_score))
+        label.append(f"{score:5.2f}", style=_score_style(score, max_score))
         label.append("  ")
     else:
         label.append(" " * 7)
-    label.append(text, style="dim" if dim else "")
+    label.append(text)
     return label
 
 
@@ -309,7 +309,7 @@ def _format_hit_label(
 
     ``match_visible=False`` prepends :data:`_UNLOCATABLE_GLYPH`: the row stays,
     but the user is told the preview won't be able to show them the match. The
-    score is the one the section is ordered by, dimmed when it misses a query word.
+    score is the one the section is ordered by.
     """
     if h.page_label:
         loc = f"p.{h.page_label}"
@@ -339,7 +339,7 @@ def _format_hit_label(
     # marker was being emitted correctly and clipped off screen every time.
     prefix = "" if match_visible else f"{_UNLOCATABLE_GLYPH} "
     score = h.score if h.section_score is None else h.section_score
-    return _build_label(f"{prefix}{body}{pass_marker}", score, max_score, dim=h.misses_a_word)
+    return _build_label(f"{prefix}{body}{pass_marker}", score, max_score)
 
 
 def disambiguated_names(paths: Sequence[str]) -> dict[str, str]:

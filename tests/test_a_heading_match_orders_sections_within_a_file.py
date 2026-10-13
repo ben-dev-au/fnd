@@ -11,8 +11,8 @@ import fnd.layered
 from fnd.analysis import analyse
 from fnd.index import build_index
 from fnd.layered import search_layered
-from fnd.query import Searcher
-from fnd.schema import PARENT_HEADING_WEIGHT, SECTION_HEADING_BOOST
+from fnd.query import Hit, Searcher
+from fnd.schema import HEADING_TIE_BREAKER, PARENT_HEADING_WEIGHT, SECTION_HEADING_BOOST
 
 _OTHER = "A note about something else entirely, in an ordinary sentence."
 _GARDEN = (
@@ -83,7 +83,11 @@ def test_unshown_sections_of_a_titled_file_do_not_crowd_out_the_lift(
             "garden.md": _GARDEN.replace("# Garden", "# Garden Notes Today"),
         },
     )
-    assert _sections(searcher, "budget")["garden.md"][0] == "Garden Notes Today > Budget"
+    groups = search_layered(searcher, query="budget", limit=40, sections_per_file=10)
+    garden = {h.heading_path: h for g in groups if g.path.endswith("garden.md") for h in g.hits}
+    budget = garden["Garden Notes Today > Budget"]
+    assert budget.section_score is not None
+    assert budget.section_score > budget.score
 
 
 def test_a_cascade_keeps_its_exact_section_above_a_looser_one(
@@ -109,20 +113,18 @@ def test_a_cascade_keeps_its_exact_section_above_a_looser_one(
     assert order.index("Lab > Notes") < order.index("Lab > Other")
 
 
-def test_heading_scores_cover_only_the_sections_asked_about(notes: Searcher) -> None:
+def test_word_evidence_covers_only_the_sections_asked_about(notes: Searcher) -> None:
     groups = search_layered(notes, query="budget", limit=40, sections_per_file=10)
     garden = next(g for g in groups if g.path.endswith("garden.md"))
     asked = {(h.parent_id, h.chunk_seq) for h in garden.hits}
-    scores = notes.heading_scores("budget", asked)
-    assert scores
-    assert set(scores) <= asked
+    e = notes.word_evidence(notes.wanted_tokens("budget"), asked)[analyse("budget")[0]]
+    assert e.heading
+    assert set(e.body) | set(e.heading) <= asked
 
 
 @pytest.mark.parametrize("query", ["budg*", "budgte~", "/budg.*/"])
-def test_a_pattern_word_has_no_heading_score(notes: Searcher, query: str) -> None:
-    groups = search_layered(notes, query="budget", limit=40, sections_per_file=10)
-    asked = {(h.parent_id, h.chunk_seq) for g in groups for h in g.hits}
-    assert notes.heading_scores(query, asked) == {}
+def test_a_pattern_word_is_not_a_wanted_word(notes: Searcher, query: str) -> None:
+    assert notes.wanted_tokens(query) == []
 
 
 def test_a_respelt_word_still_lifts_its_heading(notes: Searcher) -> None:
@@ -149,10 +151,10 @@ def test_a_section_holding_every_word_leads_a_heading_holding_one(course: Search
     assert _sections(course, "deep learning")["course.md"][0] == "Course > Approaches"
 
 
-def test_without_the_every_word_tier_the_partial_heading_leads(
+def test_without_the_coverage_scale_the_partial_heading_leads(
     course: Searcher, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(Searcher, "holding_every_word", lambda self, tokens, sections: set())
+    monkeypatch.setattr(fnd.layered, "COVERAGE_POWER", 0.0)
     assert _sections(course, "deep learning")["course.md"][0] == "Course > Learning activity"
 
 
@@ -161,24 +163,47 @@ def test_an_excluded_word_does_not_count_as_wanted(course: Searcher) -> None:
     assert course.wanted_tokens("deep learning") == analyse("deep learning")
 
 
+def _lift(searcher: Searcher, query: str, h: Hit, share: float) -> float:
+    k = (h.parent_id, h.chunk_seq)
+    total = 0.0
+    for e in searcher.word_evidence(searcher.wanted_tokens(query), [k]).values():
+        lifted, plain = SECTION_HEADING_BOOST * share * e.heading.get(k, 0.0), e.body.get(k, 0.0)
+        total += max(0.0, lifted - plain) + HEADING_TIE_BREAKER * min(lifted, plain)
+    return total
+
+
+def _plans(tmp_path: Path, tmp_index_dir: Path, text: str) -> tuple[Searcher, dict[str, Hit]]:
+    searcher = _index(tmp_path, tmp_index_dir, {"plans.md": text})
+    groups = search_layered(searcher, query="budget", limit=40, sections_per_file=10)
+    return searcher, {
+        h.heading_path: h for g in groups if g.path.endswith("plans.md") for h in g.hits
+    }
+
+
 def test_a_parent_heading_lifts_its_subsections_by_a_share(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    searcher = _index(
+    searcher, hits = _plans(
         tmp_path,
         tmp_index_dir,
-        {
-            "plans.md": "# Plans\n\n## Budget\n\nThe budget overview.\n\n"
-            "### Timeline\n\nDates first, and the budget once, among other plain words.\n\n"
-            "## Costs\n\nThe budget, the budget and the budget again.\n",
-        },
+        "# Plans\n\n## Budget\n\nThe budget overview.\n\n"
+        "### Timeline\n\nDates first, and the budget once, among other plain words.\n\n"
+        "## Costs\n\nThe budget, the budget and the budget again.\n",
     )
-    groups = search_layered(searcher, query="budget", limit=40, sections_per_file=10)
-    hits = {h.heading_path: h for g in groups if g.path.endswith("plans.md") for h in g.hits}
     own, child = hits["Plans > Budget"], hits["Plans > Budget > Timeline"]
-    heading = searcher.heading_scores("budget", [(h.parent_id, h.chunk_seq) for h in (own, child)])
-    own_lift, child_lift = (
-        SECTION_HEADING_BOOST * heading[(h.parent_id, h.chunk_seq)] for h in (own, child)
+    assert own.section_score == pytest.approx(own.score + _lift(searcher, "budget", own, 1.0))
+    child_lift = _lift(searcher, "budget", child, PARENT_HEADING_WEIGHT)
+    assert child.section_score == pytest.approx(child.score + child_lift)
+
+
+def test_a_heading_over_every_section_counts_alike_for_each(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    searcher, hits = _plans(
+        tmp_path,
+        tmp_index_dir,
+        "# Budget\n\nThe budget overview.\n\n"
+        "## Timeline\n\nDates first, and the budget once, among other plain words.\n",
     )
-    assert own.section_score == pytest.approx(own.score + own_lift)
-    assert child.section_score == pytest.approx(child.score + PARENT_HEADING_WEIGHT * child_lift)
+    child = hits["Budget > Timeline"]
+    assert child.section_score == pytest.approx(child.score + _lift(searcher, "budget", child, 1.0))

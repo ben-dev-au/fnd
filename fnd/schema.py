@@ -123,10 +123,22 @@ DEFAULT_FIELD_BOOSTS: Final[dict[str, float]] = {
     F_PATH_TOKENS: 0.25,
     F_BODY: 1.0,
 }
-SECTION_HEADING_BOOST: Final = 3.0
-# A heading match only in a parent heading counts this share. Natural Questions, right
-# section first: 0, 0.25 and 0.5 score alike (0.382 to 0.383), full weight 0.372.
+# Within a file, a query word's heading BM25 times this counts where it beats the body's
+# BM25 for the word. NQ right section first, full questions: 1 gives 0.380, 2 0.444,
+# 3 0.436, 5 0.425.
+SECTION_HEADING_BOOST: Final = 2.0
+# The share a word gets when only a parent heading holds it (one heading every section
+# of the file sits under counts fully). 0 to 0.5 measured alike; full share let a
+# parent lift a stub above sections with their own match.
 PARENT_HEADING_WEIGHT: Final = 0.5
+# The weaker of a word's heading and body evidence adds this much. NQ deeper-section
+# answers, MRR (2 words, full): 0 gives 0.456, 0.565; 0.25 0.431, 0.539, and keeps
+# opening-section answers level with the previous order (0.734, 0.751).
+HEADING_TIE_BREAKER: Final = 0.25
+# A section's score is scaled by this power of the rarity-weighted share of the query's
+# words it holds. NQ, 2 words: right section first level (0.315), deeper-answer MRR
+# 0.431 to 0.443; full questions cost 0.408 to 0.370. Power 1 costs more for no gain.
+COVERAGE_POWER: Final = 0.5
 
 
 # Unit Separator: forbidden in collection names (validated) and absent from

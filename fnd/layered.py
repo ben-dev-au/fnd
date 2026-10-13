@@ -26,6 +26,7 @@ Strong-signal bypass adapted from tobi/qmd (MIT); see README.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from typing import TYPE_CHECKING, Literal, overload
 
 from fnd.analysis import analyse
@@ -52,7 +53,12 @@ from fnd.query import (
     group_by_file,
 )
 from fnd.render import keep_shown
-from fnd.schema import PARENT_HEADING_WEIGHT, SECTION_HEADING_BOOST
+from fnd.schema import (
+    COVERAGE_POWER,
+    HEADING_TIE_BREAKER,
+    PARENT_HEADING_WEIGHT,
+    SECTION_HEADING_BOOST,
+)
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -406,32 +412,34 @@ def by_heading_within_file(
     sections_per_file: int,
     keep_pass_order: bool = False,
 ) -> list[FileGroup]:
-    """Each file's sections holding every query word first, then by BM25 plus
-    ``SECTION_HEADING_BOOST`` times their heading match (``PARENT_HEADING_WEIGHT`` of it
-    when only a parent heading holds a query word), cut to ``sections_per_file``.
-    ``keep_pass_order`` keeps a cascade's exact sections above looser ones."""
+    """Each file's sections ordered by one score, then cut to ``sections_per_file``: BM25
+    plus, per query word, what its heading adds beyond the body's evidence (and
+    ``HEADING_TIE_BREAKER`` of the rest), scaled by the share of the query's words the
+    section holds. ``keep_pass_order`` keeps a cascade's exact sections above looser ones."""
     several = [(h.parent_id, h.chunk_seq) for g in groups if len(g.hits) > 1 for h in g.hits]
     tokens = searcher.wanted_tokens(query) if several else []
-    every = searcher.holding_every_word(tokens, several)
-    scores = (
-        searcher.heading_scores(query, several) if several and SECTION_HEADING_BOOST > 0 else {}
-    )
-    asked = set(tokens)
+    evidence = searcher.word_evidence(tokens, several) if tokens else {}
+    total = sum(e.rarity for e in evidence.values()) if len(evidence) > 1 else 0.0
 
-    def ordered(h: Hit, tiered: bool) -> Hit:
-        heading = scores.get((h.parent_id, h.chunk_seq), 0.0)
-        if heading and not asked.intersection(analyse(h.heading_path.split(" > ")[-1])):
-            heading *= PARENT_HEADING_WEIGHT
-        return dataclasses.replace(
-            h,
-            section_score=h.score + SECTION_HEADING_BOOST * heading,
-            misses_a_word=tiered and (h.parent_id, h.chunk_seq) not in every,
-        )
+    def ordered(h: Hit, shared: set[str]) -> Hit:
+        k = (h.parent_id, h.chunk_seq)
+        own = shared.union(analyse(h.heading_path.split(" > ")[-1]))
+        lift, held = 0.0, 0.0
+        titled = set(analyse(h.title)) if total else set()
+        for token, e in evidence.items():
+            share = 1.0 if token in own else PARENT_HEADING_WEIGHT
+            lifted, plain = (
+                SECTION_HEADING_BOOST * share * e.heading.get(k, 0.0),
+                e.body.get(k, 0.0),
+            )
+            lift += max(0.0, lifted - plain) + HEADING_TIE_BREAKER * min(lifted, plain)
+            held += e.rarity if k in e.body or k in e.heading or token in titled else 0.0
+        cover = (held / total) ** COVERAGE_POWER if total else 1.0
+        return dataclasses.replace(h, section_score=(h.score + lift) * cover)
 
-    def key(h: Hit) -> tuple[int, bool, float, int, int]:
+    def key(h: Hit) -> tuple[int, float, int, int]:
         return (
             h.pass_index if keep_pass_order else 0,
-            h.misses_a_word,
             -(h.section_score or 0.0),
             h.chunk_seq,
             h.line,
@@ -441,13 +449,21 @@ def by_heading_within_file(
     for g in groups:
         hits = g.hits
         keys = {(h.parent_id, h.chunk_seq) for h in hits}
-        tiered = bool(keys & every and keys - every)
-        if keys & scores.keys() or tiered:
-            hits = sorted((ordered(h, tiered) for h in hits), key=key)
+        if total or any(keys & e.heading.keys() for e in evidence.values()):
+            shared = _shared_heading_words(hits)
+            hits = sorted((ordered(h, shared) for h in hits), key=key)
         if hits is not g.hits or len(hits) > sections_per_file:
             g = dataclasses.replace(g, hits=hits[:sections_per_file])
         out.append(g)
     return out
+
+
+def _shared_heading_words(hits: list[Hit]) -> set[str]:
+    """Index tokens of the leading headings every one of ``hits`` sits under: a note's
+    H1 heads all its sections, so it counts alike for each of them."""
+    paths = [h.heading_path.split(" > ") for h in hits]
+    common = itertools.takewhile(lambda level: len(set(level)) == 1, zip(*paths, strict=False))
+    return set(analyse(" ".join(level[0] for level in common)))
 
 
 def by_best_bm25(hits: list[Hit]) -> list[Hit]:
