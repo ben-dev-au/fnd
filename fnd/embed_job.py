@@ -26,7 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from fnd.semantic import Embedder, section_key, section_text
+from fnd.semantic import GRANITE, Embedder, section_key, section_text
+from fnd.vectors import stored_digest
 
 if TYPE_CHECKING:
     from fnd.query import Hit, Searcher
@@ -37,9 +38,12 @@ __all__ = ["CANCELLED_EXIT", "EmbedJobRunner", "Progress", "indexed_sections", "
 BATCH: Final = 16
 # Batches per segment file: one per batch made ~6,800 files for 109k sections.
 FLUSH_EVERY: Final = 8
-SAVE_EVERY: Final = 24
+# Seconds between row-table saves while running: per-batch saves wrote ~14 GB in a first embed.
+SAVE_EVERY_S: Final = 60.0
 NICE: Final = 10
 CANCELLED_EXIT: Final = 3
+# Another process holds the store: the CLI's reconcile, or a second app.
+BUSY_EXIT: Final = 4
 _NEVER: Final = ("", 0, 0)
 
 
@@ -69,17 +73,6 @@ def indexed_sections(searcher: Searcher) -> list[Hit]:
             merged = tuple(dict.fromkeys([*prior.memberships, *h.memberships]))
             seen[key] = dataclasses.replace(prior, memberships=merged)
     return list(seen.values())
-
-
-def stored_digest(h: Hit) -> str:
-    """The section's stored bytes, hashed without decoding them."""
-    import hashlib
-
-    d = hashlib.blake2b(digest_size=16)
-    for part in (h.title.encode(), h.heading_path.encode(), h.stored_struct, h.body_md.encode()):
-        d.update(len(part).to_bytes(8, "little"))
-        d.update(part)
-    return d.hexdigest()
 
 
 def _known_keys(prior: RowTable | None) -> dict[str, str]:
@@ -122,6 +115,7 @@ def _rows(
         stamp=stamp if isinstance(stamp, tuple) else _NEVER,
         complete=complete,
         stored_digest=np.array([stored_digest(h) for h, _ in kept], dtype=str),
+        store_generation=store.generation,
     )
 
 
@@ -145,7 +139,8 @@ def reconcile(
     opted_in: frozenset[str],
     batch: int = BATCH,
     flush_every: int = FLUSH_EVERY,
-    save_every: int = SAVE_EVERY,
+    save_every_s: float = SAVE_EVERY_S,
+    clock: Callable[[], float] = time.monotonic,
     should_pause: Callable[[], bool] = lambda: False,
     cancel: Callable[[], bool] = lambda: False,
     on_progress: Callable[[Progress], None] = lambda p: None,
@@ -158,7 +153,13 @@ def reconcile(
     stamp = searcher.generation
     opted = tuple(sorted(opted_in))
     prior = RowTable.load(store.folder)
-    if prior is not None and prior.complete and prior.stamp == stamp and prior.collections == opted:
+    if (
+        prior is not None
+        and prior.complete
+        and prior.stamp == stamp
+        and prior.collections == opted
+        and prior.store_generation == store.generation
+    ):
         used = {str(k) for k in prior.text_key.tolist()}
         unused = len(store) - len(used)
         if all(store.has(k) for k in used) and (unused * 4 <= len(store) or _reindex_incomplete()):
@@ -177,7 +178,7 @@ def reconcile(
         text = None
         if key is None or not store.has(key):
             text = section_text(h.title, h.heading_path, decoded_body(h)[0])
-            key = section_key(embedder.token_ids(text), 256)
+            key = section_key(embedder.token_ids(text), GRANITE.max_tokens)
         keys.append(key)
         if text is not None and not store.has(key) and key not in queued:
             queued.add(key)
@@ -197,6 +198,7 @@ def reconcile(
             pending_keys.clear()
             pending_vecs.clear()
 
+    last_save = clock()
     try:
         for n, part in enumerate(_batches(todo, batch), 1):
             if cancel():
@@ -211,14 +213,17 @@ def reconcile(
             on_progress(Progress(done, total))
             if n % flush_every == 0:
                 flush()
-            if n % save_every == 0:
+            if clock() - last_save >= save_every_s:
                 flush()
                 _rows(sections, keys, store, opted, stamp, complete=False).save(store.folder)
+                last_save = clock()
     finally:
         # An interrupt keeps every batch already embedded.
         flush()
     if done == total and not _reindex_incomplete():
         store.collect(set(keys))
+    if done == total:
+        store.merge()
     # After collection: compaction renumbers the rows this table points at.
     rows = _rows(sections, keys, store, opted, stamp, complete=done == total)
     rows.save(store.folder)
@@ -240,7 +245,7 @@ def _main(argv: list[str]) -> int:
 
     from fnd.cli_output import echo
     from fnd.semantic import GRANITE
-    from fnd.vectors import RECIPE, VectorStore
+    from fnd.vectors import StoreBusyError, VectorStore, store_header
 
     ap = argparse.ArgumentParser(prog="fnd.embed_job")
     ap.add_argument("index", type=Path)
@@ -255,26 +260,27 @@ def _main(argv: list[str]) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("now", True))
     threads = max(1, (os.cpu_count() or 2) // 2)
     embedder = _load_embedder(a.embedder, threads)
-    header = {
-        "model": GRANITE.name,
-        "revision": GRANITE.revision,
-        "max_tokens": GRANITE.max_tokens,
-        "recipe": RECIPE,
-    }
+    header = store_header(GRANITE)
     if a.embedder is not None:
         header = {**header, "model": a.embedder}
-    store = VectorStore.open(a.store, dim=embedder.dim, header=header)
+    try:
+        store = VectorStore.open_writer(a.store, dim=embedder.dim, header=header)
+    except StoreBusyError:
+        return BUSY_EXIT
     pause = a.store / "pause"
-    reconcile(
-        a.index,
-        store=store,
-        embedder=embedder,
-        opted_in=frozenset(c for c in a.collections.split(",") if c),
-        batch=a.batch,
-        should_pause=pause.exists,
-        cancel=lambda: stop["now"],
-        on_progress=lambda p: echo(json.dumps({"done": p.done, "total": p.total})),
-    )
+    try:
+        reconcile(
+            a.index,
+            store=store,
+            embedder=embedder,
+            opted_in=frozenset(c for c in a.collections.split(",") if c),
+            batch=a.batch,
+            should_pause=pause.exists,
+            cancel=lambda: stop["now"],
+            on_progress=lambda p: echo(json.dumps({"done": p.done, "total": p.total})),
+        )
+    finally:
+        store.close()
     return CANCELLED_EXIT if stop["now"] else 0
 
 
@@ -326,10 +332,12 @@ class EmbedJobRunner:
 
     def pause(self, flag: bool) -> None:
         marker = self._store_dir / "pause"
-        if flag:
-            marker.touch()
-        else:
-            marker.unlink(missing_ok=True)
+        # The folder may be gone (an uninstall from the CLI); a timer raising crashes the app.
+        with contextlib.suppress(OSError):
+            if flag:
+                marker.touch()
+            else:
+                marker.unlink(missing_ok=True)
 
     def terminate(self) -> None:
         """Ask the child to stop after its batch, without waiting for it."""

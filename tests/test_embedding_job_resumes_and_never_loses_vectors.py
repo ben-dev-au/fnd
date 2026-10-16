@@ -41,7 +41,7 @@ def index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def _store(tmp_path: Path) -> VectorStore:
-    return VectorStore.open(tmp_path / "vectors", dim=FakeEmbedder.dim, header=HEADER)
+    return VectorStore.open_writer(tmp_path / "vectors", dim=FakeEmbedder.dim, header=HEADER)
 
 
 def _run(index: Path, store: VectorStore, fake: FakeEmbedder, **kw: object) -> RowTable:
@@ -189,7 +189,7 @@ def test_the_row_table_is_saved_while_running(index: Path, tmp_path: Path) -> No
             return True
         return False
 
-    _run(index, store, FakeEmbedder(), batch=2, cancel=cancel, save_every=1)
+    _run(index, store, FakeEmbedder(), batch=2, cancel=cancel, save_every_s=0.0)
     assert seen[0] is not None
     assert len(seen[0].parent_id) >= 4
 
@@ -258,5 +258,46 @@ def test_a_section_whose_stored_text_changed_is_tokenised_again(
 def test_batches_share_segment_files(index: Path, tmp_path: Path) -> None:
     """Several batches go into one segment file, so a large library is not thousands of files."""
     store = _store(tmp_path)
+    writes: list[int] = []
+    real = store.append
+
+    def append(keys: list[str], vecs: object) -> None:
+        writes.append(len(keys))
+        real(keys, vecs)  # type: ignore[arg-type]
+
+    store.append = append  # type: ignore[method-assign]
     _run(index, store, FakeEmbedder(), batch=3, flush_every=4)
-    assert len(list(store.folder.glob("seg-*.npy"))) == 2
+    assert len(writes) == 3
+    assert len(list(store.folder.glob("seg-*.npy"))) == 1
+
+
+def test_the_row_table_is_saved_on_a_timer_not_per_batch(
+    index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long run saves its rows about once a minute, not after every few batches."""
+    from fnd import vectors
+
+    saves: list[int] = []
+    real = vectors.RowTable.save
+    monkeypatch.setattr(
+        vectors.RowTable, "save", lambda self, folder: (saves.append(1), real(self, folder))[1]
+    )
+    ticks = iter(range(0, 10_000, 10))
+    _run(
+        index,
+        _store(tmp_path),
+        FakeEmbedder(),
+        batch=1,
+        save_every_s=60.0,
+        clock=lambda: float(next(ticks)),
+    )
+    assert 2 <= len(saves) <= 4
+
+
+def test_pausing_survives_a_removed_store(tmp_path: Path) -> None:
+    """Pausing after an uninstall removed the store folder is a no-op, not a crash."""
+    from fnd.embed_job import EmbedJobRunner
+
+    runner = EmbedJobRunner(index_dir=tmp_path / "index", store_dir=tmp_path / "gone")
+    runner.pause(True)
+    runner.pause(False)

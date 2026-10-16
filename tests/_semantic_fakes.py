@@ -6,21 +6,18 @@ holds, so a test can say which section is closest to a query by reading the corp
 
 from __future__ import annotations
 
-import dataclasses
 import hashlib
 import os
 import time
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
-import tantivy
 
-from fnd.query import Hit, Searcher, _light_hit, decoded_body
+from fnd.query import Hit, Searcher, decoded_body
 from fnd.semantic import section_key, section_text
 from fnd.semantic_search import SemanticContext
-from fnd.vectors import RowTable, VectorStore
+from fnd.vectors import RowTable, VectorStore, stored_digest
 
 TOPICS = ("apple", "boat", "cloud", "drum", "eagle", "flute", "gourd")
 # Words the fake reads as a topic that word matching cannot see.
@@ -57,19 +54,9 @@ class FakeEmbedder:
 
 def every_section(searcher: Searcher) -> list[Hit]:
     """Each indexed section once, with every collection it belongs to."""
-    raw: Any = searcher._searcher
-    total = raw.search(tantivy.Query.all_query(), limit=1, count=True).count
-    seen: dict[tuple[str, int], Hit] = {}
-    for _, addr in raw.search(tantivy.Query.all_query(), limit=max(total, 1)).hits:
-        h = _light_hit(raw.doc(addr), 0.0)
-        key = (h.parent_id, h.chunk_seq)
-        prior = seen.get(key)
-        if prior is None:
-            seen[key] = h
-        else:
-            merged = tuple(dict.fromkeys([*prior.memberships, *h.memberships]))
-            seen[key] = dataclasses.replace(prior, memberships=merged)
-    return list(seen.values())
+    from fnd.embed_job import indexed_sections
+
+    return indexed_sections(searcher)
 
 
 def build_context(
@@ -83,7 +70,7 @@ def build_context(
     """Embed every section (or only ``only_files`` by file name) into a fresh store."""
     embedder = embedder or FakeEmbedder()
     opted = tuple(sorted(set(opted_in)))
-    store = VectorStore.open(folder, dim=embedder.dim, header=HEADER)
+    store = VectorStore.open_writer(folder, dim=embedder.dim, header=HEADER)
     sections = [
         h
         for h in every_section(searcher)
@@ -96,6 +83,7 @@ def build_context(
     if missing:
         store.append([k for k, _ in missing], embedder.embed([t for _, t in missing]))
     snap = store.snapshot()
+    store.close()
     rows = RowTable(
         parent_id=np.array([h.parent_id for h in sections]),
         chunk_seq=np.array([h.chunk_seq for h in sections], dtype=np.int32),
@@ -106,5 +94,6 @@ def build_context(
         ).reshape(len(sections), len(opted)),
         text_key=np.array(keys),
         stamp=searcher.generation,  # type: ignore[arg-type]
+        stored_digest=np.array([stored_digest(h) for h in sections]),
     )
     return SemanticContext(embedder=embedder, snapshot=snap, rows=rows, opted_in=frozenset(opted))

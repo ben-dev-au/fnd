@@ -31,7 +31,6 @@ EMBED: Final = OperationPlan(
     phases=(Phase(key="sections", expected_ms=1_800_000.0, countable=True),),
     kind=OperationKind.AMBIENT,
 )
-QUERY_THREADS: Final = 2
 _PAUSE_POLL_S: Final = 0.5
 # Progress lines between reloads of the vectors a search uses: about a minute.
 _REFRESH_EVERY: Final = 200
@@ -62,6 +61,7 @@ class SemanticService:
         self._job: asyncio.Task[None] | None = None
         self._session: ProgressSession | None = None
         self._pause_timer: Any = None
+        self._reconciled_for: object = None
 
     # ── state ────────────────────────────────────────────────────
 
@@ -85,6 +85,13 @@ class SemanticService:
         ctx = self._ctx
         if ctx is None or not self.enabled:
             return None
+        searcher = getattr(getattr(self._app, "_search", None), "searcher", None)
+        generation = getattr(searcher, "generation", None)
+        moved = searcher is not None and generation != ctx.rows.stamp
+        # Once per generation: a stamp that can never match must not respawn the job per search.
+        if moved and not self.job_running and generation != self._reconciled_for:
+            self._reconciled_for = generation
+            self._app.call_later(self.ensure_job)
         opted = self.opted_in()
         return ctx if ctx.opted_in == opted else _with_opted(ctx, opted)
 
@@ -115,6 +122,8 @@ class SemanticService:
         from fnd.semantic_search import load_context
 
         if self._embedder is None:
+            from fnd.semantic_search import QUERY_THREADS
+
             factory = self._embedder_factory or (lambda: load_embedder(threads=QUERY_THREADS))
             self._embedder = factory()
         ctx = load_context(self._embedder)
@@ -128,8 +137,15 @@ class SemanticService:
             return
         if self._embedder is None:
             self._load_in_background()
+        elif self.job_running:
+            self._app.run_worker(self._restart(), group="semantic_restart", exit_on_error=False)
         else:
             self.ensure_job()
+
+    async def _restart(self) -> None:
+        """A running job embeds the collections it started with; restart it for the new set."""
+        await self.stop()
+        self.ensure_job()
 
     def after_index(self) -> None:
         """An index run finished: bring the vectors in line with it."""

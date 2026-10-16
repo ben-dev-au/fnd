@@ -64,10 +64,10 @@ def test_uv_tool_installs_reinstall_with_the_extra(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(extras, "_fnd_tool_venv", lambda: True)
     monkeypatch.setattr(extras, "_fnd_version", lambda: "1.0.1")
     monkeypatch.setattr(extras, "is_package_installed", lambda pkg: True)
-    assert ["uv", "tool", "install", "--reinstall", "fndr[semantic]==1.0.1"] in install_commands(
-        SEMANTIC
-    )
-    assert uninstall_commands(SEMANTIC) == [["uv", "tool", "install", "--reinstall", "fndr==1.0.1"]]
+    tool = [c[:5] for c in install_commands(SEMANTIC) if c[:3] == ["uv", "tool", "install"]]
+    assert tool == [["uv", "tool", "install", "--reinstall", "fndr[semantic]==1.0.1"]]
+    removed = [c[:5] for c in uninstall_commands(SEMANTIC)]
+    assert removed == [["uv", "tool", "install", "--reinstall", "fndr==1.0.1"]]
 
 
 def test_unsupported_platforms_refuse_install(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,3 +122,26 @@ def test_record_survives_a_json_round_trip(monkeypatch: pytest.MonkeyPatch) -> N
     extras.record("semantic", "after")
     saved = json.loads(extras._record_path("semantic", "added").read_text())
     assert saved == ["onnxruntime"]
+
+
+def test_a_uv_tool_reinstall_keeps_other_extras(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reinstalling fnd as a uv tool carries an installed pdf-structure along."""
+    monkeypatch.setattr(extras, "_project_pyproject_for_python", lambda py: None)
+    monkeypatch.setattr(extras, "_fnd_tool_venv", lambda: True)
+    monkeypatch.setattr(extras, "_fnd_version", lambda: "1.0.1")
+    monkeypatch.setattr(extras, "is_package_installed", lambda pkg: True)
+    (install,) = [c for c in install_commands(SEMANTIC) if c[:3] == ["uv", "tool", "install"]]
+    (remove,) = uninstall_commands(SEMANTIC)
+    for cmd in (install, remove):
+        assert cmd[cmd.index("--with") + 1] == "pymupdf4llm"
+
+
+def test_a_second_install_keeps_what_the_first_added(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reinstalling over packages already present still remembers them for uninstall."""
+    names = iter(
+        [{"fndr"}, {"fndr", "onnxruntime"}, {"fndr", "onnxruntime"}, {"fndr", "onnxruntime"}]
+    )
+    monkeypatch.setattr(extras, "_installed_names", lambda: next(names))
+    for phase in ("before", "after", "before", "after"):
+        extras.record("semantic", phase)
+    assert extras.recorded_additions("semantic") == {"onnxruntime"}

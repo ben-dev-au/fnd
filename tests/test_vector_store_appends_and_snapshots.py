@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,11 @@ from fnd.vectors import RowTable, VectorStore  # noqa: E402
 H = {"model": "tiny", "revision": "abc", "max_tokens": 8, "recipe": "r"}
 
 
+def _append(folder: Path, header: Mapping[str, object], keys: list[str], vecs: object) -> None:
+    with VectorStore.open_writer(folder, dim=4, header=dict(header)) as w:
+        w.append(keys, vecs)  # type: ignore[arg-type]
+
+
 def _v(n: int, seed: int = 0):
     r = np.random.default_rng(seed).normal(size=(n, 4)).astype(np.float32)
     return r / np.linalg.norm(r, axis=1, keepdims=True)
@@ -20,7 +26,7 @@ def _v(n: int, seed: int = 0):
 
 def test_append_adds_a_segment_and_keeps_the_old(tmp_path: Path) -> None:
     """A second append writes a new segment; the first is untouched."""
-    s = VectorStore.open(tmp_path, dim=4, header=H)
+    s = VectorStore.open_writer(tmp_path, dim=4, header=H)
     s.append(["a", "b"], _v(2))
     first = sorted(tmp_path.glob("seg-*.npy"))[0]
     stamp = first.stat().st_mtime_ns
@@ -33,21 +39,21 @@ def test_append_adds_a_segment_and_keeps_the_old(tmp_path: Path) -> None:
 def test_a_reopened_store_holds_what_was_saved(tmp_path: Path) -> None:
     """Closing and reopening loses nothing that was appended."""
     vecs = _v(2)
-    VectorStore.open(tmp_path, dim=4, header=H).append(["a", "b"], vecs)
+    _append(tmp_path, H, ["a", "b"], vecs)
     snap = VectorStore.open(tmp_path, dim=4, header=H).snapshot()
     assert np.allclose(snap.vecs[snap.key_row["b"]], vecs[1], atol=1e-3)
 
 
 def test_a_header_mismatch_starts_empty(tmp_path: Path) -> None:
     """A different model revision or recipe re-embeds from nothing."""
-    VectorStore.open(tmp_path, dim=4, header=H).append(["a"], _v(1))
-    s = VectorStore.open(tmp_path, dim=4, header={**H, "revision": "new"})
+    _append(tmp_path, H, ["a"], _v(1))
+    s = VectorStore.open_writer(tmp_path, dim=4, header={**H, "revision": "new"})
     assert not s.has("a")
 
 
 def test_an_old_snapshot_survives_an_append(tmp_path: Path) -> None:
     """A reader's snapshot keeps its rows while the writer appends."""
-    s = VectorStore.open(tmp_path, dim=4, header=H)
+    s = VectorStore.open_writer(tmp_path, dim=4, header=H)
     s.append(["a"], _v(1))
     snap = s.snapshot()
     s.append(["b"], _v(1, seed=2))
@@ -57,11 +63,12 @@ def test_an_old_snapshot_survives_an_append(tmp_path: Path) -> None:
 
 def test_collect_compacts_only_past_a_quarter_unused(tmp_path: Path) -> None:
     """Collection rewrites the store only when over a quarter of rows are unused."""
-    s = VectorStore.open(tmp_path, dim=4, header=H)
+    s = VectorStore.open_writer(tmp_path, dim=4, header=H)
     vecs = _v(8)
     s.append(list("abcdefgh"), vecs)
     assert s.collect(set("abcdefg")) == 0
     assert s.collect(set("abcde")) == 3
+    s.close()
     snap = VectorStore.open(tmp_path, dim=4, header=H).snapshot()
     assert snap.vecs.shape[0] == 5
     assert "h" not in snap.key_row
@@ -70,10 +77,11 @@ def test_collect_compacts_only_past_a_quarter_unused(tmp_path: Path) -> None:
 
 def test_appending_after_a_collection_keeps_the_survivors(tmp_path: Path) -> None:
     """A segment written after compaction never overwrites the compacted one."""
-    s = VectorStore.open(tmp_path, dim=4, header=H)
+    s = VectorStore.open_writer(tmp_path, dim=4, header=H)
     s.append(list("abcd"), _v(4))
     s.collect({"a"})
     s.append(["z"], _v(1, seed=3))
+    s.close()
     reopened = VectorStore.open(tmp_path, dim=4, header=H)
     assert reopened.has("a")
     assert reopened.has("z")
@@ -106,10 +114,68 @@ def test_no_row_table_loads_as_none(tmp_path: Path) -> None:
 
 def test_segments_no_manifest_names_are_swept_on_open(tmp_path: Path) -> None:
     """A segment compaction could not delete (held open on Windows) goes at the next open."""
-    s = VectorStore.open(tmp_path, dim=4, header=H)
+    s = VectorStore.open_writer(tmp_path, dim=4, header=H)
     s.append(["a"], _v(1))
     (tmp_path / "seg-99.npy").write_bytes(b"stale")
     (tmp_path / "seg-99.keys.json").write_text("[]")
-    VectorStore.open(tmp_path, dim=4, header=H)
+    s.close()
+    VectorStore.open_writer(tmp_path, dim=4, header=H).close()
     assert not (tmp_path / "seg-99.npy").exists()
     assert not (tmp_path / "seg-99.keys.json").exists()
+
+
+def test_a_second_writer_is_refused(tmp_path: Path) -> None:
+    """Only one process may write the store; a second is told it is busy."""
+    from fnd.vectors import StoreBusyError
+
+    first = VectorStore.open_writer(tmp_path, dim=4, header=H)
+    with pytest.raises(StoreBusyError):
+        VectorStore.open_writer(tmp_path, dim=4, header=H)
+    first.close()
+    VectorStore.open_writer(tmp_path, dim=4, header=H).close()
+
+
+def test_a_dead_writers_lock_is_taken_over(tmp_path: Path) -> None:
+    """A lock nobody has refreshed for ten minutes belongs to a writer that died."""
+    import os
+
+    VectorStore.open_writer(tmp_path, dim=4, header=H)
+    lock = tmp_path / "writer.lock"
+    old = lock.stat().st_mtime - 3600
+    os.utime(lock, (old, old))
+    VectorStore.open_writer(tmp_path, dim=4, header=H).close()
+
+
+def test_a_reader_never_deletes(tmp_path: Path) -> None:
+    """Opening to read leaves unnamed segments and a mismatched store alone."""
+    w = VectorStore.open_writer(tmp_path, dim=4, header=H)
+    w.append(["a"], _v(1))
+    w.close()
+    (tmp_path / "seg-99.npy").write_bytes(b"in flight")
+    VectorStore.open(tmp_path, dim=4, header=H)
+    VectorStore.open(tmp_path, dim=4, header={**H, "revision": "other"})
+    assert (tmp_path / "seg-99.npy").exists()
+    assert VectorStore.open(tmp_path, dim=4, header=H).has("a")
+
+
+def test_rows_filed_before_a_compaction_are_not_used(tmp_path: Path) -> None:
+    """A row table points at row numbers; after compaction renumbers them it is stale."""
+    w = VectorStore.open_writer(tmp_path, dim=4, header=H)
+    w.append(list("abcd"), _v(4))
+    before = w.generation
+    w.collect({"a"})
+    assert w.generation != before
+    w.close()
+
+
+def test_a_merged_store_is_one_memory_mapped_segment(tmp_path: Path) -> None:
+    """After a run the segments merge, and readers map the vectors rather than copy them."""
+    w = VectorStore.open_writer(tmp_path, dim=4, header=H)
+    for i in range(5):
+        w.append([f"k{i}"], _v(1, seed=i))
+    w.merge()
+    w.close()
+    assert len(list(tmp_path.glob("seg-*.npy"))) == 1
+    snap = VectorStore.open(tmp_path, dim=4, header=H).snapshot()
+    assert isinstance(snap.vecs, np.memmap)
+    assert snap.key_row["k3"] == 3

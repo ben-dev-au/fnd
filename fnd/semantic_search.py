@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Final
 
 from fnd.explain import SemanticTrace
 from fnd.query import FileGroup, Hit, decoded_body, file_key, group_by_file
-from fnd.semantic import section_key, section_text
+from fnd.semantic import GRANITE, section_key, section_text
 
 if TYPE_CHECKING:
     import numpy as np
@@ -59,21 +59,18 @@ QUERY_THREADS: Final = 2
 def load_context(embedder: Embedder) -> SemanticContext | None:
     """The saved vectors and row table, or None before the first reconcile saved any."""
     from fnd.semantic import GRANITE
-    from fnd.vectors import RECIPE, RowTable, VectorStore, store_dir
+    from fnd.vectors import RowTable, VectorStore, store_dir, store_header
 
     folder = store_dir(GRANITE)
-    header = {
-        "model": GRANITE.name,
-        "revision": GRANITE.revision,
-        "max_tokens": GRANITE.max_tokens,
-        "recipe": RECIPE,
-    }
     if not (folder / "manifest.json").is_file():
         return None
     rows = RowTable.load(folder)
     if rows is None:
         return None
-    store = VectorStore.open(folder, dim=embedder.dim, header=header)
+    store = VectorStore.open(folder, dim=embedder.dim, header=store_header(GRANITE))
+    stale = rows.store_generation != store.generation
+    if stale or (len(rows.vec_row) and int(rows.vec_row.max()) >= len(store)):
+        return None
     return SemanticContext(
         embedder=embedder,
         snapshot=store.snapshot(),
@@ -143,6 +140,18 @@ def skip_reason(
     return None
 
 
+def _unchanged(ctx: SemanticContext, row: int, hit: Hit) -> bool:
+    """The section still holds the text its vector was made from: by stored digest,
+    which needs no decoding; by key only for tables filed before digests existed."""
+    from fnd.vectors import stored_digest
+
+    rows = ctx.rows
+    if rows.stored_digest is not None:
+        return stored_digest(hit) == str(rows.stored_digest[row])
+    text = section_text(hit.title, hit.heading_path, decoded_body(hit)[0])
+    return section_key(ctx.embedder.token_ids(text), GRANITE.max_tokens) == str(rows.text_key[row])
+
+
 def _ranked_rows(
     ctx: SemanticContext, admissible: list[int], query_vec: np.ndarray
 ) -> list[tuple[int, float]]:
@@ -196,7 +205,7 @@ def blend(
             source_scope=source_scope,
             metadata_filter=metadata_filter,
             tag_filter=tag_filter,
-            filter_clauses=getattr(searcher, "filter_clauses", ()),
+            query=query,
         )
     }
     fresh = getattr(searcher, "generation", None) == rows.stamp
@@ -207,11 +216,8 @@ def blend(
         hit = current.get(key)
         if hit is None:
             continue
-        if not fresh:
-            body = decoded_body(hit)[0]
-            text_now = section_text(hit.title, hit.heading_path, body)
-            if section_key(ctx.embedder.token_ids(text_now), 256) != str(rows.text_key[row]):
-                continue
+        if not fresh and not _unchanged(ctx, row, hit):
+            continue
         fk = file_key(hit, collapse_copies=collapse_copies)
         if fk not in model_hits:
             model_order.append(fk)

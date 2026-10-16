@@ -2742,7 +2742,12 @@ def _semantic_coverage(app: FNDApp) -> str:
     ctx = service.context() if service is not None else None
     if ctx is None:
         return ""
-    return f"{len(ctx.rows.parent_id):,} sections embedded"
+    count = f"{len(ctx.rows.parent_id):,}"
+    return (
+        f"all {count} sections embedded"
+        if ctx.rows.complete
+        else f"{count} sections embedded so far"
+    )
 
 
 def _semantic_install_label() -> str:

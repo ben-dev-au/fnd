@@ -112,7 +112,7 @@ def test_ctrl_c_during_embedding_keeps_finished_batches(
     monkeypatch.setattr(
         cli,
         "_semantic_job_parts",
-        lambda: (fake, VectorStore.open(folder, dim=fake.dim, header=HEADER)),
+        lambda: (fake, VectorStore.open_writer(folder, dim=fake.dim, header=HEADER)),
     )
     monkeypatch.setattr(cli, "_semantic_ready", lambda: True)
     monkeypatch.setattr("fnd.embed_job.BATCH", 2)
@@ -144,3 +144,24 @@ def _store_dir() -> Path:
     folder = store_dir(GRANITE)
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+def test_ad_hoc_index_embeds_afterwards_too(
+    library: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`fnd index ROOT` reconciles the vectors as `collection reindex` does."""
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "_embed_after_index", lambda cfg: calls.append("embedded"))
+    assert (
+        CliRunner()
+        .invoke(app, ["index", str(tmp_path / "notes"), "--collection", "notes"])
+        .exit_code
+        == 0
+    )
+    assert (
+        CliRunner()
+        .invoke(app, ["index", str(tmp_path / "notes"), "--collection", "notes", "--no-embed"])
+        .exit_code
+        == 0
+    )
+    assert calls == ["embedded"]

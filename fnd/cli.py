@@ -142,6 +142,9 @@ def version() -> None:
 def index(
     root: Path,
     collection: str = typer.Option("default", help="Collection to index into."),
+    no_embed: bool = typer.Option(
+        False, "--no-embed", help="Skip embedding new sections for semantic search afterwards."
+    ),
 ) -> None:
     """Index documents under ROOT (ad-hoc, single-root). For configured
     collections use ``fnd collection reindex <name>``."""
@@ -178,6 +181,8 @@ def index(
             "to manage it.",
             err=True,
         )
+    if not no_embed:
+        _embed_after_index(config)
 
 
 def parse_filter_flags(
@@ -924,16 +929,13 @@ def _semantic_job_parts() -> tuple[Any, Any]:
     import os
 
     from fnd.semantic import GRANITE, load_embedder
-    from fnd.vectors import RECIPE, VectorStore, store_dir
+    from fnd.vectors import VectorStore, store_dir, store_header
 
     embedder = load_embedder(threads=max(1, (os.cpu_count() or 2) // 2))
-    header = {
-        "model": GRANITE.name,
-        "revision": GRANITE.revision,
-        "max_tokens": GRANITE.max_tokens,
-        "recipe": RECIPE,
-    }
-    return embedder, VectorStore.open(store_dir(GRANITE), dim=embedder.dim, header=header)
+    store = VectorStore.open_writer(
+        store_dir(GRANITE), dim=embedder.dim, header=store_header(GRANITE)
+    )
+    return embedder, store
 
 
 def _embed_after_index(cfg: Any) -> None:
@@ -948,7 +950,13 @@ def _embed_after_index(cfg: Any) -> None:
     opted = frozenset(n for n, c in cfg.collections.items() if c.semantic)
     if not opted:
         return
-    embedder, store = _semantic_job_parts()
+    from fnd.vectors import StoreBusyError
+
+    try:
+        embedder, store = _semantic_job_parts()
+    except StoreBusyError:
+        echo("embedding is already running in fnd; it picks this update up when it finishes")
+        return
     last = [0.0]
 
     def report(p: Progress) -> None:
@@ -972,6 +980,8 @@ def _embed_after_index(cfg: Any) -> None:
             err=True,
         )
         raise typer.Exit(code=130) from None
+    finally:
+        store.close()
 
 
 # ---- extras ---------------------------------------------------------------
@@ -1036,10 +1046,8 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
         echo(f"  - {p.display}  (~{p.disk_mb} MB)")
     echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
     if extra.name == "semantic":
-        echo("Downloads the granite embedding model (52 MB, Apache 2.0) first.")
-        echo("Every section is then embedded once, in the background (about 48 a second")
-        echo("on an M1 Max; 50,000 sections take about 17 minutes); later updates only")
-        echo("embed what changed.")
+        echo("Model: granite, 52 MB, Apache 2.0, downloaded first.")
+        echo("First embed: ~50 sections/s (M1 Max), in the background. Later: changes only.")
     else:
         echo("ML model weights (a portion of the size above) download on first use.")
     echo("")

@@ -128,3 +128,35 @@ def test_only_the_asked_sections_come_back(corpus: Corpus) -> None:
 def test_a_deleted_file_returns_nothing(corpus: Corpus) -> None:
     """A key whose file the index no longer holds is not returned."""
     assert _call(corpus.searcher, [("gone", 0)]) == set()
+
+
+def test_only_the_asked_sections_are_read(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asking for one section of a long file reads that section, not the whole file."""
+    root = tmp_path / "book"
+    root.mkdir()
+    (root / "long.md").write_text(
+        "# Long\n\n" + "".join(f"## S{i}\n\nwords {i}\n\n" for i in range(200)), encoding="utf-8"
+    )
+    build_index(roots=[root], index_dir=tmp_index_dir, collection="book")
+    s = Searcher(index_dir=tmp_index_dir)
+    raw = s._searcher
+    hit = _light_hit(raw.doc(raw.search(tantivy.Query.all_query(), limit=1).hits[0][1]), 0.0)
+    reads = {"n": 0}
+
+    class Counting:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        def doc(self, addr: object) -> object:
+            reads["n"] += 1
+            return self._inner.doc(addr)  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(s, "_searcher", Counting(raw))
+    found = _call(s, [(hit.parent_id, hit.chunk_seq)])
+    assert found == {(hit.parent_id, hit.chunk_seq)}
+    assert reads["n"] <= 2

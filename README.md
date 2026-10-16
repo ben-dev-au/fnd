@@ -475,22 +475,14 @@ Settings UI.
 
 ## Semantic search (opt-in)
 
-- Ranks plain-word searches by meaning as well as by words, so a note worded
-  differently from your query can still rank. Files fnd found by words keep their
-  score; a file only the meaning model found shows `≈` and its similarity.
-- Quoted, near (`{N}`), wildcard, excluding and regex searches stay word matches.
-- Model: [granite-embedding-small-english-r2](https://huggingface.co/ibm-granite/granite-embedding-small-english-r2)
-  (int8, 52 MB, Apache 2.0), English only. Runs locally; nothing leaves your machine.
-- Install: **Settings → Preferences → Semantic search**, or
-  `fnd extras install semantic` (about 160 MB with onnxruntime and tokenizers).
-  Not available on Intel Macs or macOS before 14 (no onnxruntime build).
-- Sections are embedded in the background after indexing: about 48 a second on an
-  M1 Max, so 50,000 sections take about 17 minutes once; later updates embed only
-  what changed. Quitting part-way loses nothing; the next launch resumes.
-- `semantic_search = false` switches it off without uninstalling; a collection's
-  `semantic = false` keeps it on word matching alone; `show_embedding_progress =
-  false` hides the progress line. `fnd collection reindex --no-embed` skips embedding.
-- `fnd extras uninstall semantic` removes the model, the vectors and the packages.
+- Plain-word searches also rank by meaning. Quoted, `{N}`, wildcard, `-` and regex searches stay word matches.
+- `≈`: a file only the model found. Other rows keep fnd's score.
+- Model: [granite-embedding-small-english-r2](https://huggingface.co/ibm-granite/granite-embedding-small-english-r2), int8, 52 MB, Apache 2.0, English. Runs locally.
+- Install: **Settings → Preferences → Semantic search**, or `fnd extras install semantic` (~160 MB). Not on Intel Macs or macOS before 14.
+- Embeds in the background after indexing, ~50 sections/s (M1 Max). Resumes after quitting.
+- Config: `semantic_search`, `show_embedding_progress`; per collection, `semantic`.
+- `--no-embed` on `fnd index` and `fnd collection reindex` skips embedding.
+- `fnd extras uninstall semantic` removes the model, vectors and packages.
 
 ## Indexing
 

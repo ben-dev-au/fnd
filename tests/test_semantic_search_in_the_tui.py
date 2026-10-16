@@ -345,3 +345,40 @@ async def test_a_collection_can_opt_out(
         row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.semantic")
         row.toggle_setter(app, False)  # type: ignore[misc]
         assert load(tmp_path / "config.toml").collections["notes"].semantic is False
+
+
+def test_a_moved_index_brings_the_vectors_up_to_date() -> None:
+    """When the index has moved past the vectors' commit, the next search starts a reconcile."""
+    app = _app()
+    calls: list[str] = []
+    app._search = SimpleNamespace(searcher=SimpleNamespace(generation=("idx", 2, 2)))
+    app.call_later = lambda fn: calls.append(fn.__name__)
+    service = SemanticService(app, ready=lambda: True)
+    rows = SimpleNamespace(stamp=("idx", 1, 1))
+    service.use_context(SimpleNamespace(rows=rows, opted_in=frozenset({"notes"})))  # type: ignore[arg-type]
+    service.context()
+    service.context()
+    assert calls == ["ensure_job"]
+
+
+def test_opting_in_during_a_run_restarts_it() -> None:
+    """A collection switched on mid-run is embedded by a restarted job, not left for next launch."""
+    app = _app()
+    order: list[str] = []
+    workers: list[object] = []
+    app.run_worker = lambda coro, **kw: workers.append(coro)
+    service = SemanticService(app, ready=lambda: True)
+    service._embedder = object()  # type: ignore[assignment]
+    runner = _Runner()
+    service._runner = runner  # type: ignore[assignment]
+
+    async def stop() -> None:
+        order.append("stopped")
+        runner.running = False
+
+    service.stop = stop  # type: ignore[method-assign]
+    service.ensure_job = lambda: order.append("started")  # type: ignore[method-assign]
+    service.settings_changed()
+    assert len(workers) == 1
+    asyncio.run(workers[0])  # type: ignore[arg-type]
+    assert order == ["stopped", "started"]

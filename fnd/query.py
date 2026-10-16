@@ -866,25 +866,49 @@ class Searcher:
         metadata_filter: str | None,
         tag_filter: TagFilter | None,
         filter_clauses: Sequence[str] = (),
+        query: str = "",
     ) -> list[Hit]:
-        """The indexed sections among ``keys`` that pass fnd's own scope and filters."""
+        """The indexed sections among ``keys`` that pass fnd's own scope and filters,
+        including any typed into ``query`` (``kind:md``, ``c:notes``)."""
         import tantivy
 
-        from fnd.schema import F_PARENT_ID
+        from fnd.schema import F_CHUNK_SEQ, F_PARENT_ID
 
         if not keys:
             return []
+        from fnd.query_filters import extract_filters
+        from fnd.schema import build_schema
+
+        inline = extract_filters(query, build_schema(), self._index).filters if query else ()
         filters = self._filter_queries(
             collection=collection,
             source_scope=source_scope,
             tag_filter=tag_filter,
             filter_clauses=filter_clauses,
+            extracted=inline,
         )
         if filters is None:
             return []
         schema = self._index.schema
-        pids = sorted({pid for pid, _seq in keys})
-        clauses = [(tantivy.Occur.Must, tantivy.Query.term_set_query(schema, F_PARENT_ID, pids))]
+        by_file: dict[str, list[int]] = {}
+        for pid, seq in keys:
+            by_file.setdefault(pid, []).append(seq)
+        # Each file's own sections only: a book holds thousands the model never asked for.
+        files = [
+            tantivy.Query.boolean_query(
+                [
+                    (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_PARENT_ID, pid)),
+                    (tantivy.Occur.Must, tantivy.Query.term_set_query(schema, F_CHUNK_SEQ, seqs)),
+                ]
+            )
+            for pid, seqs in by_file.items()
+        ]
+        clauses = [
+            (
+                tantivy.Occur.Must,
+                tantivy.Query.boolean_query([(tantivy.Occur.Should, q) for q in files]),
+            )
+        ]
         clauses += [(tantivy.Occur.Must, f) for f in filters]
         wanted = set(keys)
         keep = _meta_keep(metadata_filter)

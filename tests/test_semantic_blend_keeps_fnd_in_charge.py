@@ -27,6 +27,7 @@ _NOTES = {
     "copy2.md": "# Copy\n\n## Same\n\nboat and apple, the same note twice\n",
     "band.md": "# Band\n\n## Kit\n\ndrum drum drum and a flute\n",
     "orchestra.md": "# Orchestra\n\n## Solo\n\na piccolo solo and a drum on Sunday\n",
+    "winds.txt": "a piccolo and an eagle over the water\n",
 }
 _BOOKS = {
     "sailing.md": "# Sailing\n\n## Rigging\n\nboat boat boat rigging and sails\n",
@@ -293,3 +294,45 @@ def test_lockstep_after_unreconciled_index_changes(tmp_path: Path, tmp_index_dir
                 text = section_text(now.title, now.heading_path, decoded_body(now)[0])
                 assert section_key(embedder.token_ids(text), 256) == stale[key]
                 assert collection is None or collection in {c for c, _ in now.memberships}
+
+
+def test_a_filters_pane_clause_reaches_the_model_side(
+    searcher: Searcher, ctx: SemanticContext
+) -> None:
+    """A Filters-pane clause (FilteredSearcher) narrows the model's files as it narrows fnd's."""
+    from fnd.query import FilteredSearcher
+
+    filtered = FilteredSearcher(searcher, clauses=["kind:md"])
+    groups = search_layered(filtered, query="flute", limit=20, semantic=ctx)  # type: ignore[arg-type]
+    assert groups
+    assert all(g.kind == "md" for g in groups)
+
+
+@pytest.mark.parametrize(
+    ("query", "keep"), [("kind:md flute", "kind"), ("c:books flute", "collection")]
+)
+def test_inline_filters_reach_the_model_side(
+    searcher: Searcher, ctx: SemanticContext, query: str, keep: str
+) -> None:
+    """Filters typed in the query bind the model's files too."""
+    groups = _search(searcher, query, semantic=ctx, limit=20)
+    assert groups
+    if keep == "kind":
+        assert all(g.kind == "md" for g in groups)
+    else:
+        assert all(any(c == "books" for c, _ in g.memberships) for g in groups)
+
+
+def test_a_stale_index_check_tokenises_nothing(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """After an index change, candidates are checked by their stored digest, not re-tokenised."""
+    searcher = _build(tmp_path, tmp_index_dir, _NOTES, _BOOKS)
+    embedder = FakeEmbedder()
+    ctx = build_context(searcher, tmp_path / "vectors", embedder=embedder)
+    (tmp_path / "notes" / "band.md").write_text(
+        "# Band\n\n## Kit\n\ncloud cloud cloud\n", encoding="utf-8"
+    )
+    build_index(roots=[tmp_path / "notes"], index_dir=tmp_index_dir, collection="notes")
+    searcher = Searcher(index_dir=tmp_index_dir)
+    before = embedder.tokenised
+    _search(searcher, "drum flute", semantic=ctx, limit=20)
+    assert embedder.tokenised == before

@@ -291,7 +291,14 @@ def install_commands(extra: Extra) -> list[list[str]]:
             elif extra.requirements and _fnd_tool_venv():
                 # Reinstalling fnd with the extra is what survives `uv tool upgrade`.
                 cmds.append(
-                    ["uv", "tool", "install", "--reinstall", f"fndr[{p.spec}]=={_fnd_version()}"]
+                    [
+                        "uv",
+                        "tool",
+                        "install",
+                        "--reinstall",
+                        f"fndr[{p.spec}]=={_fnd_version()}",
+                        *_kept_extras(extra),
+                    ]
                 )
             elif extra.requirements:
                 cmds.append(["uv", "pip", "install", "--python", py, *extra.requirements])
@@ -311,6 +318,19 @@ def _fnd_tool_venv() -> bool:
 
     root = paths.uv_tool_root() / "fndr"
     return Path(sys.executable).resolve().is_relative_to(root.resolve()) if root.exists() else False
+
+
+def _kept_extras(changing: Extra) -> list[str]:
+    """`--with` for every other installed extra a uv-tool reinstall would otherwise drop."""
+    out: list[str] = []
+    for other in EXTRAS.values():
+        if other is changing:
+            continue
+        for pkg in other.packages:
+            if pkg.install_via == "pip-extra" and is_package_installed(pkg):
+                for req in _pip_install_specs(pkg):
+                    out += ["--with", req]
+    return out
 
 
 def _fnd_version() -> str:
@@ -344,9 +364,9 @@ def record(extra: str, phase: str) -> None:
             if before_path.exists()
             else set()
         )
-        _record_path(extra, "added").write_text(
-            json.dumps(sorted(set(names) - before)), encoding="utf-8"
-        )
+        # A reinstall over packages already present adds nothing; keep what the first added.
+        added = (set(names) - before) | (recorded_additions(extra) & set(names))
+        _record_path(extra, "added").write_text(json.dumps(sorted(added)), encoding="utf-8")
 
 
 def recorded_additions(extra: str) -> set[str]:
@@ -490,7 +510,16 @@ def uninstall_commands(extra: Extra, *, assume_installed: bool = False) -> list[
         if not assume_installed and not is_package_installed(p):
             continue
         if p.install_via == "pip-extra" and extra.requirements and _fnd_tool_venv():
-            cmds.append(["uv", "tool", "install", "--reinstall", f"fndr=={_fnd_version()}"])
+            cmds.append(
+                [
+                    "uv",
+                    "tool",
+                    "install",
+                    "--reinstall",
+                    f"fndr=={_fnd_version()}",
+                    *_kept_extras(extra),
+                ]
+            )
             continue
         if p.install_via == "pip-extra" and extra.records_additions and project_pyproject is None:
             added = sorted(recorded_additions(extra.name) - _fnd_requirements() - {"fndr"})

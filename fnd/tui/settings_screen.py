@@ -4295,24 +4295,19 @@ class SemanticConfirmScreen(StructuredPdfConfirmScreen):
             return Text("Semantic search is unavailable.", style="bold red")
         if self._installed:
             return Text(
-                "Removes the meaning model, its vectors and its packages "
-                f"(about {actual_disk_mb(self._extra)} MB). Searches go back to "
-                "matching words alone. Your index is untouched."
+                f"Removes the model, vectors and packages (~{actual_disk_mb(self._extra)} MB).\n"
+                "Searches go back to words alone. The index is untouched."
             )
         minutes = _first_embed_minutes(self.app)
-        timing = (
-            f" The first embed takes about {minutes} minutes in the background;" if minutes else ""
-        )
+        first = f"~{minutes} min" if minutes else "a while"
         return Text(
-            "Downloads the granite embedding model (52 MB, Apache 2.0) and installs "
-            "onnxruntime and tokenizers (about 110 MB). Plain-word searches then also "
-            f"rank by meaning.{timing} search works throughout, and later updates "
-            "only embed what changed."
+            "Downloads the granite model (52 MB, Apache 2.0) and onnxruntime + tokenizers (~110 MB).\n"
+            f"First embed: {first} in the background; search works throughout. Later: changes only."
         )
 
 
 def _first_embed_minutes(app: Any) -> int:
-    """Sections in the index at 48 a second, the rate measured on an M1 Max."""
+    """Sections in the index at 50 a second, the rate measured on an M1 Max."""
     import tantivy
 
     searcher = getattr(getattr(app, "_search", None), "searcher", None)
@@ -4320,7 +4315,7 @@ def _first_embed_minutes(app: Any) -> int:
         return 0
     with contextlib.suppress(Exception):
         count = searcher._searcher.search(tantivy.Query.all_query(), limit=1, count=True).count
-        return max(1, round(count / 48 / 60))
+        return max(1, round(count / 50 / 60))
     return 0
 
 
