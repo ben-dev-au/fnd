@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from textual.timer import Timer
 
     from fnd.explain import SearchTrace
+    from fnd.semantic_search import SemanticContext
     from fnd.synonyms import SynonymTable
     from fnd.tag_query import TagFilter
     from fnd.tui.app import FNDApp
@@ -77,6 +78,7 @@ class _SearchRequest:
     evidence_spec: MatchSpec
     profile: RankingProfile
     intent: str | None
+    semantic: SemanticContext | None = None
 
 
 class SearchController:
@@ -353,7 +355,12 @@ class SearchController:
             evidence_spec=evidence_spec,
             profile=profile,
             intent=self.intent,
+            semantic=self._semantic_context(),
         )
+
+    def _semantic_context(self) -> SemanticContext | None:
+        service = getattr(self._app, "_semantic", None)
+        return service.context() if service is not None else None
 
     def _fail(self, err: Exception) -> None:
         """A query that cannot run: show the notice and drop the stale trace
@@ -431,6 +438,7 @@ class SearchController:
             min_term_chars=request.min_term_chars,
             collapse_copies=request.collapse_copies,
             as_typed=request.as_typed,
+            semantic=request.semantic,
             with_trace=True,
         )
         spec = trace.paint_spec(request.match_spec, request.evidence_spec)

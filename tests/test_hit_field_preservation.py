@@ -63,6 +63,7 @@ def _populated_hit() -> Hit:
         content_hash="ab" * 32,
         section_score=3.5,
         at=(_SEARCHER, 1, 2),
+        found_by_meaning=True,
     )
 
 

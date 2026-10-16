@@ -150,6 +150,8 @@ _PLATFORM_CHECKS_ALLOWED = {
     "opener.py",
     "os_labels.py",
     "paths.py",
+    # Whether onnxruntime ships a wheel for this machine, before offering install.
+    "semantic.py",
     "tags.py",
     "tui/clipboard.py",
     "tui/menu.py",

@@ -54,7 +54,11 @@ from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.frozen import FrozenChunkView
 from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
-from fnd.tui.preview.presenter import PreviewPresenter, target_from_node_data
+from fnd.tui.preview.presenter import (
+    PreviewPresenter,
+    landing_intent_from_node_data,
+    target_from_node_data,
+)
 from fnd.tui.preview_dispatcher import uses_markdown_renderer
 from fnd.tui.preview_edge import bottom_edge, marked_name
 from fnd.tui.preview_scroll import (
@@ -629,6 +633,9 @@ sidebar panels stop showing a stale ``current selection`` band
         # update-all chain bookkeeping); see fnd/tui/indexer_service.py.
         # The modal reads this through the app's _indexer_* accessors.
         self._indexer = IndexerService(self)
+        from fnd.tui.semantic_service import SemanticService
+
+        self._semantic = SemanticService(self)
         # Structured-PDF extras install/uninstall: sibling to the
         # indexer task so the modal can be dismissed (Background) and
         # reopened against the live task. See
@@ -687,6 +694,7 @@ sidebar panels stop showing a stale ``current selection`` band
     def on_unmount(self) -> None:
         """Stop the progress tick loop and persist what the phases actually
         cost, so the next session's pacing starts calibrated."""
+        self._semantic.stop_now()
         self._progress.shutdown()
 
     # ── Layout ────────────────────────────────────────────────────
@@ -964,6 +972,7 @@ sidebar panels stop showing a stale ``current selection`` band
         # TUI from launching.
         with contextlib.suppress(Exception):
             self._indexer.maybe_resume()
+        self._semantic.on_launch()
         # Pre-upgrade cache entries (PDFs textured on an older extractor
         # version) are surfaced passively in Settings → Indexing & PDF
         # Texture, not via a startup popup: re-texturising is a
@@ -1424,7 +1433,11 @@ sidebar panels stop showing a stale ``current selection`` band
         target = target_from_node_data(data)
         if target is None:
             return
-        self._preview.schedule_load(*target)
+        intent = landing_intent_from_node_data(data)
+        if intent is None:
+            self._preview.schedule_load(*target)
+        else:
+            self._preview.schedule_load(*target, intent=intent)
 
     # ── Preview delegation (state lives on PreviewPresenter) ──────
     # Tests, sibling components, and the scroll strategies read AND

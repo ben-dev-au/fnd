@@ -42,6 +42,8 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # highlighting regression shows up as marks on screen instead of results
 # quietly disappearing. See :mod:`fnd.tui.match_evidence`.
 _UNLOCATABLE_GLYPH = "◌"
+# Found by the meaning model, not by the query's words: no highlight is expected.
+_MEANING_GLYPH = "≈"
 
 # The index's copy no longer matches the disk. One glyph for gone and for
 # edited, because the user's move is the same either way: reindex.
@@ -337,7 +339,13 @@ def _format_hit_label(
     # results pane, so the row is hard-truncated at the border and anything
     # appended to the end is never drawn. Verified in a real terminal: the
     # marker was being emitted correctly and clipped off screen every time.
-    prefix = "" if match_visible else f"{_UNLOCATABLE_GLYPH} "
+    prefix = (
+        f"{_MEANING_GLYPH} "
+        if h.found_by_meaning
+        else ""
+        if match_visible
+        else f"{_UNLOCATABLE_GLYPH} "
+    )
     score = h.score if h.section_score is None else h.section_score
     return _build_label(f"{prefix}{body}{pass_marker}", score, max_score)
 
@@ -425,6 +433,8 @@ def _format_file_label(
     # Charged BEFORE eliding: added afterwards it pushed the row 2 cells past
     # its budget, and the cells it took were the suffix the elision keeps.
     marker = f"{_STALE_GLYPH} " if stale else ""
+    if g.hits and all(h.found_by_meaning for h in g.hits):
+        marker += f"{_MEANING_GLYPH} "
     if name_budget > 0:
         shape_cells = 1 + cell_len(mark.shape) if mark and mark.shape else 0
         name = _elide_middle_keep_suffix(name, max(1, name_budget - cell_len(marker) - shape_cells))

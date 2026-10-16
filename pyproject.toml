@@ -50,6 +50,9 @@ dependencies = [
     "termaid[rich]~=0.9.0",
 ]
 
+[project.optional-dependencies]
+semantic = ["onnxruntime~=1.25.1", "tokenizers~=0.23.3"]
+
 [project.urls]
 Homepage = "https://github.com/ben-dev-au/fnd"
 Repository = "https://github.com/ben-dev-au/fnd"
@@ -83,6 +86,7 @@ fndr = "fnd.cli:main"
 
 [dependency-groups]
 dev = [
+    { include-group = "semantic" },
     "ruff>=0.6",
     "pyright>=1.1.380",
     "pytest>=8",
@@ -116,6 +120,9 @@ dev = [
 # docling-slim is installed separately into its own uv tool venv
 # (transitive version conflicts make it unsafe to co-install in fnd's venv).
 pdf-structure = ["pymupdf4llm~=1.28.2"]
+# Semantic search: opt-in, installed by ``fnd extras install semantic``. The
+# versions measured on 16 Oct 2026; onnxruntime ships macOS wheels for arm64 14+.
+semantic = ["onnxruntime~=1.25.1", "tokenizers~=0.23.3"]
 
 [tool.uv]
 # Groups installed by ``uv sync`` when no --group flag is passed.

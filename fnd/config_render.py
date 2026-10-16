@@ -42,6 +42,7 @@ DEFAULT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "collapse_copies",
         ),
     ),
+    ("Semantic search", ("semantic_search", "show_embedding_progress")),
     (
         "Preview pane",
         (

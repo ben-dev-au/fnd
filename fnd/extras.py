@@ -22,6 +22,7 @@ import importlib
 import importlib.util
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -54,14 +55,25 @@ class Package:
     uninstall_targets: tuple[str, ...] = ()
 
 
+def _no_dirs() -> list[Path]:
+    return []
+
+
 @dataclass(frozen=True)
 class Extra:
     name: str
     description: str
     packages: list[Package] = field(default_factory=list)
-    # Optional cache directories whose disk usage we should report and
-    # offer to remove on uninstall (e.g. downloaded model weights).
-    cache_dirs: list[Path] = field(default_factory=list)
+    # Folders to report and remove on uninstall (downloaded model weights),
+    # resolved when asked: a path fixed at import ignores a later HOME.
+    cache_dirs: Callable[[], list[Path]] = _no_dirs
+    # ``python -m`` commands run before any package (the model fetch).
+    prepare: tuple[tuple[str, ...], ...] = ()
+    # A plain-venv install records what it added, so uninstall removes only that.
+    records_additions: bool = False
+    # Pinned requirements for a plain-venv install, when not the detect module.
+    requirements: tuple[str, ...] = ()
+    available: Callable[[], bool] = lambda: True
 
 
 PDF_STRUCTURE = Extra(
@@ -91,10 +103,43 @@ PDF_STRUCTURE = Extra(
     # ML model weights live alongside docling-slim's uv-tool install
     # (``~/.local/share/uv/tools/docling-slim/...``) which is already
     # walked by ``actual_disk_mb`` via ``tool_root``. cache_dirs stays empty.
-    cache_dirs=[],
+    cache_dirs=_no_dirs,
 )
 
-EXTRAS: dict[str, Extra] = {PDF_STRUCTURE.name: PDF_STRUCTURE}
+
+def _semantic_dirs() -> list[Path]:
+    from fnd.semantic import GRANITE, model_dir
+    from fnd.vectors import store_dir
+
+    return [model_dir(GRANITE), store_dir(GRANITE)]
+
+
+def _semantic_available() -> bool:
+    from fnd import semantic
+
+    return semantic.platform_supported()
+
+
+SEMANTIC = Extra(
+    name="semantic",
+    description="Semantic search: find notes by what they mean, not only their words.",
+    packages=[
+        Package(
+            install_via="pip-extra",
+            spec="semantic",
+            display="onnxruntime + tokenizers (MIT, Apache-2.0), with numpy",
+            disk_mb=110,
+            detect="module:onnxruntime",
+        ),
+    ],
+    cache_dirs=_semantic_dirs,
+    prepare=(("fnd.semantic", "fetch"),),
+    records_additions=True,
+    requirements=("onnxruntime~=1.25.1", "tokenizers~=0.23.3"),
+    available=_semantic_available,
+)
+
+EXTRAS: dict[str, Extra] = {PDF_STRUCTURE.name: PDF_STRUCTURE, SEMANTIC.name: SEMANTIC}
 
 
 # -- Detection ---------------------------------------------------------------
@@ -184,7 +229,7 @@ def _du_mb(path: Path) -> int:
 def actual_disk_mb(extra: Extra) -> int:
     """Sum disk used by installed packages + cache dirs of `extra`."""
     total = 0
-    for c in extra.cache_dirs:
+    for c in extra.cache_dirs():
         total += _du_mb(c)
     # For uv-tool installs, walk uv's tool root (uv tool dir)/<pkg>
     tool_root = paths.uv_tool_root()
@@ -230,6 +275,10 @@ def install_commands(extra: Extra) -> list[list[str]]:
     cmds: list[list[str]] = []
     py = sys.executable
     project_pyproject = _project_pyproject_for_python(py)
+    cmds += [[py, "-m", *module] for module in extra.prepare]
+    record = extra.records_additions and project_pyproject is None and not _fnd_tool_venv()
+    if record:
+        cmds.append([py, "-m", "fnd.extras", "record", extra.name, "before"])
 
     for p in extra.packages:
         if p.install_via == "pip-extra":
@@ -239,12 +288,83 @@ def install_commands(extra: Extra) -> list[list[str]]:
                 # Project venv path: use --group; persistence relies on
                 # the caller flipping default-groups before sync runs.
                 cmds.append(["uv", "sync", "--group", _group_name_for_pkg(p)])
+            elif extra.requirements and _fnd_tool_venv():
+                # Reinstalling fnd with the extra is what survives `uv tool upgrade`.
+                cmds.append(
+                    ["uv", "tool", "install", "--reinstall", f"fndr[{p.spec}]=={_fnd_version()}"]
+                )
+            elif extra.requirements:
+                cmds.append(["uv", "pip", "install", "--python", py, *extra.requirements])
             else:
                 for req in _pip_install_specs(p):
                     cmds.append(["uv", "pip", "install", "--python", py, req])
         elif p.install_via == "uv-tool":
             cmds.append(["uv", "tool", "install", p.spec])
+    if record:
+        cmds.append([py, "-m", "fnd.extras", "record", extra.name, "after"])
     return cmds
+
+
+def _fnd_tool_venv() -> bool:
+    """fnd runs from its own `uv tool` venv (installed as the `fndr` tool)."""
+    import sys
+
+    root = paths.uv_tool_root() / "fndr"
+    return Path(sys.executable).resolve().is_relative_to(root.resolve()) if root.exists() else False
+
+
+def _fnd_version() -> str:
+    from importlib.metadata import version
+
+    return version("fndr")
+
+
+def _installed_names() -> set[str]:
+    from importlib.metadata import distributions
+
+    return {d.metadata["Name"].lower() for d in distributions() if d.metadata["Name"]}
+
+
+def _record_path(extra: str, phase: str) -> Path:
+    return paths.app_data_dir() / "extras" / f"{extra}.{phase}.json"
+
+
+def record(extra: str, phase: str) -> None:
+    """Snapshot installed distributions; after an install, keep what it added."""
+    import json
+
+    path = _record_path(extra, phase)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    names = sorted(_installed_names())
+    path.write_text(json.dumps(names), encoding="utf-8")
+    if phase == "after":
+        before_path = _record_path(extra, "before")
+        before = (
+            set(json.loads(before_path.read_text(encoding="utf-8")))
+            if before_path.exists()
+            else set()
+        )
+        _record_path(extra, "added").write_text(
+            json.dumps(sorted(set(names) - before)), encoding="utf-8"
+        )
+
+
+def recorded_additions(extra: str) -> set[str]:
+    import json
+
+    path = _record_path(extra, "added")
+    return set(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else set()
+
+
+def _fnd_requirements() -> set[str]:
+    """Distribution names fnd itself depends on, which an uninstall must keep."""
+    import re
+    from importlib.metadata import requires
+
+    reqs = requires("fndr") or []
+    return {
+        re.split(r"[\s;\[<>=~!]", r, maxsplit=1)[0].lower() for r in reqs if "extra ==" not in r
+    }
 
 
 def _group_name_for_pkg(pkg: Package) -> str:
@@ -276,6 +396,12 @@ def _group_exists_in_pyproject(pyproject: Path, group_name: str) -> bool:
     except OSError:
         return False
     return group_name in text and "[dependency-groups]" in text
+
+
+def set_default_group(pyproject: Path, group: str, *, present: bool) -> None:
+    """Add or remove ``group`` in ``[tool.uv] default-groups``, so ``uv sync`` keeps
+    an installed extra and drops a removed one. Idempotent; comments survive."""
+    _ensure_group_membership(pyproject, group, present=present)
 
 
 def enable_pdf_structure_default_group(pyproject: Path) -> None:
@@ -363,6 +489,14 @@ def uninstall_commands(extra: Extra, *, assume_installed: bool = False) -> list[
     for p in extra.packages:
         if not assume_installed and not is_package_installed(p):
             continue
+        if p.install_via == "pip-extra" and extra.requirements and _fnd_tool_venv():
+            cmds.append(["uv", "tool", "install", "--reinstall", f"fndr=={_fnd_version()}"])
+            continue
+        if p.install_via == "pip-extra" and extra.records_additions and project_pyproject is None:
+            added = sorted(recorded_additions(extra.name) - _fnd_requirements() - {"fndr"})
+            if added:
+                cmds.append(["uv", "pip", "uninstall", "--python", py, *added])
+            continue
         if p.install_via == "uv-tool":
             cmds.append(["uv", "tool", "uninstall", p.spec.split("[", 1)[0]])
         elif p.install_via == "pip-extra":
@@ -411,6 +545,7 @@ def run_command(argv: list[str]) -> tuple[int, str, str]:
 __all__ = [
     "EXTRAS",
     "PDF_STRUCTURE",
+    "SEMANTIC",
     "Extra",
     "Package",
     "actual_disk_mb",
@@ -418,6 +553,25 @@ __all__ = [
     "installed_packages",
     "is_extra_installed",
     "is_package_installed",
+    "record",
+    "recorded_additions",
     "run_command",
+    "set_default_group",
     "uninstall_commands",
 ]
+
+
+def _main(argv: list[str]) -> int:
+    if len(argv) != 3 or argv[0] != "record" or argv[2] not in ("before", "after"):
+        from fnd.cli_output import echo
+
+        echo("usage: python -m fnd.extras record EXTRA before|after", err=True)
+        return 2
+    record(argv[1], argv[2])
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    raise SystemExit(_main(sys.argv[1:]))

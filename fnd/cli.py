@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import shlex
+import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -381,6 +382,7 @@ def search(
     """
     import json
 
+    from fnd import semantic_search
     from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
     from fnd.filter_dsl import FilterError
@@ -470,6 +472,7 @@ def search(
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
             collapse_copies=cfg.defaults.collapse_copies,
             as_typed=as_typed,
+            semantic=semantic_search.context_for(cfg),
             with_trace=True,
         )
         spec = trace.paint_spec(
@@ -825,6 +828,9 @@ def collection_reindex(
             "index is on an older schema, which clears the whole index first."
         ),
     ),
+    no_embed: bool = typer.Option(
+        False, "--no-embed", help="Skip embedding new sections for semantic search afterwards."
+    ),
 ) -> None:
     """Index (or re-index) configured collections.
 
@@ -903,6 +909,69 @@ def collection_reindex(
         total += written
     if len(targets) > 1:
         echo(f"indexed {total} chunks across {len(targets)} collections")
+    if not no_embed:
+        _embed_after_index(cfg)
+
+
+def _semantic_ready() -> bool:
+    from fnd.semantic import is_ready
+
+    return is_ready()
+
+
+def _semantic_job_parts() -> tuple[Any, Any]:
+    """The bulk embedder and the vector store, for embedding in this process."""
+    import os
+
+    from fnd.semantic import GRANITE, load_embedder
+    from fnd.vectors import RECIPE, VectorStore, store_dir
+
+    embedder = load_embedder(threads=max(1, (os.cpu_count() or 2) // 2))
+    header = {
+        "model": GRANITE.name,
+        "revision": GRANITE.revision,
+        "max_tokens": GRANITE.max_tokens,
+        "recipe": RECIPE,
+    }
+    return embedder, VectorStore.open(store_dir(GRANITE), dim=embedder.dim, header=header)
+
+
+def _embed_after_index(cfg: Any) -> None:
+    """Bring the semantic vectors in line with the index just written."""
+    import time
+
+    from fnd import embed_job
+    from fnd.embed_job import Progress, reconcile
+
+    if not cfg.defaults.semantic_search or not _semantic_ready():
+        return
+    opted = frozenset(n for n, c in cfg.collections.items() if c.semantic)
+    if not opted:
+        return
+    embedder, store = _semantic_job_parts()
+    last = [0.0]
+
+    def report(p: Progress) -> None:
+        now = time.monotonic()
+        if p.total and (now - last[0] > 2 or p.done == p.total):
+            last[0] = now
+            echo(f"embedding {p.done:,} / {p.total:,} sections")
+
+    try:
+        reconcile(
+            default_index_dir(),
+            store=store,
+            embedder=embedder,
+            opted_in=opted,
+            batch=embed_job.BATCH,
+            on_progress=report,
+        )
+    except KeyboardInterrupt:
+        echo(
+            "embedding stopped; finished batches are kept and the next index update resumes",
+            err=True,
+        )
+        raise typer.Exit(code=130) from None
 
 
 # ---- extras ---------------------------------------------------------------
@@ -941,6 +1010,22 @@ def extras_status() -> None:
         echo(f"{extra.name}: installed ({_format_disk(disk)})")
         for pkg in installed_packages(extra):
             echo(f"  - {pkg.display}")
+        if extra.name == "semantic":
+            echo(f"  - {_semantic_coverage()}")
+
+
+def _semantic_coverage() -> str:
+    """How many sections have vectors, from the last saved row table."""
+    from fnd.semantic import GRANITE, is_model_present
+    from fnd.vectors import RowTable, store_dir
+
+    if not is_model_present():
+        return "model not downloaded: run `fnd extras install semantic`"
+    rows = RowTable.load(store_dir(GRANITE))
+    if rows is None:
+        return "no sections embedded yet: run `fnd collection reindex -c all`"
+    suffix = "" if rows.complete else " so far; the next index update finishes the rest"
+    return f"{len(rows.parent_id):,} sections embedded{suffix}"
 
 
 def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
@@ -950,7 +1035,13 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     for p in extra.packages:
         echo(f"  - {p.display}  (~{p.disk_mb} MB)")
     echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
-    echo("ML model weights (a portion of the size above) download on first use.")
+    if extra.name == "semantic":
+        echo("Downloads the granite embedding model (52 MB, Apache 2.0) first.")
+        echo("Every section is then embedded once, in the background (about 48 a second")
+        echo("on an M1 Max; 50,000 sections take about 17 minutes); later updates only")
+        echo("embed what changed.")
+    else:
+        echo("ML model weights (a portion of the size above) download on first use.")
     echo("")
     # For the pdf-structure extra, also disclose the indexing-time cost
     # the user will incur on the first big reindex after install.
@@ -973,7 +1064,7 @@ def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     echo("Will remove:")
     for p in installed_packages(extra):
         echo(f"  - {p.display}")
-    for c in extra.cache_dirs:
+    for c in extra.cache_dirs():
         if c.exists():
             echo(f"  - cache: {c}")
     echo(f"\nApproximate disk recovered: {_format_disk(actual_disk_mb(extra))}")
@@ -1017,6 +1108,11 @@ def extras_install(
         echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
         raise typer.Exit(code=2)
 
+    if not extra.available():
+        echo(
+            f"{name} is not available on this machine: its runtime ships no build for it.", err=True
+        )
+        raise typer.Exit(code=2)
     _print_install_disclosure(extra)
     cmds = install_commands(extra)
     if dry_run:
@@ -1036,6 +1132,10 @@ def extras_install(
         if rc != 0:
             echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
+    if name == "semantic":
+        _write_semantic_setting(True)
+        echo("\nInstalled semantic. Sections are embedded after the next index update.")
+        return
     echo(f"\nInstalled {name}. Run `fnd collection reindex <name>` to apply.")
 
 
@@ -1062,7 +1162,8 @@ def extras_uninstall(
             echo("would run: " + shlex.join(c))
         return
     cmds = uninstall_commands(extra)
-    if not cmds:
+    leftovers = [c for c in extra.cache_dirs() if c.exists()]
+    if not cmds and not leftovers:
         echo(f"\n{name} is not currently installed; nothing to do.")
         return
     _require_uv()
@@ -1078,7 +1179,19 @@ def extras_uninstall(
         if rc != 0:
             echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
+    for folder in leftovers:
+        shutil.rmtree(folder, ignore_errors=True)
+    if name == "semantic":
+        _write_semantic_setting(False)
     echo(f"\nUninstalled {name}.")
+
+
+def _write_semantic_setting(on: bool) -> None:
+    from fnd.config import write_setting
+
+    write_setting(
+        config_path=default_config_path(), dotted_path="defaults.semantic_search", value=on
+    )
 
 
 def _toggle_default_group_for_extra(name: str, *, present: bool) -> None:
@@ -1089,20 +1202,15 @@ def _toggle_default_group_for_extra(name: str, *, present: bool) -> None:
     import sys
 
     from fnd.extras import (
+        _group_exists_in_pyproject,  # type: ignore[attr-defined]
         _project_pyproject_for_python,  # type: ignore[attr-defined]
-        disable_pdf_structure_default_group,
-        enable_pdf_structure_default_group,
+        set_default_group,
     )
 
-    if name != "pdf-structure":
-        return  # only pdf-structure has a group toggle wired today
     pyproject = _project_pyproject_for_python(sys.executable)
-    if pyproject is None:
+    if pyproject is None or not _group_exists_in_pyproject(pyproject, name):
         return
-    if present:
-        enable_pdf_structure_default_group(pyproject)
-    else:
-        disable_pdf_structure_default_group(pyproject)
+    set_default_group(pyproject, name, present=present)
 
 
 # ---- cache ----------------------------------------------------------------

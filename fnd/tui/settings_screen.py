@@ -4189,34 +4189,158 @@ class StructuredPdfConfirmScreen(Screen[None]):
         import sys
 
         from fnd.extras import (
+            _group_exists_in_pyproject,  # type: ignore[attr-defined]
             _project_pyproject_for_python,  # type: ignore[attr-defined]
-            disable_pdf_structure_default_group,
-            enable_pdf_structure_default_group,
             install_commands,
+            set_default_group,
             uninstall_commands,
         )
-        from fnd.tui.extras_install_progress import start_extras_install
 
-        # When fnd is running inside a uv-managed project venv, toggle
-        # the ``pdf-structure`` group in ``[tool.uv] default-groups``
-        # BEFORE running the sync. Otherwise a subsequent ``uv sync``
-        # would wipe the install (extras / non-default groups are
-        # removed when not flagged active).
+        # In a uv-managed project venv, toggle the extra's group in
+        # ``[tool.uv] default-groups`` BEFORE the sync, or the next bare
+        # ``uv sync`` wipes the install.
         pyproject = _project_pyproject_for_python(sys.executable)
-
+        extra = self._extra
+        if pyproject is not None and _group_exists_in_pyproject(pyproject, extra.name):
+            set_default_group(pyproject, extra.name, present=not self._installed)
         if self._installed:
-            if pyproject is not None and self._extra.name == "pdf-structure":
-                disable_pdf_structure_default_group(pyproject)
-            cmds = uninstall_commands(self._extra)
+            cmds = uninstall_commands(extra)
             label = "Uninstall"
         else:
-            if pyproject is not None and self._extra.name == "pdf-structure":
-                enable_pdf_structure_default_group(pyproject)
-            cmds = install_commands(self._extra)
+            cmds = install_commands(extra)
             label = "Install"
         app: FNDApp = self.app  # type: ignore[assignment]
+        removing = self._installed
         self.app.pop_screen()
-        start_extras_install(app, cmds=cmds, action_label=label)
+        app.run_worker(
+            change_extra(app, extra.name, removing=removing, cmds=cmds, label=label),
+            group="extras_change",
+            exit_on_error=False,
+        )
+
+
+async def change_extra(
+    app: Any, name: str, *, removing: bool, cmds: list[list[str]], label: str
+) -> None:
+    """Start an install or uninstall; removing semantic search first stops its job,
+    so no file is deleted while the embedding process still writes to it."""
+    from fnd.tui import extras_install_progress
+
+    service = getattr(app, "_semantic", None)
+    if removing and name == "semantic" and service is not None:
+        await service.stop()
+    extras_install_progress.start_extras_install(
+        app,
+        cmds=cmds,
+        action_label=label,
+        on_done=lambda: extras_finished(app, name, removed=removing),
+    )
+
+
+class SemanticConfirmScreen(StructuredPdfConfirmScreen):
+    """Disclosure + Yes/Cancel for the semantic search extra."""
+
+    CSS = """
+    SemanticConfirmScreen { background: $surface; align: center middle; }
+    SemanticConfirmScreen > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        border: round $primary 50%;
+        padding: 0 1;
+    }
+    SemanticConfirmScreen.-recoverable > #settings_box { border: round $warning; }
+    SemanticConfirmScreen.-destructive > #settings_box { border: round $error; }
+    SemanticConfirmScreen.-safe > #settings_box { border: round $primary 50%; }
+    SemanticConfirmScreen #confirm_summary { padding: 0 0 1 0; }
+    SemanticConfirmScreen #confirm_list { height: auto; }
+    SemanticConfirmScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        from fnd.extras import EXTRAS
+
+        self.remove_class(confirm_border_class(self._severity))
+        self._extra = EXTRAS.get("semantic")
+        self._installed = self._is_installed()
+        self._severity = "recoverable" if self._installed else "safe"
+        self.add_class(confirm_border_class(self._severity))
+
+    def _is_installed(self) -> bool:
+        from fnd.tui.semantic_service import _ready  # type: ignore[attr-defined]
+
+        return self._extra is not None and _ready()
+
+    def compose(self) -> ComposeResult:
+        verb = "Uninstall" if self._installed else "Install"
+        with Vertical(id="settings_box") as box:
+            set_border_title(box, f"Preferences › Semantic search › {verb}")
+            yield PlainStatic(self._summary_text(), id="confirm_summary")
+            yield ConfirmList(
+                confirm_yes_option(f"Yes, {verb.lower()} semantic search", severity=self._severity),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield PlainStatic("", id="footer_hints")
+
+    def _summary_text(self) -> Text:
+        from fnd.extras import actual_disk_mb
+
+        if self._extra is None:
+            return Text("Semantic search is unavailable.", style="bold red")
+        if self._installed:
+            return Text(
+                "Removes the meaning model, its vectors and its packages "
+                f"(about {actual_disk_mb(self._extra)} MB). Searches go back to "
+                "matching words alone. Your index is untouched."
+            )
+        minutes = _first_embed_minutes(self.app)
+        timing = (
+            f" The first embed takes about {minutes} minutes in the background;" if minutes else ""
+        )
+        return Text(
+            "Downloads the granite embedding model (52 MB, Apache 2.0) and installs "
+            "onnxruntime and tokenizers (about 110 MB). Plain-word searches then also "
+            f"rank by meaning.{timing} search works throughout, and later updates "
+            "only embed what changed."
+        )
+
+
+def _first_embed_minutes(app: Any) -> int:
+    """Sections in the index at 48 a second, the rate measured on an M1 Max."""
+    import tantivy
+
+    searcher = getattr(getattr(app, "_search", None), "searcher", None)
+    if searcher is None:
+        return 0
+    with contextlib.suppress(Exception):
+        count = searcher._searcher.search(tantivy.Query.all_query(), limit=1, count=True).count
+        return max(1, round(count / 48 / 60))
+    return 0
+
+
+def extras_finished(app: FNDApp, name: str, *, removed: bool) -> None:
+    """After an install or uninstall: semantic search switches with it, and a
+    removal deletes the model and the vectors."""
+    import shutil
+
+    from fnd.extras import EXTRAS
+
+    if removed:
+        for folder in EXTRAS[name].cache_dirs():
+            shutil.rmtree(folder, ignore_errors=True)
+    if name == "semantic":
+        from fnd.tui.menu import _setting_writer  # type: ignore[attr-defined]
+
+        _setting_writer("defaults.semantic_search")(app, not removed)
+        service = getattr(app, "_semantic", None)
+        if service is not None:
+            service.settings_changed()
 
 
 # ── Clone-source flow ───────────────────────────────────────────────

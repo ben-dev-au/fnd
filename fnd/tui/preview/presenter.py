@@ -96,6 +96,20 @@ def target_from_node_data(data: Any) -> tuple[str, int] | None:
     return None
 
 
+def landing_intent_from_node_data(data: Any) -> LandingIntent | None:
+    """A row the meaning model found claims no word match, so it lands at its
+    section's top, as an outline jump does; None lands on the match."""
+    if not isinstance(data, dict):
+        return None
+    if data.get("kind") == "section":
+        hit = data["hit"]
+    elif data.get("kind") == "file" and data["group"].hits:
+        hit = data["group"].hits[0]
+    else:
+        return None
+    return "chunk_top" if getattr(hit, "found_by_meaning", False) else None
+
+
 async def decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
     """Run ``fn`` off the loop on a thread the process may exit without.
 

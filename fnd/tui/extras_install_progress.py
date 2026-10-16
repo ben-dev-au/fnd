@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import shlex
 import signal
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -291,6 +292,7 @@ async def run_install(
     cmds: list[list[str]],
     cancel: asyncio.Event,
     events: asyncio.Queue[ProgressEvent],
+    on_done: Callable[[], None] | None = None,
 ) -> None:
     """Run ``cmds`` sequentially. Push a ProgressEvent for each phase
     boundary and for every stderr line (which uv uses for its
@@ -358,6 +360,8 @@ async def run_install(
                 )
             )
             return
+    if on_done is not None:
+        on_done()
     events.put_nowait(ProgressEvent(phase="done", cmd_index=total - 1, cmd_total=total))
 
 
@@ -366,8 +370,10 @@ def start_extras_install(
     *,
     cmds: list[list[str]],
     action_label: str,
+    on_done: Callable[[], None] | None = None,
 ) -> bool:
-    """Spawn the install/uninstall task and push the progress modal.
+    """Spawn the install/uninstall task and push the progress modal; ``on_done``
+    runs on the loop once every command has succeeded.
 
     Idempotent: refuses to start a second run while one is in flight,
     re-attaches the modal to the running task instead.
@@ -387,6 +393,7 @@ def start_extras_install(
             cmds=cmds,
             cancel=app._extras_cancel,  # type: ignore[attr-defined]
             events=app._extras_events,  # type: ignore[attr-defined]
+            on_done=on_done,
         )
     )
     app.push_screen(ExtrasInstallProgressScreen(action_label=action_label))

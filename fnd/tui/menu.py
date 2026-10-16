@@ -1001,6 +1001,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             toggle_setter=lambda app, v: _setting_writer("defaults.fuzzy_enabled")(app, v),
             keywords=("fuzzy", "typo", "search", "match"),
         ),
+        *_semantic_items(),
         MenuItem(
             id="pref.collapse_copies",
             label="Collapse exact copies",
@@ -1704,6 +1705,28 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             picker_setter=(
                 lambda n: lambda app, value: _set_collection_ranking_profile(app, n, value)
             )(name),
+        ),
+        MenuItem(
+            id=f"col.{name}.semantic",
+            label="Semantic search",
+            description=(
+                "Rank this collection by meaning as well as by words. Off keeps it "
+                "on word matching alone and embeds none of its sections."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=(
+                lambda n: (
+                    lambda app: (
+                        app._config.collections[n].semantic  # type: ignore[attr-defined]
+                        if app._config and n in app._config.collections  # type: ignore[attr-defined]
+                        else True
+                    )
+                )
+            )(name),
+            toggle_setter=(
+                lambda n: lambda app, v: _set_semantic(app, f"collections.{n}.semantic", v)
+            )(name),
+            keywords=("semantic", "meaning", "embedding", "model"),
         ),
         MenuItem(
             id=f"col.{name}.reindex",
@@ -2621,6 +2644,119 @@ def _pdf_install_verb() -> str:
     reads naturally next to the row, not a generic `[ Open ]` that
     contradicts an Uninstall row."""
     return "Uninstall" if _is_pdf_structure_installed() else "Install"
+
+
+def _semantic_items() -> tuple[MenuItem, ...]:
+    """Semantic search: install state, the switch, and its progress line."""
+    keywords = ("semantic", "meaning", "embedding", "model", "granite")
+    return (
+        header("Semantic search", level=2),
+        MenuItem(
+            id="semantic.status",
+            label="Meaning model",
+            description=(
+                "Whether the meaning model is installed, its size, and how many "
+                "sections it has embedded. Embedding runs in the background."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_semantic_status,
+            keywords=keywords,
+        ),
+        MenuItem(
+            id="semantic.install",
+            label=_semantic_install_label(),
+            description=(
+                "Install: downloads the granite model (52 MB) and onnxruntime and "
+                "tokenizers (about 110 MB). Uninstall removes them and the vectors."
+            ),
+            kind=KIND_ACTION,
+            external=_open_semantic_install_confirm,
+            action_label=_semantic_install_verb(),
+            keywords=(*keywords, "install", "uninstall"),
+        ),
+        MenuItem(
+            id="semantic.enabled",
+            label="Semantic search",
+            description=(
+                "Blend the meaning model's ranking into plain-word searches. "
+                "Quoted, near, wildcard and excluding searches stay word matches."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: bool(
+                app._config and app._config.defaults.semantic_search  # type: ignore[attr-defined]
+            ),
+            toggle_setter=lambda app, v: _set_semantic(app, "defaults.semantic_search", v),
+            keywords=keywords,
+        ),
+        MenuItem(
+            id="semantic.show_progress",
+            label="Show embedding progress",
+            description="Show background embedding on the progress line.",
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: (
+                app._config.defaults.show_embedding_progress  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else True
+            ),
+            toggle_setter=lambda app, v: _setting_writer("defaults.show_embedding_progress")(
+                app, v
+            ),
+            keywords=(*keywords, "progress"),
+        ),
+    )
+
+
+def _set_semantic(app: FNDApp, path: str, value: bool) -> None:
+    _setting_writer(path)(app, value)
+    service = getattr(app, "_semantic", None)
+    if service is not None:
+        service.settings_changed()
+
+
+def _semantic_ready() -> bool:
+    from fnd.tui.semantic_service import _ready  # type: ignore[attr-defined]
+
+    return _ready()
+
+
+def _summary_semantic_status(app: FNDApp) -> str:
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        from fnd import semantic
+        from fnd.extras import EXTRAS, actual_disk_mb
+
+        extra = EXTRAS["semantic"]
+        if not semantic.platform_supported():
+            return "Not available on this machine"
+        if not _semantic_ready():
+            return f"✗ Not installed · ~{sum(p.disk_mb for p in extra.packages) + 52} MB to install"
+        coverage = _semantic_coverage(app)
+        return f"✓ Installed · ~{actual_disk_mb(extra)} MB" + (f" · {coverage}" if coverage else "")
+
+    return get_or_schedule(app, "semantic.status", _compute)
+
+
+def _semantic_coverage(app: FNDApp) -> str:
+    service = getattr(app, "_semantic", None)
+    ctx = service.context() if service is not None else None
+    if ctx is None:
+        return ""
+    return f"{len(ctx.rows.parent_id):,} sections embedded"
+
+
+def _semantic_install_label() -> str:
+    return "Uninstall meaning model" if _semantic_ready() else "Install meaning model"
+
+
+def _semantic_install_verb() -> str:
+    return "Uninstall" if _semantic_ready() else "Install"
+
+
+def _open_semantic_install_confirm(app: FNDApp) -> None:
+    from fnd.tui.settings_screen import SemanticConfirmScreen
+
+    app.push_screen(SemanticConfirmScreen())
 
 
 def _open_pdf_install_confirm(app: FNDApp) -> None:
