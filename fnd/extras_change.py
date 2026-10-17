@@ -12,6 +12,7 @@ and leaves fnd uninstalled, so the user is handed it to run after quitting (:att
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import json
 import shutil
@@ -61,7 +62,11 @@ def _pending() -> _Pending:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {name: kept for name, folders in data.items() if (kept := _own(name, folders))}  # pyright: ignore[reportUnknownVariableType]
+    return {
+        name: kept
+        for name, folders in data.items()
+        if (kept := [f for f in _own(name, folders) if Path(f).exists()])
+    }  # pyright: ignore[reportUnknownVariableType]
 
 
 def _save_pending(pending: _Pending) -> None:
@@ -107,7 +112,8 @@ def finish_pending_removals() -> list[str]:
             del pending[name]
             done.append(name)
     if done:
-        _save_pending(pending)
+        with contextlib.suppress(OSError):  # a record left behind is retried at the next start
+            _save_pending(pending)
     return done
 
 

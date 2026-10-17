@@ -113,13 +113,21 @@ def is_model_present(spec: ModelSpec = GRANITE) -> bool:
     )
 
 
+FETCH_TIMEOUT_S = 60.0
+
+
+def _open(url: str) -> Any:
+    return urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_S)  # noqa: S310  # file_url: https only
+
+
 def fetch_model(
     spec: ModelSpec = GRANITE,
     *,
-    opener: Callable[[str], Any] = urllib.request.urlopen,
+    opener: Callable[[str], Any] = _open,
     on_bytes: Callable[[int, int], None] | None = None,
 ) -> Path:
-    """Download each missing file at the pinned revision, verified before it is kept."""
+    """Download each missing file at the pinned revision, verified before it is kept; a
+    connection silent for ``FETCH_TIMEOUT_S`` fails it."""
     total = sum(f.size for f in spec.files)
     done = 0
     for f in spec.files:

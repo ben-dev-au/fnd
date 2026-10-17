@@ -32,6 +32,35 @@ def models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
+def test_a_download_that_stalls_fails_instead_of_hanging(
+    models: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A server that accepts and then sends nothing ends the install with an error."""
+    import socket
+    import threading
+
+    server = socket.create_server(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    monkeypatch.setattr(semantic, "file_url", lambda spec, f: f"http://127.0.0.1:{port}/x")
+    monkeypatch.setattr(semantic, "FETCH_TIMEOUT_S", 0.3)
+    failed: list[BaseException] = []
+
+    def fetch() -> None:
+        try:
+            semantic.fetch_model(_spec(b"ok"))
+        except ModelFetchError as e:
+            failed.append(e)
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    try:
+        worker.start()
+        worker.join(10)
+        assert not worker.is_alive(), "the download never gave up"
+        assert failed
+    finally:
+        server.close()
+
+
 def test_a_verified_file_is_kept(models: Path) -> None:
     """A file whose checksum matches is renamed into place."""
     spec = _spec(b"ok")

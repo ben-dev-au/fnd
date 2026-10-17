@@ -113,12 +113,15 @@ class SemanticService:
 
     @property
     def job_running(self) -> bool:
-        return self._runner is not None and self._runner.running
+        """Its task is live, including before it has started its process."""
+        pending = self._job is not None and not self._job.done()
+        return pending or (self._runner is not None and self._runner.running)
 
     # ── loading ──────────────────────────────────────────────────
 
     def on_launch(self) -> None:
-        """Load the model and vectors once the first frame is up, then reconcile."""
+        """Load the vectors (and, if there are any, the model) once the first frame is up,
+        then reconcile."""
         if not self.enabled or not self._ready():
             return
         self._app.call_after_refresh(self._load_in_background)
@@ -131,27 +134,30 @@ class SemanticService:
         self._app.call_from_thread(self.ensure_job)
 
     def _load_context(self) -> None:
-        from fnd.semantic import load_embedder
         from fnd.semantic_search import load_context
 
+        ctx = load_context(self._loaded_embedder)
+        if ctx is not None:
+            self._ctx = ctx
+
+    def _loaded_embedder(self) -> Embedder:
         if self._embedder is None:
+            from fnd.semantic import load_embedder
             from fnd.semantic_search import QUERY_THREADS
 
             factory = self._embedder_factory or (lambda: load_embedder(threads=QUERY_THREADS))
             self._embedder = factory()
-        ctx = load_context(self._embedder)
-        if ctx is not None:
-            self._ctx = ctx
+        return self._embedder
 
     def settings_changed(self) -> None:
         """Semantic search was switched, installed, removed or a collection opted in or out."""
         if not self.enabled or not self._ready():
             self._app.run_worker(self.stop(), group="semantic_stop", exit_on_error=False)
             return
-        if self._embedder is None:
-            self._load_in_background()
-        elif self.job_running:
+        if self.job_running:
             self._app.run_worker(self._restart(), group="semantic_restart", exit_on_error=False)
+        elif self._ctx is None:
+            self._load_in_background()
         else:
             self.ensure_job()
 

@@ -20,6 +20,8 @@ from fnd.query import FileGroup, Hit, decoded_body, file_key, group_by_file
 from fnd.semantic import GRANITE, section_key, section_text
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import numpy as np
 
     from fnd.config import Config
@@ -56,8 +58,9 @@ class SemanticContext:
 QUERY_THREADS: Final = 2
 
 
-def load_context(embedder: Embedder) -> SemanticContext | None:
-    """The saved vectors and row table, or None before the first reconcile saved any."""
+def load_context(make_embedder: Callable[[], Embedder]) -> SemanticContext | None:
+    """The saved vectors and row table, or None before the first reconcile saved any; the
+    model loads only once both are there."""
     from fnd.semantic import GRANITE
     from fnd.vectors import RowTable, VectorStore, store_dir, store_header
 
@@ -67,6 +70,7 @@ def load_context(embedder: Embedder) -> SemanticContext | None:
     rows = RowTable.load(folder)
     if rows is None:
         return None
+    embedder = make_embedder()
     store = VectorStore.open(folder, dim=embedder.dim, header=store_header(GRANITE))
     snapshot = store.snapshot()
     # After the snapshot: it re-reads the store if a writer merged or compacted meanwhile.
@@ -84,7 +88,7 @@ def context_for(config: Config) -> SemanticContext | None:
 
     if not config.defaults.semantic_search or not is_ready():
         return None
-    ctx = load_context(load_embedder(threads=QUERY_THREADS))
+    ctx = load_context(lambda: load_embedder(threads=QUERY_THREADS))
     if ctx is None:
         return None
     opted = frozenset(n for n, c in config.collections.items() if c.semantic)

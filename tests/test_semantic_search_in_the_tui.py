@@ -318,6 +318,50 @@ def test_a_job_that_found_the_store_busy_is_tried_again() -> None:
     assert timers == [(60.0, "ensure_job")]
 
 
+def test_a_second_trigger_before_the_job_starts_starts_no_second_job() -> None:
+    """Index, settings and launch can all ask for the job before its task first runs."""
+    app = _app()
+    app.set_interval = lambda *a, **k: SimpleNamespace(stop=lambda: None)
+    made: list[_Runner] = []
+
+    def factory() -> _Runner:
+        runner = _Runner()
+        runner.exit_code = 0  # type: ignore[attr-defined]
+
+        async def start(opted: object) -> None: ...
+
+        async def progress():  # type: ignore[no-untyped-def]
+            return
+            yield
+
+        runner.start = start  # type: ignore[attr-defined]
+        runner.progress = progress  # type: ignore[attr-defined]
+        made.append(runner)
+        return runner
+
+    service = SemanticService(app, ready=lambda: True, runner_factory=factory)  # type: ignore[arg-type,return-value]
+    service._load_context = lambda: None  # type: ignore[method-assign]
+
+    async def twice() -> None:
+        service.ensure_job()
+        service.ensure_job()
+        await service._job  # type: ignore[misc]
+
+    asyncio.run(twice())
+    assert len(made) == 1
+
+
+def test_the_tui_loads_no_model_before_any_vectors_are_saved() -> None:
+    """Launch with nothing embedded yet costs no model load."""
+
+    def no_load() -> object:
+        raise AssertionError("model loaded with no vectors to search")
+
+    service = SemanticService(_app(), ready=lambda: True, embedder_factory=no_load)  # type: ignore[arg-type]
+    service._load_context()
+    assert service.context() is None
+
+
 def test_quitting_stops_the_job_without_waiting() -> None:
     """Quit asks the job to stop at its next batch and returns at once."""
     service = SemanticService(_app(), ready=lambda: True)
@@ -476,14 +520,18 @@ def test_a_moved_index_brings_the_vectors_up_to_date() -> None:
     assert calls == ["ensure_job"]
 
 
-def test_opting_in_during_a_run_restarts_it() -> None:
-    """A collection switched on mid-run is embedded by a restarted job, not left for next launch."""
+@pytest.mark.parametrize("first_run", [False, True])
+def test_opting_in_during_a_run_restarts_it(first_run: bool) -> None:
+    """A collection switched on mid-run is embedded by a restarted job, not left for next launch,
+    including the first run, before any vectors (or the model) are loaded."""
     app = _app()
     order: list[str] = []
     workers: list[object] = []
     app.run_worker = lambda coro, **kw: workers.append(coro)
     service = SemanticService(app, ready=lambda: True)
-    service._embedder = object()  # type: ignore[assignment]
+    if not first_run:
+        service._embedder = object()  # type: ignore[assignment]
+        service.use_context(object())  # type: ignore[arg-type]
     runner = _Runner()
     service._runner = runner  # type: ignore[assignment]
 

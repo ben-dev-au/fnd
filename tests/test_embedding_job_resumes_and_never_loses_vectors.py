@@ -343,7 +343,7 @@ def test_a_busy_store_is_found_before_the_model_loads(
         raise AssertionError("model loaded before the lock")
 
     monkeypatch.setattr(embed_job, "_load_embedder", no_load)
-    monkeypatch.setattr(embed_job.os, "nice", lambda n: 0)
+    monkeypatch.setattr(embed_job.os, "nice", lambda n: 0, raising=False)
     monkeypatch.setattr(embed_job.signal, "signal", lambda *a: None)
     holder = VectorStore.open_writer(tmp_path / "v", dim=GRANITE.dim, header=store_header(GRANITE))
     try:

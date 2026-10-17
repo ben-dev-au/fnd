@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from fnd import config as conf
-from fnd import extras, extras_change, paths, semantic
+from fnd import extras, extras_change, os_labels, paths, semantic
 from fnd.cli import app
 from fnd.extras import SEMANTIC
 from fnd.extras_change import Change, finish_pending_removals, pending_removal, remove_folders
@@ -184,6 +184,7 @@ async def test_the_tui_rolls_back_a_cancelled_install() -> None:
 
 
 def _windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os_labels, "is_windows", lambda: True)
     monkeypatch.setattr(paths, "loaded_files_are_locked", lambda: True)
     monkeypatch.setattr(extras, "project_pyproject_for_python", lambda py: None)
     monkeypatch.setattr(extras, "fnd_tool_venv", lambda: False)
@@ -309,6 +310,30 @@ def test_fnd_finishes_pending_removals_when_it_starts(
     assert not pending_removal("semantic")
 
 
+def test_a_pending_record_fnd_cannot_rewrite_does_not_stop_it_starting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The folders still go; the record is retried at the next start."""
+    import sys
+
+    from fnd import cli
+
+    folder = _queued_folder(tmp_path, monkeypatch)
+
+    def locked(pending: object) -> None:
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(extras_change, "_save_pending", locked)
+    monkeypatch.setattr(sys, "argv", ["fnd", "version"])
+    with pytest.raises(SystemExit) as exit_:
+        cli.main()
+    assert exit_.value.code in (0, None)
+    assert capsys.readouterr().out.strip()
+    assert not folder.exists()
+    assert not pending_removal("semantic")
+    assert finish_pending_removals() == []
+
+
 def test_a_windows_uv_tool_install_hands_over_its_own_reinstall(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -319,7 +344,7 @@ def test_a_windows_uv_tool_install_hands_over_its_own_reinstall(
     install = Change.begin(SEMANTIC, removing=False)
     assert not any(c[:3] == ["uv", "tool", "install"] for c in install.commands)
     assert install.commands
-    assert install.after_quit.startswith("uv tool install --reinstall 'fndr[semantic]==1.0.1'")
+    assert install.after_quit.startswith("uv tool install --reinstall fndr[semantic]==1.0.1")
     removal = Change.begin(SEMANTIC, removing=True)
     assert removal.commands == []
     assert not pending_removal("semantic")
@@ -343,13 +368,14 @@ def test_the_cli_says_what_to_run_after_quitting(
     """On Windows under uv tool, the install fetches the model and prints the reinstall to run."""
     machine.fail_on = ("never",)
     monkeypatch.setattr(extras, "project_pyproject_for_python", lambda py: None)
+    monkeypatch.setattr(os_labels, "is_windows", lambda: True)
     monkeypatch.setattr(paths, "loaded_files_are_locked", lambda: True)
     monkeypatch.setattr(extras, "fnd_tool_venv", lambda: True)
     monkeypatch.setattr(extras, "fnd_version", lambda: "1.0.1")
     result = CliRunner().invoke(app, ["extras", "install", "semantic", "--yes"])
     assert result.exit_code == 0, result.output
     assert (
-        "Quit every open fnd, then run: uv tool install --reinstall 'fndr[semantic]==1.0.1'"
+        "Quit every open fnd, then run: uv tool install --reinstall fndr[semantic]==1.0.1"
         in result.output
     )
     assert not any(c[:3] == ["uv", "tool", "install"] for c in machine.ran)
@@ -529,8 +555,6 @@ async def test_quitting_during_a_rollback_does_not_start_a_second() -> None:
 
 def test_the_command_to_run_is_quoted_for_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     """cmd.exe passes single quotes through, so a Windows command is quoted its own way."""
-    from fnd import os_labels
-
     monkeypatch.setattr(os_labels.platform, "system", lambda: "Windows")
     assert os_labels.command_line(["uv", "tool", "install", "fndr[semantic]==1.0.1"]) == (
         "uv tool install fndr[semantic]==1.0.1"

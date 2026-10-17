@@ -940,11 +940,14 @@ def _semantic_job_parts() -> tuple[Any, Any]:
     from fnd.semantic import GRANITE, load_embedder
     from fnd.vectors import VectorStore, store_dir, store_header
 
-    embedder = load_embedder(threads=max(1, (os.cpu_count() or 2) // 2))
     store = VectorStore.open_writer(
-        store_dir(GRANITE), dim=embedder.dim, header=store_header(GRANITE)
+        store_dir(GRANITE), dim=GRANITE.dim, header=store_header(GRANITE)
     )
-    return embedder, store
+    try:
+        return load_embedder(threads=max(1, (os.cpu_count() or 2) // 2)), store
+    except BaseException:
+        store.close()
+        raise
 
 
 def _embed_after_index(cfg: Any) -> None:

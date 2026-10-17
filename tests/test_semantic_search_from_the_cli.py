@@ -165,3 +165,58 @@ def test_ad_hoc_index_embeds_afterwards_too(
         == 0
     )
     assert calls == ["embedded"]
+
+
+def test_a_reindex_finds_the_running_embed_before_loading_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another writer holding the store costs a lock attempt, not a model load."""
+    from fnd import semantic
+    from fnd.semantic import GRANITE
+    from fnd.vectors import StoreBusyError, VectorStore, store_dir, store_header
+
+    def no_load(**kw: object) -> object:
+        raise AssertionError("model loaded before the lock")
+
+    monkeypatch.setattr(semantic, "load_embedder", no_load)
+    holder = VectorStore.open_writer(
+        store_dir(GRANITE), dim=GRANITE.dim, header=store_header(GRANITE)
+    )
+    try:
+        with pytest.raises(StoreBusyError):
+            cli._semantic_job_parts()  # pyright: ignore[reportPrivateUsage]
+    finally:
+        holder.close()
+
+
+def test_a_model_that_fails_to_load_lets_go_of_the_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lock taken first is released when the model then cannot load."""
+    from fnd import semantic
+    from fnd.semantic import GRANITE
+    from fnd.vectors import VectorStore, store_dir, store_header
+
+    def broken(**kw: object) -> object:
+        raise OSError("model unreadable")
+
+    monkeypatch.setattr(semantic, "load_embedder", broken)
+    with pytest.raises(OSError, match="unreadable") as failed:
+        cli._semantic_job_parts()  # pyright: ignore[reportPrivateUsage]
+    assert failed.traceback  # holds the frame, so only an explicit close frees the lock
+    VectorStore.open_writer(
+        store_dir(GRANITE), dim=GRANITE.dim, header=store_header(GRANITE)
+    ).close()
+
+
+def test_a_search_before_any_vectors_are_saved_loads_no_model(
+    library: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Switched on but not yet embedded, a CLI search pays nothing for the model."""
+    from fnd import semantic, semantic_search
+    from fnd.config import Config, Defaults
+
+    def no_load(**kw: object) -> object:
+        raise AssertionError("model loaded with no vectors to search")
+
+    monkeypatch.setattr(semantic, "is_ready", lambda: True)
+    monkeypatch.setattr(semantic, "load_embedder", no_load)
+    assert semantic_search.context_for(Config(defaults=Defaults(semantic_search=True))) is None

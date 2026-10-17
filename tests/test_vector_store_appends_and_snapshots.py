@@ -247,6 +247,6 @@ def test_a_compaction_between_open_and_snapshot_reads_as_stale(
         return reader
 
     monkeypatch.setattr(VectorStore, "open", classmethod(open_then_compact))
-    assert semantic_search.load_context(SimpleNamespace(dim=4)) is None  # type: ignore[arg-type]
+    assert semantic_search.load_context(lambda: SimpleNamespace(dim=4)) is None  # type: ignore[arg-type]
     assert compacted == [True]
     w.close()

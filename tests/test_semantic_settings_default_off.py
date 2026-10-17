@@ -33,5 +33,8 @@ def test_an_opted_out_collection_is_written_and_read_back(tmp_path: Path) -> Non
     from fnd import config as conf
 
     path = tmp_path / "config.toml"
-    path.write_text(render_config(Config(collections={"books": CollectionConfig(semantic=False)})))
+    path.write_text(
+        render_config(Config(collections={"books": CollectionConfig(semantic=False)})),
+        encoding="utf-8",
+    )
     assert conf.load(path).collections["books"].semantic is False
