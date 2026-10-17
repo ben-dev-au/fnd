@@ -1006,7 +1006,8 @@ class Searcher:
         | Mapping[tuple[str, int], tuple[object, int, int] | None],
     ) -> dict[str, WordEvidence]:
         """Each of ``tokens``' evidence across ``sections``: see :class:`WordEvidence`. Given
-        each section's :attr:`Hit.at`, other sections of the same files are skipped unread."""
+        each section's :attr:`Hit.at`, other sections of the same files are skipped unread;
+        a section without one is looked up by its key alone."""
         import math
 
         import tantivy
@@ -1015,11 +1016,34 @@ class Searcher:
         files = tantivy.Query.const_score_query(
             tantivy.Query.term_set_query(schema, F_PARENT_ID, sorted({p for p, _ in wanted})), 0.0
         )
-        keys: dict[tuple[int, int], tuple[str, int] | None] = {}
-        ats = list(sections.values()) if isinstance(sections, Mapping) else []
-        if ats and all(a is not None and a[0] is raw for a in ats):
-            keys = {(a[1], a[2]): k for k, a in sections.items() if a is not None}  # type: ignore[union-attr]
-        known = bool(keys)
+        ats = sections if isinstance(sections, Mapping) else dict.fromkeys(sections)
+        keys = {(a[1], a[2]): k for k, a in ats.items() if a is not None and a[0] is raw}
+        unplaced = wanted - set(keys.values())
+        if unplaced:
+            exact = tantivy.Query.boolean_query(
+                [
+                    (
+                        tantivy.Occur.Should,
+                        tantivy.Query.boolean_query(
+                            [
+                                (
+                                    tantivy.Occur.Must,
+                                    tantivy.Query.term_query(schema, F_PARENT_ID, p),
+                                ),
+                                (
+                                    tantivy.Occur.Must,
+                                    tantivy.Query.term_query(schema, F_CHUNK_SEQ, s),
+                                ),
+                            ]
+                        ),
+                    )
+                    for p, s in sorted(unplaced)
+                ]
+            )
+            for _, address in _every_hit(raw, exact, len(unplaced)):
+                doc = raw.doc(address)
+                key = (str(doc.get_first(F_PARENT_ID)), int(doc.get_first(F_CHUNK_SEQ) or 0))
+                keys[(address.segment_ord, address.doc)] = key
 
         def scored(field: str, token: str) -> dict[tuple[str, int], float]:
             query = tantivy.Query.boolean_query(
@@ -1030,18 +1054,9 @@ class Searcher:
             )
             out: dict[tuple[str, int], float] = {}
             for score, address in _every_hit(raw, query, len(wanted)):
-                at = (address.segment_ord, address.doc)
-                if at not in keys:
-                    if known:
-                        continue
-                    doc = raw.doc(address)
-                    keys[at] = (
-                        str(doc.get_first(F_PARENT_ID)),
-                        int(doc.get_first(F_CHUNK_SEQ) or 0),
-                    )
-                key = keys[at]
-                if key in wanted:
-                    out[key] = score  # type: ignore[index]
+                key = keys.get((address.segment_ord, address.doc))
+                if key is not None:
+                    out[key] = score
             return out
 
         out: dict[str, WordEvidence] = {}
