@@ -233,11 +233,7 @@ def test_a_file_with_one_matching_section_still_shows_its_score(notes: Searcher)
     assert march.section_score == pytest.approx(march.score)
 
 
-def test_word_evidence_reads_no_document_for_sections_already_found(
-    tmp_path: Path, tmp_index_dir: Path
-) -> None:
-    """Shown sections carry their index address, so a big file's other sections holding
-    the word are skipped unread, and the scope stays one query on file ids."""
+def _big_file_shown(tmp_path: Path, tmp_index_dir: Path) -> tuple[Searcher, Any, dict[Any, Any]]:
     body = "".join(f"## Part {i}\n\nThe budget for part {i}.\n\n" for i in range(200))
     searcher = _index(tmp_path, tmp_index_dir, {"big.md": f"# Big\n\n{body}"})
     raw = searcher._searcher  # pyright: ignore[reportPrivateUsage]
@@ -256,7 +252,37 @@ def test_word_evidence_reads_no_document_for_sections_already_found(
     groups = search_layered(searcher, query="budget", limit=40, sections_per_file=3)
     shown = {(h.parent_id, h.chunk_seq): h.at for g in groups for h in g.hits}
     Counting.reads = 0
-    evidence = searcher.word_evidence(searcher.wanted_tokens("budget"), shown)
-    assert Counting.reads == 0
-    (e,) = evidence.values()
+    return searcher, Counting, shown
+
+
+def test_word_evidence_reads_no_document_for_sections_already_found(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Shown sections carry their index address, so a big file's other sections holding
+    the word are skipped unread, and the scope stays one query on file ids."""
+    searcher, counting, shown = _big_file_shown(tmp_path, tmp_index_dir)
+    (e,) = searcher.word_evidence(searcher.wanted_tokens("budget"), shown).values()
+    assert counting.reads == 0
+    assert set(e.body) == set(shown)
+
+
+def test_a_section_without_an_address_costs_one_read_not_the_whole_file(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """A shown section found another way (no :attr:`Hit.at`) is looked up exactly, alone."""
+    searcher, counting, shown = _big_file_shown(tmp_path, tmp_index_dir)
+    first = next(iter(shown))
+    shown[first] = None
+    (e,) = searcher.word_evidence(searcher.wanted_tokens("budget"), shown).values()
+    assert counting.reads == 1
+    assert set(e.body) == set(shown)
+
+
+def test_sections_given_without_addresses_read_only_themselves(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Plain section keys cost one read each, never one per section of their files."""
+    searcher, counting, shown = _big_file_shown(tmp_path, tmp_index_dir)
+    (e,) = searcher.word_evidence(searcher.wanted_tokens("budget"), set(shown)).values()
+    assert counting.reads == len(shown)
     assert set(e.body) == set(shown)
