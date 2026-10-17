@@ -4,6 +4,7 @@ part in which files rank first."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -207,3 +208,55 @@ def test_a_heading_over_every_section_counts_alike_for_each(
     )
     child = hits["Budget > Timeline"]
     assert child.section_score == pytest.approx(child.score + _lift(searcher, "budget", child, 1.0))
+
+
+def test_a_parent_heading_keeps_its_share_when_every_match_sits_under_it(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Only the leading heading counts alike; a shared H2 is still a parent."""
+    searcher, hits = _plans(
+        tmp_path,
+        tmp_index_dir,
+        "# Plans\n\n## Budget\n\nThe budget overview.\n\n"
+        "### Timeline\n\nDates first, and the budget once, among other plain words.\n\n"
+        "## Costs\n\nSeeds, tools and hoses.\n",
+    )
+    child = hits["Plans > Budget > Timeline"]
+    child_lift = _lift(searcher, "budget", child, PARENT_HEADING_WEIGHT)
+    assert child.section_score == pytest.approx(child.score + child_lift)
+
+
+def test_a_file_with_one_matching_section_still_shows_its_score(notes: Searcher) -> None:
+    """Coverage is judged on every shown section, not only those of files with several."""
+    groups = search_layered(notes, query="budget again", limit=40, sections_per_file=10)
+    (march,) = next(g for g in groups if g.path.endswith("invoices.md")).hits
+    assert march.section_score == pytest.approx(march.score)
+
+
+def test_word_evidence_reads_no_document_for_sections_already_found(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Shown sections carry their index address, so a big file's other sections holding
+    the word are skipped unread, and the scope stays one query on file ids."""
+    body = "".join(f"## Part {i}\n\nThe budget for part {i}.\n\n" for i in range(200))
+    searcher = _index(tmp_path, tmp_index_dir, {"big.md": f"# Big\n\n{body}"})
+    raw = searcher._searcher  # pyright: ignore[reportPrivateUsage]
+
+    class Counting:
+        reads = 0
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(raw, name)
+
+        def doc(self, address: Any) -> object:
+            Counting.reads += 1
+            return raw.doc(address)
+
+    searcher._searcher = Counting()  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
+    groups = search_layered(searcher, query="budget", limit=40, sections_per_file=3)
+    shown = {(h.parent_id, h.chunk_seq): h.at for g in groups for h in g.hits}
+    Counting.reads = 0
+    evidence = searcher.word_evidence(searcher.wanted_tokens("budget"), shown)
+    assert Counting.reads == 0
+    (e,) = evidence.values()
+    assert set(e.body) == set(shown)

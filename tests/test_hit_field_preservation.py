@@ -24,6 +24,8 @@ from fnd.fusion import _with_pass_index
 from fnd.query import Hit
 from fnd.rerank import _with_rank_score
 
+_SEARCHER = object()
+
 
 def _populated_hit() -> Hit:
     """A Hit with every field set to a distinctive non-default value so
@@ -60,6 +62,7 @@ def _populated_hit() -> Hit:
         rank_score=0.25,
         content_hash="ab" * 32,
         section_score=3.5,
+        at=(_SEARCHER, 1, 2),
     )
 
 

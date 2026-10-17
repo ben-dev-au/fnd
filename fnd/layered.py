@@ -26,7 +26,6 @@ Strong-signal bypass adapted from tobi/qmd (MIT); see README.
 from __future__ import annotations
 
 import dataclasses
-import itertools
 from typing import TYPE_CHECKING, Literal, overload
 
 from fnd.analysis import analyse
@@ -416,16 +415,23 @@ def by_heading_within_file(
     plus, per query word, what its heading adds beyond the body's evidence (and
     ``HEADING_TIE_BREAKER`` of the rest), scaled by the share of the query's words the
     section holds. ``keep_pass_order`` keeps a cascade's exact sections above looser ones."""
-    several = [(h.parent_id, h.chunk_seq) for g in groups if len(g.hits) > 1 for h in g.hits]
-    tokens = searcher.wanted_tokens(query) if several else []
-    evidence = searcher.word_evidence(tokens, several) if tokens else {}
+    shown = {(h.parent_id, h.chunk_seq): h.at for g in groups for h in g.hits}
+    tokens = searcher.wanted_tokens(query) if shown else []
+    evidence = searcher.word_evidence(tokens, shown) if tokens else {}
     total = sum(e.rarity for e in evidence.values()) if len(evidence) > 1 else 0.0
+
+    words: dict[str, frozenset[str]] = {}
+
+    def analysed(text: str) -> frozenset[str]:
+        if text not in words:
+            words[text] = frozenset(analyse(text))
+        return words[text]
 
     def ordered(h: Hit, shared: set[str]) -> Hit:
         k = (h.parent_id, h.chunk_seq)
-        own = shared.union(analyse(h.heading_path.split(" > ")[-1]))
+        own = shared.union(analysed(h.heading_path.rsplit(" > ", 1)[-1]))
         lift, held = 0.0, 0.0
-        titled = set(analyse(h.title)) if total else set()
+        titled = analysed(h.title) if total else frozenset()
         for token, e in evidence.items():
             share = 1.0 if token in own else PARENT_HEADING_WEIGHT
             lifted, plain = (
@@ -459,11 +465,10 @@ def by_heading_within_file(
 
 
 def _shared_heading_words(hits: list[Hit]) -> set[str]:
-    """Index tokens of the leading headings every one of ``hits`` sits under: a note's
-    H1 heads all its sections, so it counts alike for each of them."""
-    paths = [h.heading_path.split(" > ") for h in hits]
-    common = itertools.takewhile(lambda level: len(set(level)) == 1, zip(*paths, strict=False))
-    return set(analyse(" ".join(level[0] for level in common)))
+    """Index tokens of the leading heading every one of ``hits`` sits under: a note's H1
+    heads all its sections, so it counts alike for each. A deeper shared heading stays a parent."""
+    leads = {h.heading_path.split(" > ")[0] for h in hits}
+    return set(analyse(leads.pop())) if len(leads) == 1 else set()
 
 
 def by_best_bm25(hits: list[Hit]) -> list[Hit]:

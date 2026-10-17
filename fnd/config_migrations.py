@@ -121,7 +121,7 @@ def _to_v3(raw: MutableMapping[str, Any]) -> None:
 
 
 def _to_v4(raw: MutableMapping[str, Any]) -> None:
-    """Drop ``sections_score_threshold``: every matching section is shown, in match order."""
+    """Drop ``sections_score_threshold``: every matching section is shown, ordered by its section score."""
     defaults = raw.get("defaults")
     if isinstance(defaults, dict):
         defaults.pop("sections_score_threshold", None)

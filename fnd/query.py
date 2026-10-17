@@ -226,6 +226,9 @@ class Hit:
     # The score a file's sections are ordered by (BM25 plus the heading lift); None
     # where that order is BM25's own.
     section_score: float | None = None
+    # (raw searcher, segment, doc) this hit was read from, so later per-section queries can
+    # recognise it without reading its document again; None when built another way.
+    at: tuple[object, int, int] | None = field(default=None, compare=False, repr=False)
 
     @property
     def rank_key(self) -> float:
@@ -547,7 +550,7 @@ def _meta_keep(metadata_filter: str | None) -> Callable[[Hit], bool] | None:
     return lambda h: _passes_meta_filter(h, predicate)
 
 
-def _light_hit(doc: object, score: float) -> Hit:
+def _light_hit(doc: object, score: float, at: tuple[object, int, int] | None = None) -> Hit:
     """A candidate's stored fields, its block bytes kept undecoded."""
     struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
     md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
@@ -572,6 +575,7 @@ def _light_hit(doc: object, score: float) -> Hit:
         content_hash=_first_str(doc, F_CONTENT_HASH),
         materialised=False,
         stored_struct=struct_bytes or b"",
+        at=at,
     )
 
 
@@ -619,7 +623,8 @@ def _collect(
         if total is None:
             total = int(result.count)
         for score, address in result.hits:
-            hit = _light_hit(searcher.doc(address), score)  # type: ignore[attr-defined]
+            at = (searcher, address.segment_ord, address.doc)
+            hit = _light_hit(searcher.doc(address), score, at)  # type: ignore[attr-defined]
             if keep is None or keep(hit):
                 hits.append(hit)
                 files.add(hit.parent_id)
@@ -995,9 +1000,13 @@ class Searcher:
 
     @_engine_boundary
     def word_evidence(
-        self, tokens: Sequence[str], sections: Collection[tuple[str, int]]
+        self,
+        tokens: Sequence[str],
+        sections: Collection[tuple[str, int]]
+        | Mapping[tuple[str, int], tuple[object, int, int] | None],
     ) -> dict[str, WordEvidence]:
-        """Each of ``tokens``' evidence across ``sections``: see :class:`WordEvidence`."""
+        """Each of ``tokens``' evidence across ``sections``: see :class:`WordEvidence`. Given
+        each section's :attr:`Hit.at`, other sections of the same files are skipped unread."""
         import math
 
         import tantivy
@@ -1006,7 +1015,11 @@ class Searcher:
         files = tantivy.Query.const_score_query(
             tantivy.Query.term_set_query(schema, F_PARENT_ID, sorted({p for p, _ in wanted})), 0.0
         )
-        keys: dict[tuple[int, int], tuple[str, int]] = {}
+        keys: dict[tuple[int, int], tuple[str, int] | None] = {}
+        ats = list(sections.values()) if isinstance(sections, Mapping) else []
+        if ats and all(a is not None and a[0] is raw for a in ats):
+            keys = {(a[1], a[2]): k for k, a in sections.items() if a is not None}  # type: ignore[union-attr]
+        known = bool(keys)
 
         def scored(field: str, token: str) -> dict[tuple[str, int], float]:
             query = tantivy.Query.boolean_query(
@@ -1019,13 +1032,16 @@ class Searcher:
             for score, address in _every_hit(raw, query, len(wanted)):
                 at = (address.segment_ord, address.doc)
                 if at not in keys:
+                    if known:
+                        continue
                     doc = raw.doc(address)
                     keys[at] = (
                         str(doc.get_first(F_PARENT_ID)),
                         int(doc.get_first(F_CHUNK_SEQ) or 0),
                     )
-                if keys[at] in wanted:
-                    out[keys[at]] = score
+                key = keys[at]
+                if key in wanted:
+                    out[key] = score  # type: ignore[index]
             return out
 
         out: dict[str, WordEvidence] = {}
