@@ -484,7 +484,7 @@ Settings UI.
 - `--no-embed` on `fnd index` and `fnd collection reindex` skips embedding.
 - `fnd extras uninstall semantic` removes the model, vectors and packages.
 - A failed or cancelled install removes what it added.
-- Windows, `uv tool` install: quit fnd, then run the `uv tool install` command it prints.
+- Windows, `uv tool` install: quit every open fnd, then run the `uv tool install` command it prints.
 
 ## Indexing
 

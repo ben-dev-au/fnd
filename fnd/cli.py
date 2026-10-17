@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from fnd import os_labels
 from fnd.cli_output import echo, echo_data
 from fnd.config import default_config_path, default_index_dir, is_all_collections
 from fnd.display_text import terminal_line
@@ -1072,7 +1073,7 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
             "  Subsequent reindexes only re-process changed files.\n"
             "  Indexing can run in the background and auto-resumes if interrupted.\n"
         )
-    echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
+        echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
 
 
 def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
@@ -1135,7 +1136,7 @@ def extras_install(
     cmds = install_commands(extra)
     if dry_run:
         for c in cmds:
-            echo("would run: " + shlex.join(c))
+            echo("would run: " + os_labels.command_line(c))
         return
     _require_uv()
     if not yes and not typer.confirm("Continue?", default=False):
@@ -1146,7 +1147,7 @@ def extras_install(
     change = Change.begin(extra, removing=False)
     try:
         for c in change.commands:
-            echo("$ " + shlex.join(c))
+            echo("$ " + os_labels.command_line(c))
             rc, _stdout, stderr = run_command(c)
             if rc != 0:
                 echo(f"command failed (exit {rc}):\n{stderr}", err=True)
@@ -1158,7 +1159,7 @@ def extras_install(
     if change.after_quit:
         if name == "semantic":
             _write_semantic_setting(True)
-        echo(f"\nQuit fnd, then run: {change.after_quit}")
+        echo(f"\nQuit every open fnd, then run: {change.after_quit}")
         return
     if name == "semantic":
         _write_semantic_setting(True)
@@ -1187,7 +1188,7 @@ def extras_uninstall(
     # filtered version that skips already-removed packages.
     if dry_run:
         for c in uninstall_commands(extra, assume_installed=True):
-            echo("would run: " + shlex.join(c))
+            echo("would run: " + os_labels.command_line(c))
         return
     cmds = uninstall_commands(extra)
     leftovers = [c for c in extra.cache_dirs() if c.exists()]
@@ -1202,7 +1203,7 @@ def extras_uninstall(
 
     change = Change.begin(extra, removing=True)
     for c in change.commands:
-        echo("$ " + shlex.join(c))
+        echo("$ " + os_labels.command_line(c))
         rc, _stdout, stderr = run_command(c)
         if rc != 0:
             echo(f"command failed (exit {rc}):\n{stderr}", err=True)
@@ -1210,10 +1211,10 @@ def extras_uninstall(
     now = remove_folders(name, leftovers)
     if name == "semantic":
         _write_semantic_setting(False)
-    waits = "; its last files go when fnd next starts" if change.deferred or not now else ""
+    waits = "" if now else "; its last files go when fnd next starts"
     echo(f"\nUninstalled {name}{waits}.")
     if change.after_quit:
-        echo(f"Quit fnd, then run: {change.after_quit}")
+        echo(f"Quit every open fnd, then run: {change.after_quit}")
 
 
 def _write_semantic_setting(on: bool) -> None:

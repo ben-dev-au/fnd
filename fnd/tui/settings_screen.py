@@ -4222,10 +4222,8 @@ async def change_extra(app: Any, change: Change, *, label: str) -> None:
         await service.stop()
         service.release()
     note = change.extra.removed_note if change.removing else change.extra.installed_note
-    if change.deferred:
-        note = "Its last files go when fnd next starts."
     if change.after_quit:
-        note = f"Quit fnd, then run: {change.after_quit}"
+        note = _after_quit(change)
     extras_install_progress.start_extras_install(
         app,
         cmds=change.commands,
@@ -4324,14 +4322,21 @@ def _section_count(app: Any) -> int:
     return 0
 
 
+def _after_quit(change: Change) -> str:
+    return f"Quit every open fnd, then run: {change.after_quit}" if change.after_quit else ""
+
+
 def extras_finished(app: FNDApp, change: Change) -> None:
     """After an install or removal: semantic search switches with it, and a removal deletes
     the model and the vectors (or queues them for the next start when still open)."""
     from fnd.extras_change import remove_folders
 
     name = change.extra.name
-    if change.removing:
-        remove_folders(name, [f for f in change.extra.cache_dirs() if f.exists()])
+    if change.removing and not remove_folders(
+        name, [f for f in change.extra.cache_dirs() if f.exists()]
+    ):
+        waits = "Its last files go when fnd next starts."
+        app._extras_done_note = f"{waits} {_after_quit(change)}".strip()  # type: ignore[attr-defined]
     if name == "semantic":
         from fnd.tui.menu import _setting_writer  # type: ignore[attr-defined]
 

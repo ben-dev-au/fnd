@@ -205,7 +205,6 @@ def _removal(folder: Path) -> Change:
         extra=extra,
         removing=True,
         commands=[],
-        deferred=False,
         files={},
         folders=frozenset(),
         dists=frozenset(),
@@ -266,6 +265,10 @@ async def test_the_install_modal_names_the_extra(tmp_index_dir: Path) -> None:
         app.screen._render_event(ProgressEvent(phase="done", cmd_index=0, cmd_total=1))  # type: ignore[attr-defined]
         status = app.screen.query_one("#extras_status")
         assert "Embedding starts now." in str(status.render())
+        # extras_finished revises the note when a folder waits; the modal shows the revision.
+        app._extras_done_note = "Its last files go when fnd next starts."  # type: ignore[attr-defined]
+        app.screen._render_event(ProgressEvent(phase="done", cmd_index=0, cmd_total=1))  # type: ignore[attr-defined]
+        assert "Its last files go when fnd next starts." in str(status.render())
 
 
 def test_the_progress_line_shows_time_left_once_measured() -> None:

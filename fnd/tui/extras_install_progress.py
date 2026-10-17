@@ -172,8 +172,10 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         elif ev.phase == "done":
             # Tailor completion copy to action so it never reads as
             # "Restart fnd to use it" on an uninstall (nothing to use).
-            if self._done_note:
-                tail = self._done_note
+            # extras_finished may revise the note: it runs just before this event.
+            note = getattr(self.app, "_extras_done_note", "") or self._done_note
+            if note:
+                tail = note
             elif verb.lower().startswith("install"):
                 tail = "Restart fnd, then run Update index to populate the cache."
             elif verb.lower().startswith("uninstall"):

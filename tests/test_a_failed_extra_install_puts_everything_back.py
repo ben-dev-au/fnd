@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -19,15 +18,6 @@ from fnd.extras_change import Change, finish_pending_removals, pending_removal, 
 _PYPROJECT = (
     '[dependency-groups]\nsemantic = ["onnxruntime"]\n\n[tool.uv]\ndefault-groups = ["dev"]\n'
 )
-
-
-@pytest.fixture(autouse=True)
-def _no_held_runtime_lock() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """A deferral holds its lock for the process's life; each test starts as a fresh process."""
-    yield
-    if extras_change._in_use is not None:  # pyright: ignore[reportPrivateUsage]
-        extras_change._in_use.close()  # pyright: ignore[reportPrivateUsage]
-        extras_change._in_use = None  # pyright: ignore[reportPrivateUsage]
 
 
 class _Machine:
@@ -201,94 +191,122 @@ def _windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(extras, "recorded_additions", lambda name: {"onnxruntime"})
 
 
-def test_removing_loaded_packages_on_windows_waits_for_the_next_start(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Packages this process has loaded are queued, not uninstalled under it."""
+def _queued_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The vectors folder still open (Windows): deleting it now leaves it, so it is queued."""
+    from fnd.vectors import store_dir
+
+    folder = store_dir(semantic.GRANITE)
+    folder.mkdir(parents=True)
+    real_rmtree = extras_change.shutil.rmtree
+    monkeypatch.setattr(extras_change.shutil, "rmtree", lambda *a, **k: None)
+    assert remove_folders("semantic", [folder]) is False
+    monkeypatch.setattr(extras_change.shutil, "rmtree", real_rmtree)
+    return folder
+
+
+def test_removing_loaded_packages_on_windows_runs_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Measured on Windows 11: uv removes a package fnd has loaded, so nothing waits."""
+    import sys
+    import types
+
     _windows(monkeypatch)
-    change = Change.begin(SEMANTIC, removing=True, loaded=lambda m: True)
-    assert change.deferred
-    assert change.commands == []
-    assert pending_removal("semantic")
-    ran: list[list[str]] = []
-    done = finish_pending_removals(
-        lambda argv: ran.append(argv) or (0, "", ""), in_use=lambda: False
+    monkeypatch.setitem(sys.modules, "onnxruntime", types.ModuleType("onnxruntime"))
+    change = Change.begin(SEMANTIC, removing=True)
+    assert change.commands[0][:3] == ["uv", "pip", "uninstall"]
+    assert not pending_removal("semantic")
+
+
+def test_a_queue_names_only_the_extras_own_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An old-shape or hand-edited queue never deletes anything else, relative paths included."""
+    work = tmp_path / "cwd"
+    for name in ("commands", "folders", "elsewhere"):
+        (work / name).mkdir(parents=True)
+        (work / name / "precious.txt").write_text("keep", encoding="utf-8")
+    monkeypatch.chdir(work)
+    queue = paths.app_data_dir() / "extras" / "pending-removal.json"
+    queue.parent.mkdir(parents=True)
+    for shape in (
+        {"semantic": {"commands": [["uv", "x"]], "folders": ["folders"]}},
+        {"semantic": [str(work / "elsewhere"), "commands"]},
+        {"no-such-extra": [str(work / "elsewhere")]},
+        ["not", "a", "mapping"],
+    ):
+        queue.write_text(json.dumps(shape), encoding="utf-8")
+        assert finish_pending_removals() == []
+        assert not pending_removal("semantic")
+    assert all((work / n / "precious.txt").exists() for n in ("commands", "folders", "elsewhere"))
+
+
+def test_the_tui_says_when_a_folder_waits_for_the_next_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The done line follows what the removal actually managed."""
+    from types import SimpleNamespace
+
+    from fnd.tui import settings_screen
+
+    monkeypatch.setattr(extras_change, "remove_folders", lambda name, folders: False)
+    monkeypatch.setattr("fnd.tui.menu._setting_writer", lambda path: lambda app, v: None)
+    change = Change(
+        extra=SEMANTIC,
+        removing=True,
+        commands=[],
+        files={},
+        folders=frozenset(),
+        dists=frozenset(),
+        tools=frozenset(),
     )
-    assert done == ["semantic"]
-    assert ran[0][:3] == ["uv", "pip", "uninstall"]
-    assert not pending_removal("semantic")
-
-
-def test_packages_not_loaded_are_removed_now(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Negative control: nothing loaded, nothing deferred."""
-    _windows(monkeypatch)
-    change = Change.begin(SEMANTIC, removing=True, loaded=lambda m: False)
-    assert not change.deferred
-    assert change.commands
-    assert not pending_removal("semantic")
-
-
-def test_a_failed_pending_removal_is_tried_again(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A removal that fails again (fnd still open elsewhere) stays queued."""
-    _windows(monkeypatch)
-    Change.begin(SEMANTIC, removing=True, loaded=lambda m: True)
-    assert finish_pending_removals(lambda argv: (1, "", "in use"), in_use=lambda: False) == []
-    assert pending_removal("semantic")
-
-
-def test_reinstalling_before_the_restart_cancels_the_removal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Otherwise the next start would uninstall what was just installed."""
-    _windows(monkeypatch)
-    Change.begin(SEMANTIC, removing=True, loaded=lambda m: True)
-    Change.begin(SEMANTIC, removing=False)
-    assert not pending_removal("semantic")
+    app = SimpleNamespace(_extras_done_note=SEMANTIC.removed_note)
+    settings_screen.extras_finished(app, change)  # type: ignore[arg-type]
+    assert app._extras_done_note == "Its last files go when fnd next starts."
 
 
 def test_a_folder_still_open_is_removed_at_the_next_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A folder that cannot be deleted now is queued and deleted later."""
-    folder = tmp_path / "vectors"
-    folder.mkdir()
-    real_rmtree = extras_change.shutil.rmtree
-    monkeypatch.setattr(extras_change.shutil, "rmtree", lambda *a, **k: None)
-    assert remove_folders("semantic", [folder]) is False
+    folder = _queued_folder(tmp_path, monkeypatch)
     assert pending_removal("semantic")
-    monkeypatch.setattr(extras_change.shutil, "rmtree", real_rmtree)
-    assert finish_pending_removals(lambda argv: (0, "", ""), in_use=lambda: False) == ["semantic"]
+    assert finish_pending_removals() == ["semantic"]
     assert not folder.exists()
 
 
-def test_fnd_finishes_pending_removals_when_it_starts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Any fnd start runs the queue before anything can load the packages."""
+def test_a_folder_still_open_at_the_next_start_stays_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another fnd may still map it; the queue waits for a later start."""
+    _queued_folder(tmp_path, monkeypatch)
+    monkeypatch.setattr(extras_change.shutil, "rmtree", lambda *a, **k: None)
+    assert finish_pending_removals() == []
+    assert pending_removal("semantic")
+
+
+def test_reinstalling_before_the_restart_cancels_the_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Otherwise the next start would delete the model just downloaded."""
+    _windows(monkeypatch)
+    _queued_folder(tmp_path, monkeypatch)
+    Change.begin(SEMANTIC, removing=False)
+    assert not pending_removal("semantic")
+
+
+def test_fnd_finishes_pending_removals_when_it_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any fnd start deletes what an earlier removal could not."""
     import sys
 
     from fnd import cli
 
-    path = paths.app_data_dir() / "extras" / "pending-removal.json"
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"semantic": {"commands": [["uv", "x"]], "folders": []}}))
-    ran: list[list[str]] = []
-    monkeypatch.setattr(extras, "run_command", lambda argv: ran.append(argv) or (0, "", ""))
+    folder = _queued_folder(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["fnd", "version"])
     with pytest.raises(SystemExit):
         cli.main()
-    assert ran == [["uv", "x"]]
-    assert not path.exists()
-
-
-def test_a_removal_waits_while_another_fnd_has_the_runtime_loaded(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The deferring process holds a lock; a second fnd starting meanwhile leaves the queue."""
-    _windows(monkeypatch)
-    Change.begin(SEMANTIC, removing=True, loaded=lambda m: True)
-    ran: list[list[str]] = []
-    assert finish_pending_removals(lambda argv: ran.append(argv) or (0, "", "")) == []
-    assert ran == []
-    assert pending_removal("semantic")
+    assert not folder.exists()
+    assert not pending_removal("semantic")
 
 
 def test_a_windows_uv_tool_install_hands_over_its_own_reinstall(
@@ -302,7 +320,7 @@ def test_a_windows_uv_tool_install_hands_over_its_own_reinstall(
     assert not any(c[:3] == ["uv", "tool", "install"] for c in install.commands)
     assert install.commands
     assert install.after_quit.startswith("uv tool install --reinstall 'fndr[semantic]==1.0.1'")
-    removal = Change.begin(SEMANTIC, removing=True, loaded=lambda m: True)
+    removal = Change.begin(SEMANTIC, removing=True)
     assert removal.commands == []
     assert not pending_removal("semantic")
     assert removal.after_quit.startswith("uv tool install --reinstall fndr==1.0.1")
@@ -331,7 +349,8 @@ def test_the_cli_says_what_to_run_after_quitting(
     result = CliRunner().invoke(app, ["extras", "install", "semantic", "--yes"])
     assert result.exit_code == 0, result.output
     assert (
-        "Quit fnd, then run: uv tool install --reinstall 'fndr[semantic]==1.0.1'" in result.output
+        "Quit every open fnd, then run: uv tool install --reinstall 'fndr[semantic]==1.0.1'"
+        in result.output
     )
     assert not any(c[:3] == ["uv", "tool", "install"] for c in machine.ran)
 
@@ -352,7 +371,6 @@ async def test_the_tui_says_what_to_run_after_quitting(monkeypatch: pytest.Monke
         extra=SEMANTIC,
         removing=False,
         commands=[],
-        deferred=False,
         files={},
         folders=frozenset(),
         dists=frozenset(),
@@ -362,7 +380,7 @@ async def test_the_tui_says_what_to_run_after_quitting(monkeypatch: pytest.Monke
     await settings_screen.change_extra(SimpleNamespace(), change, label="Install")
     assert (
         seen["done_note"]
-        == "Quit fnd, then run: uv tool install --reinstall 'fndr[semantic]==1.0.1'"
+        == "Quit every open fnd, then run: uv tool install --reinstall 'fndr[semantic]==1.0.1'"
     )
 
 
@@ -427,16 +445,17 @@ async def test_a_failed_removal_reloads_what_it_released() -> None:
     assert calls == ["reloaded"]
 
 
-def test_settings_says_a_removal_is_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
-    """While packages wait for the next start, Settings does not call them installed."""
+def test_settings_says_a_removal_is_waiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While a folder waits for the next start, Settings does not call semantic installed."""
     from types import SimpleNamespace
 
     from fnd.tui import menu
 
-    _windows(monkeypatch)
     monkeypatch.setattr(semantic, "platform_supported", lambda *a: True)
     monkeypatch.setattr(menu, "_semantic_ready", lambda: True)
-    Change.begin(SEMANTIC, removing=True, loaded=lambda m: True)
+    _queued_folder(tmp_path, monkeypatch)
     text = menu._semantic_status_text(SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
     assert text == "✗ Removed · its last files go when fnd next starts"
 
@@ -533,5 +552,12 @@ def test_a_cli_uninstall_says_both_what_to_run_and_what_waits(
     monkeypatch.setattr(extras_change, "remove_folders", lambda name, folders: False)
     semantic.model_dir(semantic.GRANITE).mkdir(parents=True)
     result = CliRunner().invoke(app, ["extras", "uninstall", "semantic", "--yes"])
-    assert "Quit fnd, then run: uv tool install --reinstall fndr==1.0.1" in result.output
+    assert "Quit every open fnd, then run: uv tool install --reinstall fndr==1.0.1" in result.output
     assert "its last files go when fnd next starts" in result.output
+
+
+def test_the_semantic_disclosure_says_nothing_about_pdfs(project: Path, machine: _Machine) -> None:
+    """Found on Windows: the install text ended with pdf-structure's flat-text line."""
+    result = CliRunner().invoke(app, ["extras", "install", "semantic", "--dry-run"])
+    assert "Model: granite" in result.output
+    assert "PDFs" not in result.output
