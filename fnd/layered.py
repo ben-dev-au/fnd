@@ -28,6 +28,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Literal, overload
 
+from fnd.analysis import analyse
 from fnd.cascade import _with_pass, cascade_search
 from fnd.explain import CascadeTrace, SearchTrace, StrongSignalTrace
 from fnd.fusion import (
@@ -51,6 +52,12 @@ from fnd.query import (
     group_by_file,
 )
 from fnd.render import keep_shown
+from fnd.schema import (
+    COVERAGE_POWER,
+    HEADING_TIE_BREAKER,
+    PARENT_HEADING_WEIGHT,
+    SECTION_HEADING_BOOST,
+)
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -65,7 +72,6 @@ def search_layered(
     query: str,
     limit: int,
     sections_per_file: int = ...,
-    sections_score_threshold: float = ...,
     collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
@@ -89,7 +95,6 @@ def search_layered(
     query: str,
     limit: int,
     sections_per_file: int = ...,
-    sections_score_threshold: float = ...,
     collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
@@ -112,7 +117,6 @@ def search_layered(
     query: str,
     limit: int,
     sections_per_file: int = 10,
-    sections_score_threshold: float = 0.0,
     collection: str | list[str] | None = None,
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
@@ -306,12 +310,19 @@ def search_layered(
         else:
             widened = {}
 
+    # Every passing section is grouped, so the heading order picks the shown ones.
     groups = group_by_file(
         hits,
         limit=limit,
-        sections_per_file=sections_per_file,
-        score_threshold=sections_score_threshold,
+        sections_per_file=len(hits),
         collapse_copies=collapse_copies,
+    )
+    groups = by_heading_within_file(
+        searcher,
+        f"{query} {respelt(query.split(), {**fixes, **widened})}" if fixes or widened else query,
+        groups,
+        sections_per_file=sections_per_file,
+        keep_pass_order=regime.startswith("cascade"),
     )
 
     if with_trace:
@@ -390,6 +401,74 @@ def _respelt_fill(
     )
     have = {h.parent_id for h in found}
     return [_with_pass(h, 1) for h in pool.hits if h.parent_id not in have]
+
+
+def by_heading_within_file(
+    searcher: Searcher,
+    query: str,
+    groups: list[FileGroup],
+    *,
+    sections_per_file: int,
+    keep_pass_order: bool = False,
+) -> list[FileGroup]:
+    """Each file's sections ordered by one score, then cut to ``sections_per_file``: BM25
+    plus, per query word, what its heading adds beyond the body's evidence (and
+    ``HEADING_TIE_BREAKER`` of the rest), scaled by the share of the query's words the
+    section holds. ``keep_pass_order`` keeps a cascade's exact sections above looser ones."""
+    shown = {(h.parent_id, h.chunk_seq): h.at for g in groups for h in g.hits}
+    tokens = searcher.wanted_tokens(query) if shown else []
+    evidence = searcher.word_evidence(tokens, shown) if tokens else {}
+    total = sum(e.rarity for e in evidence.values()) if len(evidence) > 1 else 0.0
+
+    words: dict[str, frozenset[str]] = {}
+
+    def analysed(text: str) -> frozenset[str]:
+        if text not in words:
+            words[text] = frozenset(analyse(text))
+        return words[text]
+
+    def ordered(h: Hit, shared: set[str]) -> Hit:
+        k = (h.parent_id, h.chunk_seq)
+        own = shared.union(analysed(h.heading_path.rsplit(" > ", 1)[-1]))
+        lift, held = 0.0, 0.0
+        titled = analysed(h.title) if total else frozenset()
+        for token, e in evidence.items():
+            share = 1.0 if token in own else PARENT_HEADING_WEIGHT
+            lifted, plain = (
+                SECTION_HEADING_BOOST * share * e.heading.get(k, 0.0),
+                e.body.get(k, 0.0),
+            )
+            lift += max(0.0, lifted - plain) + HEADING_TIE_BREAKER * min(lifted, plain)
+            held += e.rarity if k in e.body or k in e.heading or token in titled else 0.0
+        cover = (held / total) ** COVERAGE_POWER if total else 1.0
+        return dataclasses.replace(h, section_score=(h.score + lift) * cover)
+
+    def key(h: Hit) -> tuple[int, float, int, int]:
+        return (
+            h.pass_index if keep_pass_order else 0,
+            -(h.section_score or 0.0),
+            h.chunk_seq,
+            h.line,
+        )
+
+    out: list[FileGroup] = []
+    for g in groups:
+        hits = g.hits
+        keys = {(h.parent_id, h.chunk_seq) for h in hits}
+        if total or any(keys & e.heading.keys() for e in evidence.values()):
+            shared = _shared_heading_words(hits)
+            hits = sorted((ordered(h, shared) for h in hits), key=key)
+        if hits is not g.hits or len(hits) > sections_per_file:
+            g = dataclasses.replace(g, hits=hits[:sections_per_file])
+        out.append(g)
+    return out
+
+
+def _shared_heading_words(hits: list[Hit]) -> set[str]:
+    """Index tokens of the leading heading every one of ``hits`` sits under: a note's H1
+    heads all its sections, so it counts alike for each. A deeper shared heading stays a parent."""
+    leads = {h.heading_path.split(" > ")[0] for h in hits}
+    return set(analyse(leads.pop())) if len(leads) == 1 else set()
 
 
 def by_best_bm25(hits: list[Hit]) -> list[Hit]:

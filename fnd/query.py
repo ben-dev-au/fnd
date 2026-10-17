@@ -25,7 +25,7 @@ import contextlib
 import dataclasses
 import functools
 import re
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -42,11 +42,13 @@ from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-expo
 from fnd.query_plan import enforce_query_bounds, search_text
 
 if TYPE_CHECKING:
+    from fnd.query_ast import Node
     from fnd.synonyms import SynonymTable
     from fnd.tag_query import TagFilter
 
 from fnd.schema import (
     DEFAULT_FIELD_BOOSTS,
+    F_BODY,
     F_BODY_MD,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
@@ -84,6 +86,25 @@ SourceScope = Mapping[str, Sequence[str]]
 _SNIPPET_SCAN_CHARS = 24_000
 _SNIPPET_REGION_CHARS = 6_000
 _DEFAULT_LIMIT: Final = 10
+_WORD_FIELDS: Final = (F_BODY, F_HEADING_PATH, F_TITLE)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class WordEvidence:
+    """One query word across a set of sections, keyed (parent_id, chunk_seq)."""
+
+    rarity: float  # BM25 IDF over bodies
+    heading: dict[tuple[str, int], float]  # its heading-path BM25 where it is there
+    body: dict[tuple[str, int], float]  # its body BM25 where it is there
+
+
+def _every_hit(searcher: Any, query: Query, expected: int) -> list[Any]:
+    """All of ``query``'s hits: a section indexed in several collections matches once
+    per copy, so ``expected`` is only the first guess at the limit."""
+    result = searcher.search(query, limit=max(expected, 1), count=True)
+    if result.count > len(result.hits):
+        result = searcher.search(query, limit=result.count)
+    return result.hits
 
 
 def scope_or(arms: list[Query]) -> Query:
@@ -202,6 +223,12 @@ class Hit:
     # The score the result list is ordered by: fused, positional or reranked.
     # None for a single pass's hit, which ranks by its BM25 ``score``.
     rank_score: float | None = None
+    # The score a file's sections are ordered by (BM25 plus the heading lift); None
+    # where that order is BM25's own.
+    section_score: float | None = None
+    # (raw searcher, segment, doc) this hit was read from, so later per-section queries can
+    # recognise it without reading its document again; None when built another way.
+    at: tuple[object, int, int] | None = field(default=None, compare=False, repr=False)
 
     @property
     def rank_key(self) -> float:
@@ -250,7 +277,8 @@ class FileGroup:
     """One file with its ranked matched sections.
 
     The TUI tree renders the file as a parent node and ``hits`` as its sorted
-    children. ``top_score`` is ``hits[0].score``, the display score.
+    children. ``top_score`` is the file's best section score, the display score;
+    ``hits[0]`` is the section shown first, which a heading match can promote.
     """
 
     parent_id: str
@@ -522,7 +550,7 @@ def _meta_keep(metadata_filter: str | None) -> Callable[[Hit], bool] | None:
     return lambda h: _passes_meta_filter(h, predicate)
 
 
-def _light_hit(doc: object, score: float) -> Hit:
+def _light_hit(doc: object, score: float, at: tuple[object, int, int] | None = None) -> Hit:
     """A candidate's stored fields, its block bytes kept undecoded."""
     struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
     md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
@@ -547,6 +575,7 @@ def _light_hit(doc: object, score: float) -> Hit:
         content_hash=_first_str(doc, F_CONTENT_HASH),
         materialised=False,
         stored_struct=struct_bytes or b"",
+        at=at,
     )
 
 
@@ -594,7 +623,8 @@ def _collect(
         if total is None:
             total = int(result.count)
         for score, address in result.hits:
-            hit = _light_hit(searcher.doc(address), score)  # type: ignore[attr-defined]
+            at = (searcher, address.segment_ord, address.doc)
+            hit = _light_hit(searcher.doc(address), score, at)  # type: ignore[attr-defined]
             if keep is None or keep(hit):
                 hits.append(hit)
                 files.add(hit.parent_id)
@@ -783,14 +813,15 @@ class Searcher:
             # Should-clause: secondary fields boost score without gating visibility.
             # The same AST, lowered against them; skipped when a leaf resolves
             # against F_BODY's dictionary only, which would score the body twice.
-            if node is not None and not resolves_in_body_only(node):
+            boosts = {
+                f: DEFAULT_FIELD_BOOSTS[f]
+                for f in (F_HEADING_PATH, F_TITLE, F_PATH_TOKENS)
+                if DEFAULT_FIELD_BOOSTS[f] > 0
+            }
+            if node is not None and boosts and not resolves_in_body_only(node):
                 secondary_kwargs: dict[str, object] = {
-                    "default_field_names": [F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
-                    "field_boosts": {
-                        F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
-                        F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
-                        F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
-                    },
+                    "default_field_names": list(boosts),
+                    "field_boosts": boosts,
                 }
                 boost_secondary = compile_query(
                     node, searcher=self, schema=schema, parse_kwargs=secondary_kwargs
@@ -939,6 +970,105 @@ class Searcher:
         # a shared file is not duplicated here; order by chunk_seq for the preview.
         return sorted(chunks, key=lambda c: c.chunk_seq)
 
+    def _content_node(self, query: str) -> Node | None:
+        """``query``'s text without its filters and stopwords, parsed; None when empty."""
+        from fnd.query_ast import parse_query_ast
+        from fnd.query_dsl import preprocess
+        from fnd.query_filters import extract_filters
+        from fnd.stopwords import strip_query_stopwords
+
+        content = strip_query_stopwords(
+            preprocess(extract_filters(query, build_schema(), self._index).content)
+        )
+        return parse_query_ast(content) if content.strip() else None
+
+    def wanted_tokens(self, query: str) -> list[str]:
+        """The index tokens of the plain words ``query`` asks for that some body, heading
+        or title holds: excluded words, filters and pattern words are left out."""
+        from fnd.analysis import analyse
+        from fnd.query_ast import wanted_words
+
+        node = self._content_node(query)
+        if node is None:
+            return []
+        raw = self._searcher
+        return [
+            t
+            for t in dict.fromkeys(analyse(" ".join(wanted_words(node))))
+            if any(raw.doc_freq(f, t) for f in _WORD_FIELDS)
+        ]
+
+    @_engine_boundary
+    def word_evidence(
+        self,
+        tokens: Sequence[str],
+        sections: Collection[tuple[str, int]]
+        | Mapping[tuple[str, int], tuple[object, int, int] | None],
+    ) -> dict[str, WordEvidence]:
+        """Each of ``tokens``' evidence across ``sections``: see :class:`WordEvidence`. Given
+        each section's :attr:`Hit.at`, other sections of the same files are skipped unread;
+        a section without one is looked up by its key alone."""
+        import math
+
+        import tantivy
+
+        wanted, schema, raw = set(sections), build_schema(), self._searcher
+        files = tantivy.Query.const_score_query(
+            tantivy.Query.term_set_query(schema, F_PARENT_ID, sorted({p for p, _ in wanted})), 0.0
+        )
+        ats = sections if isinstance(sections, Mapping) else dict.fromkeys(sections)
+        keys = {(a[1], a[2]): k for k, a in ats.items() if a is not None and a[0] is raw}
+        unplaced = wanted - set(keys.values())
+        if unplaced:
+            exact = tantivy.Query.boolean_query(
+                [
+                    (
+                        tantivy.Occur.Should,
+                        tantivy.Query.boolean_query(
+                            [
+                                (
+                                    tantivy.Occur.Must,
+                                    tantivy.Query.term_query(schema, F_PARENT_ID, p),
+                                ),
+                                (
+                                    tantivy.Occur.Must,
+                                    tantivy.Query.term_query(schema, F_CHUNK_SEQ, s),
+                                ),
+                            ]
+                        ),
+                    )
+                    for p, s in sorted(unplaced)
+                ]
+            )
+            for _, address in _every_hit(raw, exact, len(unplaced)):
+                doc = raw.doc(address)
+                key = (str(doc.get_first(F_PARENT_ID)), int(doc.get_first(F_CHUNK_SEQ) or 0))
+                keys[(address.segment_ord, address.doc)] = key
+
+        def scored(field: str, token: str) -> dict[tuple[str, int], float]:
+            query = tantivy.Query.boolean_query(
+                [
+                    (tantivy.Occur.Must, tantivy.Query.term_query(schema, field, token)),
+                    (tantivy.Occur.Must, files),
+                ]
+            )
+            out: dict[tuple[str, int], float] = {}
+            for score, address in _every_hit(raw, query, len(wanted)):
+                key = keys.get((address.segment_ord, address.doc))
+                if key is not None:
+                    out[key] = score
+            return out
+
+        out: dict[str, WordEvidence] = {}
+        for t in tokens if wanted else ():
+            df = raw.doc_freq(F_BODY, t)
+            out[t] = WordEvidence(
+                rarity=math.log(1 + (raw.num_docs - df + 0.5) / (df + 0.5)),
+                heading=scored(F_HEADING_PATH, t),
+                body=scored(F_BODY, t),
+            )
+        return out
+
     def search_grouped(
         self,
         query: str,
@@ -1018,12 +1148,11 @@ def group_by_file(
     *,
     limit: int,
     sections_per_file: int = 5,
-    score_threshold: float = 0.0,
     collapse_copies: bool = False,
 ) -> list[FileGroup]:
     """Per-file groups in first-seen order, sections by :attr:`Hit.rank_key` cut to
-    ``sections_per_file`` and to ``score_threshold`` of the top section's score;
-    with ``collapse_copies`` an identical copy folds into :attr:`FileGroup.copies`."""
+    ``sections_per_file``; with ``collapse_copies`` an identical copy folds into
+    :attr:`FileGroup.copies`."""
     groups: dict[str, list[Hit]] = {}
     order: list[str] = []
     # Per kept file: each folded copy's path and the collections it is indexed under.
@@ -1046,9 +1175,6 @@ def group_by_file(
         # order ("Day 3 … Day 60, Day 1, Day 2"), and the preview lands on the first.
         ranked = sorted(groups[pid], key=lambda h: (-h.rank_key, h.chunk_seq, h.line))
         top = ranked[0]
-        if score_threshold > 0.0 and top.score > 0.0:
-            min_score = top.score * score_threshold
-            ranked = [h for h in ranked if h.score >= min_score]
         folded = copies[file_key(top, collapse_copies=collapse_copies)]
         out.append(
             FileGroup(

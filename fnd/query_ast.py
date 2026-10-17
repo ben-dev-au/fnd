@@ -342,6 +342,19 @@ def walk(node: Node) -> Iterator[Node]:
             yield from walk(child)
 
 
+def wanted_words(node: Node) -> list[str]:
+    """The words of ``node``'s plain terms and phrases, outside any ``Not``."""
+    if isinstance(node, Not):
+        return []
+    if isinstance(node, Term | Phrase):
+        return node.text.split()
+    if isinstance(node, Boosted | Required):
+        return wanted_words(node.child)
+    if isinstance(node, And | Or):
+        return [w for child in node.children for w in wanted_words(child)]
+    return []
+
+
 def resolves_in_body_only(node: Node) -> bool:
     """Whether ``node`` holds a leaf only the body's term dictionary resolves:
     a wildcard, fuzzy or regex term, or a phrase with a pattern word in it."""

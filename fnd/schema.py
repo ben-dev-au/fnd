@@ -114,13 +114,31 @@ TAG_FIELD_BY_SOURCE: Final[dict[str, str]] = {
 # Default search fields when the query has no explicit field qualifier.
 DEFAULT_SEARCH_FIELDS: Final[list[str]] = [F_BODY, F_TITLE, F_HEADING_PATH, F_PATH_TOKENS]
 
-# Default per-field boosts applied at parse_query time.
+# Per-field boosts for ranking files; a heading match orders sections within a file
+# instead (SECTION_HEADING_BOOST). On Natural Questions this finds the right page at
+# nDCG@10 0.864, against 0.763 for title 2.5, heading 2.0 and path 1.5.
 DEFAULT_FIELD_BOOSTS: Final[dict[str, float]] = {
-    F_HEADING_PATH: 2.0,
-    F_TITLE: 2.5,
-    F_PATH_TOKENS: 1.5,
+    F_HEADING_PATH: 0.0,
+    F_TITLE: 0.25,
+    F_PATH_TOKENS: 0.25,
     F_BODY: 1.0,
 }
+# Within a file, a query word's heading BM25 times this counts where it beats the body's
+# BM25 for the word. NQ right section first, full questions: 1 gives 0.380, 2 0.444,
+# 3 0.436, 5 0.425.
+SECTION_HEADING_BOOST: Final = 2.0
+# The share a word gets when only a parent heading holds it (one heading every section
+# of the file sits under counts fully). 0 to 0.5 measured alike; full share let a
+# parent lift a stub above sections with their own match.
+PARENT_HEADING_WEIGHT: Final = 0.5
+# The weaker of a word's heading and body evidence adds this much. NQ deeper-section
+# answers, MRR (2 words, full): 0 gives 0.456, 0.565; 0.25 0.431, 0.539, and keeps
+# opening-section answers level with the previous order (0.734, 0.751).
+HEADING_TIE_BREAKER: Final = 0.25
+# A section's score is scaled by this power of the rarity-weighted share of the query's
+# words it holds. NQ, 2 words: right section first level (0.315), deeper-answer MRR
+# 0.431 to 0.443; full questions cost 0.408 to 0.370. Power 1 costs more for no gain.
+COVERAGE_POWER: Final = 0.5
 
 
 # Unit Separator: forbidden in collection names (validated) and absent from

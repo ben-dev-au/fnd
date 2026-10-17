@@ -36,7 +36,6 @@ DEFAULT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "collection",
             "result_limit",
             "debounce_ms",
-            "sections_score_threshold",
             "sections_per_file_max",
             "fuzzy_enabled",
             "fuzzy_min_term_chars",

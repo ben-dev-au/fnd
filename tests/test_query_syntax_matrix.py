@@ -185,7 +185,6 @@ def run(searcher: Searcher, query: str, *, every_chunk: bool = False) -> _Result
         query=plan.lexical,
         limit=50,
         sections_per_file=1000 if every_chunk else 200,
-        sections_score_threshold=0.0 if every_chunk else 0.5,
         metadata_filter=plan.metadata_filter,
         with_trace=True,
     )

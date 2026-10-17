@@ -308,7 +308,8 @@ def _format_hit_label(
     the match I want") claims most of the row width.
 
     ``match_visible=False`` prepends :data:`_UNLOCATABLE_GLYPH`: the row stays,
-    but the user is told the preview won't be able to show them the match.
+    but the user is told the preview won't be able to show them the match. The
+    score is the one the section is ordered by.
     """
     if h.page_label:
         loc = f"p.{h.page_label}"
@@ -337,7 +338,8 @@ def _format_hit_label(
     # appended to the end is never drawn. Verified in a real terminal: the
     # marker was being emitted correctly and clipped off screen every time.
     prefix = "" if match_visible else f"{_UNLOCATABLE_GLYPH} "
-    return _build_label(f"{prefix}{body}{pass_marker}", h.score, max_score)
+    score = h.score if h.section_score is None else h.section_score
+    return _build_label(f"{prefix}{body}{pass_marker}", score, max_score)
 
 
 def disambiguated_names(paths: Sequence[str]) -> dict[str, str]:

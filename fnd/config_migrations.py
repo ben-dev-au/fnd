@@ -25,7 +25,7 @@ from typing import Any, Final
 from fnd.globs import names_hidden
 
 #: What this build writes. Bump when adding a migration.
-CONFIG_VERSION: Final = 3
+CONFIG_VERSION: Final = 4
 
 VERSION_KEY: Final = "config_version"
 
@@ -118,6 +118,13 @@ def _to_v3(raw: MutableMapping[str, Any]) -> None:
             filters = source.setdefault("filters", {})
             if isinstance(filters, dict):
                 filters.setdefault("excludes", legacy)
+
+
+def _to_v4(raw: MutableMapping[str, Any]) -> None:
+    """Drop ``sections_score_threshold``: every matching section is shown, ordered by its section score."""
+    defaults = raw.get("defaults")
+    if isinstance(defaults, dict):
+        defaults.pop("sections_score_threshold", None)
 
 
 _MAX_SPELLINGS: Final = 16
@@ -362,6 +369,7 @@ MIGRATIONS: Final[tuple[tuple[int, str, Transform], ...]] = (
     (1, "Adopt the canonical layout and record a config version", _to_v1),
     (2, "Respell globs so they still select the files they did", _to_v2),
     (3, "Move each source's excludes into its index filters", _to_v3),
+    (4, "Show every matching section: the section score cut-off is gone", _to_v4),
 )
 
 

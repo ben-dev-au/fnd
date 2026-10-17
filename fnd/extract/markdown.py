@@ -74,7 +74,7 @@ def _flush_section(
     body = "\n".join(p for p in body_text_parts if p).strip()
     heading_path = " > ".join(heading_stack)
     # F_BODY = chunk's own visible text (own heading + paragraphs).
-    # Ancestor heading_path is searched via F_HEADING_PATH as a boost,
+    # Ancestor heading_path is searched via F_HEADING_PATH to order sections,
     # NOT baked into body: inheriting parent-heading text into every
     # descendant's body inflates scores and surfaces chunks whose
     # visible content has no match.

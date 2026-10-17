@@ -69,7 +69,6 @@ class _SearchRequest:
     tag_filter: TagFilter | None
     limit: int
     sections_per_file: int
-    sections_score_threshold: float
     auto_fuzzy_enabled: bool
     min_term_chars: int
     collapse_copies: bool
@@ -346,9 +345,6 @@ class SearchController:
             tag_filter=tag_filter,
             limit=cfg_defaults.result_limit if cfg_defaults else DEFAULT_RESULT_LIMIT,
             sections_per_file=cfg_defaults.sections_per_file_max if cfg_defaults else 200,
-            sections_score_threshold=(
-                cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
-            ),
             auto_fuzzy_enabled=auto_fuzzy,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
             collapse_copies=defaults.collapse_copies if defaults else True,
@@ -424,7 +420,6 @@ class SearchController:
             query=request.lexical,
             limit=request.limit,
             sections_per_file=request.sections_per_file,
-            sections_score_threshold=request.sections_score_threshold,
             collection=request.collection,
             synonyms=self.synonyms,
             metadata_filter=request.metadata_filter,

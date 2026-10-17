@@ -105,6 +105,11 @@ def one_strong(tmp_path: Path, tmp_index_dir: Path) -> Path:
     (notes / "joined.md").write_text("## Dropdown\n\nDropdown, dropdown, dropdown.\n")
     for i in range(3):
         (notes / f"hyphen{i}.md").write_text(f"## Hyphen {i}\n\nA drop-down menu {i}.\n")
+    # Unrelated notes give the joined word the IDF a real collection would.
+    for i in range(30):
+        (notes / f"other{i}.md").write_text(
+            f"## Other {i}\n\nA note about something else, in a sentence.\n"
+        )
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
     return tmp_index_dir
 

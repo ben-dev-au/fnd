@@ -85,7 +85,6 @@ def test_the_template_names_are_the_ones_the_renderer_supplies() -> None:
         ("result_limit", 5000, 1000),
         ("debounce_ms", -5, 0),
         ("preview_decode_workers", 32, 16),
-        ("sections_score_threshold", 1.5, 1.0),
         ("cloud_fetch_timeout_s", 7200, 3600),
     ],
 )
@@ -110,7 +109,6 @@ def test_the_menu_range_is_the_model_range() -> None:
     from fnd.config_types import field_bounds
 
     assert field_bounds(("defaults", "result_limit")) == (1, 1000)
-    assert field_bounds(("defaults", "sections_score_threshold")) == (0.0, 1.0)
     assert field_bounds(("defaults", "fuzzy_enabled")) is None
 
 
