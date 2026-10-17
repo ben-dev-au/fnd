@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 from fnd.analysis import analyse
 from fnd.cascade import _with_pass, cascade_search
-from fnd.explain import CascadeTrace, SearchTrace, StrongSignalTrace
+from fnd.explain import CascadeTrace, SearchTrace, SemanticTrace, StrongSignalTrace
 from fnd.fusion import (
     STRONG_SIGNAL_MIN_NORM_GAP,
     STRONG_SIGNAL_MIN_NORM_SCORE,
@@ -60,6 +60,7 @@ from fnd.schema import (
 )
 
 if TYPE_CHECKING:
+    from fnd.semantic_search import SemanticContext
     from fnd.tag_query import TagFilter
 from fnd.synonyms import SynonymTable
 from fnd.typos import respelt
@@ -84,6 +85,7 @@ def search_layered(
     tag_filter: TagFilter | None = ...,
     collapse_copies: bool = ...,
     as_typed: bool = ...,
+    semantic: SemanticContext | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[FileGroup]: ...
 
@@ -107,6 +109,7 @@ def search_layered(
     tag_filter: TagFilter | None = ...,
     collapse_copies: bool = ...,
     as_typed: bool = ...,
+    semantic: SemanticContext | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[FileGroup], SearchTrace]: ...
 
@@ -129,6 +132,7 @@ def search_layered(
     tag_filter: TagFilter | None = None,
     collapse_copies: bool = False,
     as_typed: bool = False,
+    semantic: SemanticContext | None = None,
     with_trace: bool = False,
 ) -> list[FileGroup] | tuple[list[FileGroup], SearchTrace]:
     """Run the regime-aware search and return ranked :class:`FileGroup`s.
@@ -136,8 +140,53 @@ def search_layered(
     See module docstring for regime semantics. The probe doubles as
     fusion's lex sub-query when bypass does NOT fire, saving one
     Tantivy round-trip per non-bypass query. ``as_typed`` respells nothing
-    (:mod:`fnd.typos`).
+    (:mod:`fnd.typos`). With ``semantic``, the result is blended with the
+    meaning model's ranking (:mod:`fnd.semantic_search`).
     """
+    skipped = None
+    if semantic is not None:
+        from fnd.semantic_search import skip_reason
+
+        skipped = skip_reason(searcher, semantic, query, collection)
+    if semantic is not None and skipped is None:
+        from fnd.semantic_search import LEXICAL_DEPTH, blend
+
+        groups, trace = search_layered(
+            searcher,
+            query=query,
+            limit=max(limit, LEXICAL_DEPTH),
+            sections_per_file=sections_per_file,
+            collection=collection,
+            synonyms=synonyms,
+            metadata_filter=metadata_filter,
+            source_scope=source_scope,
+            intent=intent,
+            profile=profile,
+            now=now,
+            auto_fuzzy_enabled=auto_fuzzy_enabled,
+            min_term_chars=min_term_chars,
+            tag_filter=tag_filter,
+            collapse_copies=collapse_copies,
+            as_typed=as_typed,
+            with_trace=True,
+        )
+        blended, semantic_trace = blend(
+            groups,
+            searcher=searcher,
+            ctx=semantic,
+            query=query,
+            limit=limit,
+            sections_per_file=sections_per_file,
+            collection=collection,
+            source_scope=source_scope,
+            metadata_filter=metadata_filter,
+            tag_filter=tag_filter,
+            collapse_copies=collapse_copies,
+            corrections=trace.corrections,
+        )
+        if not with_trace:
+            return blended
+        return blended, dataclasses.replace(trace, semantic=semantic_trace)
     from fnd.query_plan import search_text
     from fnd.text_canon import canonical
 
@@ -361,6 +410,9 @@ def search_layered(
             elapsed_ms=0,  # populated by caller via timer; left 0 here for unit tests
             phrase_globs=_phrase_globs(searcher, query),
             widened=widened,
+            semantic=None
+            if skipped is None
+            else SemanticTrace(applied=False, reason=skipped, ranks={}),
         )
         return groups, trace
     return groups

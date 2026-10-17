@@ -473,6 +473,19 @@ documented in the file itself: run `fnd config edit` to read it. After changing
 collections or sources, run `fnd collection reindex <name>`, or Reindex from the
 Settings UI.
 
+## Semantic search (opt-in)
+
+- Plain-word searches also rank by meaning. Quoted, `{N}`, wildcard, `-` and regex searches stay word matches.
+- `≈`: a file only the model found. Other rows keep fnd's score.
+- Model: [granite-embedding-small-english-r2](https://huggingface.co/ibm-granite/granite-embedding-small-english-r2), int8, 52 MB, Apache 2.0, English. Runs locally.
+- Install: **Settings → Preferences → Semantic search**, or `fnd extras install semantic` (~160 MB). Not on Intel Macs or macOS before 14.
+- Embeds in the background after indexing, ~50 sections/s (M1 Max). Resumes after quitting.
+- Config: `semantic_search`, `show_embedding_progress`; per collection, `semantic`.
+- `--no-embed` on `fnd index` and `fnd collection reindex` skips embedding.
+- `fnd extras uninstall semantic` removes the model, vectors and packages.
+- A failed or cancelled install removes what it added.
+- Windows, `uv tool` install: quit every open fnd, then run the `uv tool install` command it prints.
+
 ## Indexing
 
 ### Structured PDF extraction (opt-in)

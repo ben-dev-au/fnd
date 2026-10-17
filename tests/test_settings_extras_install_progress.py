@@ -68,7 +68,9 @@ async def test_progress_modal_chrome(
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        ok = start_extras_install(app, cmds=fake_sleep, action_label="Install")
+        ok = start_extras_install(
+            app, cmds=fake_sleep, action_label="Install", extra_name="pdf-structure"
+        )
         assert ok is True
         await pilot.pause()
         screen = app.screen
@@ -105,7 +107,7 @@ async def test_background_keeps_task_running(
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        start_extras_install(app, cmds=cmds, action_label="Install")
+        start_extras_install(app, cmds=cmds, action_label="Install", extra_name="pdf-structure")
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
@@ -131,7 +133,7 @@ async def test_cancel_stops_subprocess(built_index: Path, cfg: Config) -> None:
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        start_extras_install(app, cmds=cmds, action_label="Install")
+        start_extras_install(app, cmds=cmds, action_label="Install", extra_name="pdf-structure")
         # Wait until the subprocess has actually spawned (event, not a fixed
         # sleep) so Cancel has a live proc to SIGTERM.
         await wait_until(
@@ -174,7 +176,9 @@ async def test_double_start_reattaches(built_index: Path, cfg: Config) -> None:
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        ok1 = start_extras_install(app, cmds=cmds, action_label="Install")
+        ok1 = start_extras_install(
+            app, cmds=cmds, action_label="Install", extra_name="pdf-structure"
+        )
         assert ok1 is True
         # Gate on the spawn event, not a fixed pause.
         await wait_until(
@@ -190,7 +194,9 @@ async def test_double_start_reattaches(built_index: Path, cfg: Config) -> None:
         assert app._extras_task is not None
         assert not app._extras_task.done(), "first run finished before the second start"
 
-        ok2 = start_extras_install(app, cmds=cmds, action_label="Install")
+        ok2 = start_extras_install(
+            app, cmds=cmds, action_label="Install", extra_name="pdf-structure"
+        )
         assert ok2 is False
         await pilot.pause()
         assert isinstance(app.screen, ExtrasInstallProgressScreen)

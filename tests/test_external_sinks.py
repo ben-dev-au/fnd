@@ -57,6 +57,8 @@ _SUBPROCESS_ALLOWED = {
     "tui/clipboard.py",
     "tui/extras_install_progress.py",
     "extract/_docling_daemon.py",
+    # The semantic embedding worker: a child process doing fnd's own work.
+    "embed_job.py",
 }
 
 

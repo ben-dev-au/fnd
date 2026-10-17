@@ -331,6 +331,10 @@ def test_a_setting_under_a_dotted_collection_name_is_written(tmp_path: Path) -> 
     assert load(cfg_path).collections["Notes v1.2"].ranking_profile == "fast"
 
 
+# Helpers that hand a setting path on to write_setting.
+_PATH_TAKERS = frozenset({"_setting_writer", "_set_semantic"})
+
+
 def test_no_setting_path_is_formatted_from_a_name() -> None:
     """A collection or profile name may hold a dot; only a key tuple keeps it whole."""
     import ast
@@ -343,6 +347,8 @@ def test_no_setting_path_is_formatted_from_a_name() -> None:
             if not isinstance(node, ast.Call):
                 continue
             name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+            if name in _PATH_TAKERS and any(isinstance(a, ast.JoinedStr) for a in node.args):
+                offenders.append(f"{path.relative_to(root)}:{node.lineno}")
             if name not in ("write_setting", "write_settings"):
                 continue
             for kw in node.keywords:

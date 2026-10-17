@@ -241,10 +241,11 @@ class ResultsView:
             # cursor_line lands on the same index as before.
             top_group = self._app._search.groups[0]
             top_hit = top_group.hits[0] if top_group.hits else None
-            self._app._preview.schedule_load(
-                top_group.parent_id,
-                top_hit.chunk_seq if top_hit else 0,
-            )
+            target = (top_group.parent_id, top_hit.chunk_seq if top_hit else 0)
+            if top_hit is not None and top_hit.found_by_meaning:
+                self._app._preview.schedule_load(*target, intent="chunk_top")
+            else:
+                self._app._preview.schedule_load(*target)
 
     _SIDEBAR_TREE_IDS = frozenset({"outline_pane", "filters_panel_tree", "collections_panel_tree"})
 
@@ -309,7 +310,7 @@ class ResultsView:
     def _match_visible(hit: Hit, strict: MatchSpec, painting: MatchSpec) -> bool:
         """Whether the preview can paint ``hit``'s match; a light hit has not been
         checked yet, so it carries no warning until it is materialised."""
-        if not hit.materialised:
+        if not hit.materialised or hit.found_by_meaning:
             return True
         return has_paintable_match(
             hit, evidence_spec_for_pass(hit.pass_index, strict=strict, painting=painting)

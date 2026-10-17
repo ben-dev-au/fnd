@@ -677,6 +677,10 @@ class CollectionConfig(_ConfigModel):
     ranking_profile: str = DEFAULT_RANKING_PROFILE
     """Name of the `[ranking.*]` profile this collection scores with."""
 
+    semantic: bool = True
+    """Take part in semantic search. Off keeps this collection on word matching
+    alone."""
+
     @field_validator("roots", mode="before")
     @classmethod
     def _expand_roots(cls, v: object) -> object:
@@ -867,6 +871,13 @@ class Defaults(_ConfigModel):
 
     collapse_copies: bool = True
     """Show byte-identical copies of a file as one result."""
+
+    semantic_search: bool = False
+    """Blend the meaning model's ranking into plain-word searches. Install it from
+    Settings or with `fnd extras install semantic`."""
+
+    show_embedding_progress: bool = True
+    """Show background embedding on the progress line."""
 
     fuzzy_min_term_chars: int = Field(default=4, ge=0, le=10)
     """Shortest stem auto-fuzzy applies to. Shorter terms and numbers stay exact."""

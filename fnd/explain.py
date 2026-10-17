@@ -99,6 +99,15 @@ class CascadeTrace:
 
 
 @dataclass(slots=True, frozen=True)
+class SemanticTrace:
+    """Whether the meaning model took part, and each shown file's fnd and model positions."""
+
+    applied: bool
+    reason: str
+    ranks: dict[str, tuple[int | None, int | None]]
+
+
+@dataclass(frozen=True, slots=True)
 class SearchTrace:
     """Unified per-query trace surfaced by :func:`fnd.layered.search_layered`.
 
@@ -124,6 +133,7 @@ class SearchTrace:
     # Rare query words some file holds, and the commoner respellings that filled
     # the free result slots below every exact match.
     widened: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    semantic: SemanticTrace | None = None
 
     @property
     def corrections(self) -> dict[str, tuple[str, ...]]:
@@ -154,7 +164,7 @@ class SearchTrace:
         )
 
     def to_json(self) -> dict[str, object]:
-        return {
+        out: dict[str, object] = {
             "query": self.query,
             "intent": self.intent,
             "regime": self.regime,
@@ -166,6 +176,13 @@ class SearchTrace:
             "sections_truncated": self.sections_truncated,
             "widened": {k: list(v) for k, v in self.widened.items()},
         }
+        if self.semantic is not None:
+            out["semantic"] = {
+                "applied": self.semantic.applied,
+                "reason": self.semantic.reason,
+                "ranks": {k: list(v) for k, v in self.semantic.ranks.items()},
+            }
+        return out
 
 
 def _strong_signal_to_json(t: StrongSignalTrace) -> dict[str, object]:

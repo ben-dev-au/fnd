@@ -229,6 +229,8 @@ class Hit:
     # (raw searcher, segment, doc) this hit was read from, so later per-section queries can
     # recognise it without reading its document again; None when built another way.
     at: tuple[object, int, int] | None = field(default=None, compare=False, repr=False)
+    # Found by the meaning model, not by a word match: lands at its section's top.
+    found_by_meaning: bool = False
 
     @property
     def rank_key(self) -> float:
@@ -746,7 +748,6 @@ class Searcher:
             build_schema,
         )
         from fnd.stopwords import strip_query_stopwords
-        from fnd.tag_query import compile_tag_filter
 
         enforce_query_bounds(query)
         schema = build_schema()
@@ -760,25 +761,15 @@ class Searcher:
         # matching only "and"/"in"/"the" (~zero IDF) isn't retrieved. Quoted
         # phrases and explicit-syntax queries pass through untouched.
         content = strip_query_stopwords(preprocess(extracted.content))
-        filters = list(extracted.filters)
-        for clause in filter_clauses:
-            lifted = extract_filters(clause, schema, self._index)
-            if lifted.content.strip():
-                raise ValueError(f"not a filter clause: {clause!r}")
-            filters.extend(lifted.filters)
-        # Tags are typed state, never query text: see fnd/tag_query.py.
-        if tag_filter is not None and not tag_filter.is_empty():
-            compiled_tags = compile_tag_filter(tag_filter, schema)
-            if compiled_tags is not None:
-                filters.append(compiled_tags)
-        # Scope is a hard filter and a UNION; `scope_arms` is the one place
-        # that decides its shape, so the cascade and the facet aggregation
-        # cannot drift from it.
-        arms = scope_arms(schema, collection, source_scope)
-        if arms is not None:
-            if not arms:
-                return None
-            filters.append(scope_or(arms))
+        filters = self._filter_queries(
+            collection=collection,
+            source_scope=source_scope,
+            tag_filter=tag_filter,
+            filter_clauses=filter_clauses,
+            extracted=extracted.filters,
+        )
+        if filters is None:
+            return None
         # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
         # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
         # that auto-fuzzes every parsed term against the listed field.
@@ -828,6 +819,112 @@ class Searcher:
                 )
                 clauses.append((tantivy.Occur.Should, boost_secondary))
             return tantivy.Query.boolean_query(clauses)
+
+    def _filter_queries(
+        self,
+        *,
+        collection: str | list[str] | None,
+        source_scope: SourceScope | None,
+        tag_filter: TagFilter | None,
+        filter_clauses: Sequence[str],
+        extracted: Sequence[Query] = (),
+    ) -> list[Query] | None:
+        """Every hard filter a pass applies; None for an explicitly empty scope."""
+        from fnd.query_filters import extract_filters
+        from fnd.schema import build_schema
+        from fnd.tag_query import compile_tag_filter
+
+        schema = build_schema()
+        filters = list(extracted)
+        for clause in filter_clauses:
+            lifted = extract_filters(clause, schema, self._index)
+            if lifted.content.strip():
+                raise ValueError(f"not a filter clause: {clause!r}")
+            filters.extend(lifted.filters)
+        # Tags are typed state, never query text: see fnd/tag_query.py.
+        if tag_filter is not None and not tag_filter.is_empty():
+            compiled_tags = compile_tag_filter(tag_filter, schema)
+            if compiled_tags is not None:
+                filters.append(compiled_tags)
+        # Scope is a hard filter and a UNION; `scope_arms` is the one place
+        # that decides its shape, so the cascade and the facet aggregation
+        # cannot drift from it.
+        arms = scope_arms(schema, collection, source_scope)
+        if arms is not None:
+            if not arms:
+                return None
+            filters.append(scope_or(arms))
+        return filters
+
+    @_engine_boundary
+    def sections(
+        self,
+        keys: Sequence[tuple[str, int]],
+        *,
+        collection: str | list[str] | None,
+        source_scope: SourceScope | None,
+        metadata_filter: str | None,
+        tag_filter: TagFilter | None,
+        filter_clauses: Sequence[str] = (),
+        query: str = "",
+    ) -> list[Hit]:
+        """The indexed sections among ``keys`` that pass fnd's own scope and filters,
+        including any typed into ``query`` (``kind:md``, ``c:notes``)."""
+        import tantivy
+
+        from fnd.schema import F_CHUNK_SEQ, F_PARENT_ID
+
+        if not keys:
+            return []
+        from fnd.query_filters import extract_filters
+        from fnd.schema import build_schema
+
+        inline = extract_filters(query, build_schema(), self._index).filters if query else ()
+        filters = self._filter_queries(
+            collection=collection,
+            source_scope=source_scope,
+            tag_filter=tag_filter,
+            filter_clauses=filter_clauses,
+            extracted=inline,
+        )
+        if filters is None:
+            return []
+        schema = self._index.schema
+        by_file: dict[str, list[int]] = {}
+        for pid, seq in keys:
+            by_file.setdefault(pid, []).append(seq)
+        # Each file's own sections only: a book holds thousands the model never asked for.
+        files = [
+            tantivy.Query.boolean_query(
+                [
+                    (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_PARENT_ID, pid)),
+                    (tantivy.Occur.Must, tantivy.Query.term_set_query(schema, F_CHUNK_SEQ, seqs)),
+                ]
+            )
+            for pid, seqs in by_file.items()
+        ]
+        clauses = [
+            (
+                tantivy.Occur.Must,
+                tantivy.Query.boolean_query([(tantivy.Occur.Should, q) for q in files]),
+            )
+        ]
+        clauses += [(tantivy.Occur.Must, f) for f in filters]
+        wanted = set(keys)
+        keep = _meta_keep(metadata_filter)
+        # One generation for the whole read, as in :meth:`_candidates`.
+        raw = self._searcher
+        with _engine_refusals():
+            found = _every_hit(raw, tantivy.Query.boolean_query(clauses), len(wanted))
+        out: list[Hit] = []
+        seen: set[tuple[str, int]] = set()
+        for _score, addr in found:
+            h = _light_hit(raw.doc(addr), 0.0)
+            k = (h.parent_id, h.chunk_seq)
+            if k in wanted and k not in seen and (keep is None or keep(h)):
+                seen.add(k)
+                out.append(h)
+        return out
 
     @_engine_boundary
     def _candidates(
@@ -1131,6 +1228,9 @@ class FilteredSearcher:
 
     def _candidates(self, query: str, **kwargs: Any) -> CandidatePool:
         return self._inner._candidates(query, filter_clauses=self.filter_clauses, **kwargs)
+
+    def sections(self, keys: Sequence[tuple[str, int]], **kwargs: Any) -> list[Hit]:
+        return self._inner.sections(keys, filter_clauses=self.filter_clauses, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         # ``_searcher`` and ``_index`` for the cascade's fuzzy pass, which reads

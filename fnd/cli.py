@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from fnd import os_labels
 from fnd.cli_output import echo, echo_data
 from fnd.config import default_config_path, default_index_dir, is_all_collections
 from fnd.display_text import terminal_line
@@ -91,6 +92,7 @@ def main() -> None:
 
     if not _reports_only(sys.argv[1:]):
         _migrate_config()
+    _finish_pending_removals()
     try:
         app(args=_rewrite_default_command(sys.argv[1:]))
     except ValidationError as e:
@@ -105,6 +107,14 @@ def main() -> None:
             echo(f"  {where}: {problem['msg']}", err=True)
         echo("Edit it with `fnd config edit`, or check `fnd config validate`.", err=True)
         raise SystemExit(1) from e
+
+
+def _finish_pending_removals() -> None:
+    """Remove what an uninstall left while its files were in use (Windows); a no-op otherwise."""
+    from fnd.extras_change import finish_pending_removals
+
+    for name in finish_pending_removals():
+        echo(f"fnd: finished removing {name}", err=True)
 
 
 def _migrate_config() -> None:
@@ -141,6 +151,9 @@ def version() -> None:
 def index(
     root: Path,
     collection: str = typer.Option("default", help="Collection to index into."),
+    no_embed: bool = typer.Option(
+        False, "--no-embed", help="Skip embedding new sections for semantic search afterwards."
+    ),
 ) -> None:
     """Index documents under ROOT (ad-hoc, single-root). For configured
     collections use ``fnd collection reindex <name>``."""
@@ -177,6 +190,8 @@ def index(
             "to manage it.",
             err=True,
         )
+    if not no_embed:
+        _embed_after_index(config)
 
 
 def parse_filter_flags(
@@ -381,6 +396,7 @@ def search(
     """
     import json
 
+    from fnd import semantic_search
     from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
     from fnd.filter_dsl import FilterError
@@ -470,6 +486,7 @@ def search(
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
             collapse_copies=cfg.defaults.collapse_copies,
             as_typed=as_typed,
+            semantic=semantic_search.context_for(cfg),
             with_trace=True,
         )
         spec = trace.paint_spec(
@@ -825,6 +842,9 @@ def collection_reindex(
             "index is on an older schema, which clears the whole index first."
         ),
     ),
+    no_embed: bool = typer.Option(
+        False, "--no-embed", help="Skip embedding new sections for semantic search afterwards."
+    ),
 ) -> None:
     """Index (or re-index) configured collections.
 
@@ -903,6 +923,79 @@ def collection_reindex(
         total += written
     if len(targets) > 1:
         echo(f"indexed {total} chunks across {len(targets)} collections")
+    if not no_embed:
+        _embed_after_index(cfg)
+
+
+def _semantic_ready() -> bool:
+    from fnd.semantic import is_ready
+
+    return is_ready()
+
+
+def _semantic_job_parts() -> tuple[Any, Any]:
+    """The bulk embedder and the vector store, for embedding in this process."""
+    import os
+
+    from fnd.semantic import GRANITE, load_embedder
+    from fnd.vectors import VectorStore, store_dir, store_header
+
+    store = VectorStore.open_writer(
+        store_dir(GRANITE), dim=GRANITE.dim, header=store_header(GRANITE)
+    )
+    try:
+        return load_embedder(threads=max(1, (os.cpu_count() or 2) // 2)), store
+    except BaseException:
+        store.close()
+        raise
+
+
+def _embed_after_index(cfg: Any) -> None:
+    """Bring the semantic vectors in line with the index just written."""
+    import time
+
+    from fnd import embed_job
+    from fnd.embed_job import Progress, TimeLeft, reconcile
+
+    if not cfg.defaults.semantic_search or not _semantic_ready():
+        return
+    opted = frozenset(n for n, c in cfg.collections.items() if c.semantic)
+    if not opted:
+        return
+    from fnd.vectors import StoreBusyError
+
+    try:
+        embedder, store = _semantic_job_parts()
+    except StoreBusyError:
+        echo("embedding is already running in fnd; it picks this update up when it finishes")
+        return
+    last = [0.0]
+    left = TimeLeft()
+
+    def report(p: Progress) -> None:
+        now = time.monotonic()
+        if p.total and (now - last[0] > 2 or p.done == p.total):
+            last[0] = now
+            eta = left.text(p.done, p.total)
+            echo(f"embedding {p.done:,} / {p.total:,} sections" + (f", {eta}" if eta else ""))
+
+    try:
+        reconcile(
+            default_index_dir(),
+            store=store,
+            embedder=embedder,
+            opted_in=opted,
+            batch=embed_job.BATCH,
+            on_progress=report,
+        )
+    except KeyboardInterrupt:
+        echo(
+            "embedding stopped; finished batches are kept and the next index update resumes",
+            err=True,
+        )
+        raise typer.Exit(code=130) from None
+    finally:
+        store.close()
 
 
 # ---- extras ---------------------------------------------------------------
@@ -941,6 +1034,22 @@ def extras_status() -> None:
         echo(f"{extra.name}: installed ({_format_disk(disk)})")
         for pkg in installed_packages(extra):
             echo(f"  - {pkg.display}")
+        if extra.name == "semantic":
+            echo(f"  - {_semantic_coverage()}")
+
+
+def _semantic_coverage() -> str:
+    """How many sections have vectors, from the last saved row table."""
+    from fnd.semantic import GRANITE, is_model_present
+    from fnd.vectors import RowTable, store_dir
+
+    if not is_model_present():
+        return "model not downloaded: run `fnd extras install semantic`"
+    rows = RowTable.load(store_dir(GRANITE))
+    if rows is None:
+        return "no sections embedded yet: run `fnd collection reindex -c all`"
+    suffix = "" if rows.complete else " so far; the next index update finishes the rest"
+    return f"{len(rows.parent_id):,} sections embedded{suffix}"
 
 
 def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
@@ -950,7 +1059,11 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     for p in extra.packages:
         echo(f"  - {p.display}  (~{p.disk_mb} MB)")
     echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
-    echo("ML model weights (a portion of the size above) download on first use.")
+    if extra.name == "semantic":
+        echo("Model: granite, 52 MB, Apache 2.0, downloaded first.")
+        echo("First embed: in the background, showing the time left. Later: changes only.")
+    else:
+        echo("ML model weights (a portion of the size above) download on first use.")
     echo("")
     # For the pdf-structure extra, also disclose the indexing-time cost
     # the user will incur on the first big reindex after install.
@@ -963,7 +1076,7 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
             "  Subsequent reindexes only re-process changed files.\n"
             "  Indexing can run in the background and auto-resumes if interrupted.\n"
         )
-    echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
+        echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
 
 
 def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
@@ -973,7 +1086,7 @@ def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     echo("Will remove:")
     for p in installed_packages(extra):
         echo(f"  - {p.display}")
-    for c in extra.cache_dirs:
+    for c in extra.cache_dirs():
         if c.exists():
             echo(f"  - cache: {c}")
     echo(f"\nApproximate disk recovered: {_format_disk(actual_disk_mb(extra))}")
@@ -1017,25 +1130,44 @@ def extras_install(
         echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
         raise typer.Exit(code=2)
 
+    if not extra.available():
+        echo(
+            f"{name} is not available on this machine: its runtime ships no build for it.", err=True
+        )
+        raise typer.Exit(code=2)
     _print_install_disclosure(extra)
     cmds = install_commands(extra)
     if dry_run:
         for c in cmds:
-            echo("would run: " + shlex.join(c))
+            echo("would run: " + os_labels.command_line(c))
         return
     _require_uv()
     if not yes and not typer.confirm("Continue?", default=False):
         echo("aborted")
         raise typer.Exit(code=1)
-    # Flip default-groups before sync runs so the install persists
-    # across subsequent ``uv sync`` calls.
-    _toggle_default_group_for_extra(name, present=True)
-    for c in cmds:
-        echo("$ " + shlex.join(c))
-        rc, _stdout, stderr = run_command(c)
-        if rc != 0:
-            echo(f"command failed (exit {rc}):\n{stderr}", err=True)
-            raise typer.Exit(code=rc)
+    from fnd.extras_change import Change
+
+    change = Change.begin(extra, removing=False)
+    try:
+        for c in change.commands:
+            echo("$ " + os_labels.command_line(c))
+            rc, _stdout, stderr = run_command(c)
+            if rc != 0:
+                echo(f"command failed (exit {rc}):\n{stderr}", err=True)
+                echo(change.roll_back(run_command), err=True)
+                raise typer.Exit(code=rc)
+    except KeyboardInterrupt:
+        echo(change.roll_back(run_command), err=True)
+        raise typer.Exit(code=130) from None
+    if change.after_quit:
+        if name == "semantic":
+            _write_semantic_setting(True)
+        echo(f"\nQuit every open fnd, then run: {change.after_quit}")
+        return
+    if name == "semantic":
+        _write_semantic_setting(True)
+        echo("\nInstalled semantic. Sections are embedded after the next index update.")
+        return
     echo(f"\nInstalled {name}. Run `fnd collection reindex <name>` to apply.")
 
 
@@ -1059,50 +1191,41 @@ def extras_uninstall(
     # filtered version that skips already-removed packages.
     if dry_run:
         for c in uninstall_commands(extra, assume_installed=True):
-            echo("would run: " + shlex.join(c))
+            echo("would run: " + os_labels.command_line(c))
         return
     cmds = uninstall_commands(extra)
-    if not cmds:
+    leftovers = [c for c in extra.cache_dirs() if c.exists()]
+    if not cmds and not leftovers:
         echo(f"\n{name} is not currently installed; nothing to do.")
         return
     _require_uv()
     if not yes and not typer.confirm("Continue?", default=False):
         echo("aborted")
         raise typer.Exit(code=1)
-    # Drop default-groups membership first; uv sync --no-group then
-    # removes the packages and leaves the project unsubscribed.
-    _toggle_default_group_for_extra(name, present=False)
-    for c in cmds:
-        echo("$ " + shlex.join(c))
+    from fnd.extras_change import Change, remove_folders
+
+    change = Change.begin(extra, removing=True)
+    for c in change.commands:
+        echo("$ " + os_labels.command_line(c))
         rc, _stdout, stderr = run_command(c)
         if rc != 0:
             echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
-    echo(f"\nUninstalled {name}.")
+    now = remove_folders(name, leftovers)
+    if name == "semantic":
+        _write_semantic_setting(False)
+    waits = "" if now else "; its last files go when fnd next starts"
+    echo(f"\nUninstalled {name}{waits}.")
+    if change.after_quit:
+        echo(f"Quit every open fnd, then run: {change.after_quit}")
 
 
-def _toggle_default_group_for_extra(name: str, *, present: bool) -> None:
-    """If fnd is running inside a uv-managed project venv, flip the
-    extra's PEP-735 group in ``[tool.uv] default-groups`` so the
-    install survives subsequent ``uv sync`` calls. No-op when there's
-    no owning pyproject.toml (uv tool install / system Python case)."""
-    import sys
+def _write_semantic_setting(on: bool) -> None:
+    from fnd.config import write_setting
 
-    from fnd.extras import (
-        _project_pyproject_for_python,  # type: ignore[attr-defined]
-        disable_pdf_structure_default_group,
-        enable_pdf_structure_default_group,
+    write_setting(
+        config_path=default_config_path(), dotted_path="defaults.semantic_search", value=on
     )
-
-    if name != "pdf-structure":
-        return  # only pdf-structure has a group toggle wired today
-    pyproject = _project_pyproject_for_python(sys.executable)
-    if pyproject is None:
-        return
-    if present:
-        enable_pdf_structure_default_group(pyproject)
-    else:
-        disable_pdf_structure_default_group(pyproject)
 
 
 # ---- cache ----------------------------------------------------------------

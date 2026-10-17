@@ -558,6 +558,9 @@ class IndexerService:
             self._app._search.searcher = Searcher(index_dir=self._app._index_dir)
         except (FileNotFoundError, RuntimeError, ValueError):
             self._app._search.searcher = None
+        semantic = getattr(self._app, "_semantic", None)
+        if semantic is not None:
+            semantic.after_index()
         # A rebuild may have added a new file-type kind: drop the present-kinds
         # cache so the file-type filter recomputes on the next panel refresh.
         self._app._scope.invalidate_present_kinds_cache()
