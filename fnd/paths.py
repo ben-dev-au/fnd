@@ -18,6 +18,7 @@ function: no directory is created here; callers create what they need
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import os
 import re
@@ -119,6 +120,45 @@ def _uv_tool_dir() -> str:
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def try_lock(handle: Any) -> bool:
+    """Lock an open file exclusively until it is closed or the process ends, however it ends.
+    False when another holder has it."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def unlock(handle: Any) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        with contextlib.suppress(OSError):
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def loaded_files_are_locked() -> bool:
+    """A file a process has loaded or mapped cannot be deleted while it runs (Windows)."""
+    return sys.platform == "win32"
 
 
 def uv_tool_root() -> Path:

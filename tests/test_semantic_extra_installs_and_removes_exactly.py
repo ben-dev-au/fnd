@@ -18,8 +18,8 @@ PY = sys.executable
 
 
 def _standalone(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(extras, "_project_pyproject_for_python", lambda py: None)
-    monkeypatch.setattr(extras, "_fnd_tool_venv", lambda: False)
+    monkeypatch.setattr(extras, "project_pyproject_for_python", lambda py: None)
+    monkeypatch.setattr(extras, "fnd_tool_venv", lambda: False)
 
 
 def test_the_model_is_fetched_before_any_package(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -42,7 +42,7 @@ def test_standalone_installs_record_what_they_add(monkeypatch: pytest.MonkeyPatc
 def test_record_writes_the_difference(monkeypatch: pytest.MonkeyPatch) -> None:
     """The after record keeps only distributions the install added."""
     names = iter([{"rich", "fndr"}, {"rich", "fndr", "onnxruntime", "numpy"}])
-    monkeypatch.setattr(extras, "_installed_names", lambda: next(names))
+    monkeypatch.setattr(extras, "installed_names", lambda: next(names))
     extras.record("semantic", "before")
     extras.record("semantic", "after")
     assert extras.recorded_additions("semantic") == {"onnxruntime", "numpy"}
@@ -60,9 +60,9 @@ def test_uninstall_removes_only_what_install_added(monkeypatch: pytest.MonkeyPat
 
 def test_uv_tool_installs_reinstall_with_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """A uv-tool fnd reinstalls itself with the extra, so upgrades keep it."""
-    monkeypatch.setattr(extras, "_project_pyproject_for_python", lambda py: None)
-    monkeypatch.setattr(extras, "_fnd_tool_venv", lambda: True)
-    monkeypatch.setattr(extras, "_fnd_version", lambda: "1.0.1")
+    monkeypatch.setattr(extras, "project_pyproject_for_python", lambda py: None)
+    monkeypatch.setattr(extras, "fnd_tool_venv", lambda: True)
+    monkeypatch.setattr(extras, "fnd_version", lambda: "1.0.1")
     monkeypatch.setattr(extras, "is_package_installed", lambda pkg: True)
     tool = [c[:5] for c in install_commands(SEMANTIC) if c[:3] == ["uv", "tool", "install"]]
     assert tool == [["uv", "tool", "install", "--reinstall", "fndr[semantic]==1.0.1"]]
@@ -117,18 +117,18 @@ def test_the_pdf_structure_toggle_still_works(tmp_path: Path) -> None:
 def test_record_survives_a_json_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
     """The recorded additions are plain JSON in fnd's data folder."""
     names = iter([set(), {"onnxruntime"}])
-    monkeypatch.setattr(extras, "_installed_names", lambda: next(names))
+    monkeypatch.setattr(extras, "installed_names", lambda: next(names))
     extras.record("semantic", "before")
     extras.record("semantic", "after")
-    saved = json.loads(extras._record_path("semantic", "added").read_text())
+    saved = json.loads(extras.record_path("semantic", "added").read_text())
     assert saved == ["onnxruntime"]
 
 
 def test_a_uv_tool_reinstall_keeps_other_extras(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reinstalling fnd as a uv tool carries an installed pdf-structure along."""
-    monkeypatch.setattr(extras, "_project_pyproject_for_python", lambda py: None)
-    monkeypatch.setattr(extras, "_fnd_tool_venv", lambda: True)
-    monkeypatch.setattr(extras, "_fnd_version", lambda: "1.0.1")
+    monkeypatch.setattr(extras, "project_pyproject_for_python", lambda py: None)
+    monkeypatch.setattr(extras, "fnd_tool_venv", lambda: True)
+    monkeypatch.setattr(extras, "fnd_version", lambda: "1.0.1")
     monkeypatch.setattr(extras, "is_package_installed", lambda pkg: True)
     (install,) = [c for c in install_commands(SEMANTIC) if c[:3] == ["uv", "tool", "install"]]
     (remove,) = uninstall_commands(SEMANTIC)
@@ -141,7 +141,7 @@ def test_a_second_install_keeps_what_the_first_added(monkeypatch: pytest.MonkeyP
     names = iter(
         [{"fndr"}, {"fndr", "onnxruntime"}, {"fndr", "onnxruntime"}, {"fndr", "onnxruntime"}]
     )
-    monkeypatch.setattr(extras, "_installed_names", lambda: next(names))
+    monkeypatch.setattr(extras, "installed_names", lambda: next(names))
     for phase in ("before", "after", "before", "after"):
         extras.record("semantic", phase)
     assert extras.recorded_additions("semantic") == {"onnxruntime"}

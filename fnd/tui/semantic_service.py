@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Final
 from fnd.tui.progress.model import OperationKind, OperationPlan, Phase
 
 if TYPE_CHECKING:
-    from fnd.embed_job import EmbedJobRunner
+    from fnd.embed_job import EmbedJobRunner, TimeLeft
     from fnd.semantic import Embedder
     from fnd.semantic_search import SemanticContext
     from fnd.tui.app import FNDApp
@@ -34,6 +34,8 @@ EMBED: Final = OperationPlan(
 _PAUSE_POLL_S: Final = 0.5
 # Progress lines between reloads of the vectors a search uses: about a minute.
 _REFRESH_EVERY: Final = 200
+# Seconds before retrying a job that found another writer holding the store.
+_BUSY_RETRY_S: Final = 60.0
 
 
 def _ready() -> bool:
@@ -50,6 +52,7 @@ class SemanticService:
         ready: Callable[[], bool] = _ready,
         embedder_factory: Callable[[], Embedder] | None = None,
         runner_factory: Callable[[], EmbedJobRunner] | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._app = app
         self._ready = ready
@@ -62,6 +65,8 @@ class SemanticService:
         self._session: ProgressSession | None = None
         self._pause_timer: Any = None
         self._reconciled_for: object = None
+        self._clock = clock
+        self._time_left: TimeLeft | None = None
 
     # ── state ────────────────────────────────────────────────────
 
@@ -97,6 +102,14 @@ class SemanticService:
 
     def use_context(self, ctx: SemanticContext | None) -> None:
         self._ctx = ctx
+
+    def release(self) -> None:
+        """Let go of the model and the mapped vectors, closing their files."""
+        import gc
+
+        self._ctx = None
+        self._embedder = None
+        gc.collect()
 
     @property
     def job_running(self) -> bool:
@@ -191,6 +204,10 @@ class SemanticService:
                 self._pause_timer = None
             self._close_session()
         await asyncio.to_thread(self._load_context)
+        from fnd.embed_job import BUSY_EXIT
+
+        if runner.exit_code == BUSY_EXIT:
+            self._app.set_timer(_BUSY_RETRY_S, self.ensure_job)
 
     def _update_pause(self) -> None:
         runner = self._runner
@@ -207,10 +224,14 @@ class SemanticService:
             self._close_session()
             return
         if self._session is None or self._session.closed:
+            from fnd.embed_job import TimeLeft
+
             self._session = self._app._progress.begin(EMBED)  # type: ignore[attr-defined]
+            self._time_left = TimeLeft(self._clock) if self._clock else TimeLeft()
         self._session.enter("sections")
         self._session.report(done, total)
-        self._session.set_label(f"Embedding {done:,} / {total:,}")
+        left = self._time_left.text(done, total) if self._time_left else ""
+        self._session.set_label(f"Embedding {done:,} / {total:,}" + (f" · {left}" if left else ""))
 
     def _close_session(self) -> None:
         """Full only for a run that finished; a stopped one is abandoned, not claimed done."""

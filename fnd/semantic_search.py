@@ -68,14 +68,13 @@ def load_context(embedder: Embedder) -> SemanticContext | None:
     if rows is None:
         return None
     store = VectorStore.open(folder, dim=embedder.dim, header=store_header(GRANITE))
+    snapshot = store.snapshot()
+    # After the snapshot: it re-reads the store if a writer merged or compacted meanwhile.
     stale = rows.store_generation != store.generation
-    if stale or (len(rows.vec_row) and int(rows.vec_row.max()) >= len(store)):
+    if stale or (len(rows.vec_row) and int(rows.vec_row.max()) >= len(snapshot.vecs)):
         return None
     return SemanticContext(
-        embedder=embedder,
-        snapshot=store.snapshot(),
-        rows=rows,
-        opted_in=frozenset(rows.collections),
+        embedder=embedder, snapshot=snapshot, rows=rows, opted_in=frozenset(rows.collections)
     )
 
 

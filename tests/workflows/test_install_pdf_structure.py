@@ -30,9 +30,9 @@ def test_install_commands_use_group_sync_in_project_venv() -> None:
     ``uv sync --group pdf-structure``. The sync targets the venv that
     owns sys.executable by construction, which is also fnd's runtime
     venv, so the install lands where fnd reads from on next launch."""
-    from fnd.extras import PDF_STRUCTURE, _project_pyproject_for_python, install_commands
+    from fnd.extras import PDF_STRUCTURE, install_commands, project_pyproject_for_python
 
-    assert _project_pyproject_for_python(sys.executable) is not None, (
+    assert project_pyproject_for_python(sys.executable) is not None, (
         "test must run inside the project venv; was sys.executable redirected?"
     )
 
@@ -90,7 +90,7 @@ async def test_progress_modal_handles_failed_event(
     app = app_factory(cfg_one)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        screen = ExtrasInstallProgressScreen(action_label="Install")
+        screen = ExtrasInstallProgressScreen(action_label="Install", extra_name="pdf-structure")
         app.push_screen(screen)
         await pilot.pause()
         screen._render_event(

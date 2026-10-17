@@ -15,6 +15,8 @@ np = pytest.importorskip("numpy")
 
 from fnd.config import Config, load  # noqa: E402
 from fnd.embed_job import Progress  # noqa: E402
+from fnd.extras import SEMANTIC  # noqa: E402
+from fnd.extras_change import Change  # noqa: E402
 from fnd.index import build_index  # noqa: E402
 from fnd.query import FileGroup, Hit, Searcher  # noqa: E402
 from fnd.tui.preview.presenter import landing_intent_from_node_data  # noqa: E402
@@ -197,34 +199,120 @@ def test_a_stopped_run_is_not_shown_as_finished() -> None:
     assert session.ended == "close"  # type: ignore[union-attr]
 
 
-def test_uninstall_stops_the_embedding_job_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Removing semantic search waits for the job to exit before any command runs."""
+def _removal(folder: Path) -> Change:
+    extra = dataclasses.replace(SEMANTIC, cache_dirs=lambda: [folder])
+    return Change(
+        extra=extra,
+        removing=True,
+        commands=[],
+        deferred=False,
+        files={},
+        folders=frozenset(),
+        dists=frozenset(),
+        tools=frozenset(),
+    )
+
+
+def test_uninstall_stops_the_job_and_lets_go_of_its_files_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removal stops the job and releases the model and vectors before any command or delete."""
     from fnd.tui import settings_screen
 
     order: list[str] = []
-    runner = _Runner()
+    folder = tmp_path / "vectors"
+    folder.mkdir()
 
     async def stop() -> None:
         order.append("stopped")
-        runner.running = False
 
-    service = SimpleNamespace(stop=stop)
-    monkeypatch.setattr(
-        "fnd.tui.extras_install_progress.start_extras_install",
-        lambda app, **kw: order.append("install started"),
+    service = SimpleNamespace(
+        stop=stop, release=lambda: order.append("released"), settings_changed=lambda: None
     )
 
-    async def scenario() -> None:
-        await settings_screen.change_extra(
-            SimpleNamespace(_semantic=service),
-            "semantic",
-            removing=True,
-            cmds=[],
-            label="Uninstall",
-        )
+    def start(app: object, **kw: Any) -> None:
+        order.append("install started")
+        kw["on_done"]()
 
-    asyncio.run(scenario())
-    assert order == ["stopped", "install started"]
+    monkeypatch.setattr("fnd.tui.extras_install_progress.start_extras_install", start)
+    monkeypatch.setattr("fnd.tui.menu._setting_writer", lambda path: lambda app, v: None)
+    asyncio.run(
+        settings_screen.change_extra(
+            SimpleNamespace(_semantic=service), _removal(folder), label="Uninstall"
+        )
+    )
+    assert order == ["stopped", "released", "install started"]
+    assert not folder.exists()
+
+
+@pytest.mark.asyncio
+async def test_the_install_modal_names_the_extra(tmp_index_dir: Path) -> None:
+    """Installing semantic search says so, with its own closing note."""
+    from fnd.tui import FNDApp
+    from fnd.tui.extras_install_progress import ProgressEvent, start_extras_install
+
+    app = FNDApp(index_dir=tmp_index_dir, config=Config())
+    async with app.run_test(size=(120, 32)) as pilot:
+        start_extras_install(
+            app,
+            cmds=[],
+            action_label="Install",
+            extra_name="semantic",
+            done_note="Embedding starts now.",
+        )
+        await pilot.pause()
+        box = app.screen.query_one("#extras_box")
+        assert str(box.border_title) == "Install semantic"
+        app.screen._render_event(ProgressEvent(phase="done", cmd_index=0, cmd_total=1))  # type: ignore[attr-defined]
+        status = app.screen.query_one("#extras_status")
+        assert "Embedding starts now." in str(status.render())
+
+
+def test_the_progress_line_shows_time_left_once_measured() -> None:
+    """The embedding label gains a time left from this machine's own rate."""
+    now = [0.0]
+    app = _app()
+    service = SemanticService(app, ready=lambda: True, clock=lambda: now[0])
+    service._show(100, 2000)
+    now[0] = 30.0
+    service._show(400, 2000)
+    assert service._session is not None
+    assert service._session.labels[-1] == "Embedding 400 / 2,000 · ~3 min left"  # type: ignore[attr-defined]
+
+
+def test_the_install_screen_makes_no_fixed_rate_guess() -> None:
+    """Before install nothing has been measured here, so no minutes are claimed."""
+    from fnd.tui.settings_screen import install_summary
+
+    text = install_summary(2000)
+    assert "min" not in text
+    assert "2,000 sections" in text
+    assert "time left" in text
+
+
+def test_a_job_that_found_the_store_busy_is_tried_again() -> None:
+    """Another writer had the store (the CLI, a second fnd): retry later, never treat it as done."""
+    from fnd.embed_job import BUSY_EXIT
+
+    app = _app()
+    timers: list[tuple[float, str]] = []
+    app.set_interval = lambda *a, **k: SimpleNamespace(stop=lambda: None)
+    app.set_timer = lambda delay, fn: timers.append((delay, fn.__name__))
+    runner = _Runner()
+    runner.exit_code = BUSY_EXIT  # type: ignore[attr-defined]
+
+    async def start(opted: object) -> None: ...
+
+    async def progress():  # type: ignore[no-untyped-def]
+        return
+        yield
+
+    runner.start = start  # type: ignore[attr-defined]
+    runner.progress = progress  # type: ignore[attr-defined]
+    service = SemanticService(app, ready=lambda: True, runner_factory=lambda: runner)  # type: ignore[arg-type,return-value]
+    service._load_context = lambda: None  # type: ignore[method-assign]
+    asyncio.run(service._run_job())
+    assert timers == [(60.0, "ensure_job")]
 
 
 def test_quitting_stops_the_job_without_waiting() -> None:
@@ -345,6 +433,30 @@ async def test_a_collection_can_opt_out(
         row = next(i for i in _provider_collection(app, "notes") if i.id == "col.notes.semantic")
         row.toggle_setter(app, False)  # type: ignore[misc]
         assert load(tmp_path / "config.toml").collections["notes"].semantic is False
+
+
+@pytest.mark.asyncio
+async def test_a_dotted_collection_name_opts_out_whole(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A collection named with a dot is written under its own name, not split at the dot."""
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import _provider_collection
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        f'[[collections."Notes v1.2".sources]]\npath = "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    app = FNDApp(index_dir=tmp_index_dir, config=load(cfg_path), collection="Notes v1.2")
+    async with app.run_test(size=(120, 32)):
+        monkeypatch.setattr(app._semantic, "settings_changed", lambda: None)
+        row = next(
+            i for i in _provider_collection(app, "Notes v1.2") if i.id == "col.Notes v1.2.semantic"
+        )
+        row.toggle_setter(app, False)  # type: ignore[misc]
+        assert load(cfg_path).collections["Notes v1.2"].semantic is False
 
 
 def test_a_moved_index_brings_the_vectors_up_to_date() -> None:

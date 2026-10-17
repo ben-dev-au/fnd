@@ -646,6 +646,9 @@ sidebar panels stop showing a stale ``current selection`` band
         self._extras_last_event: Any = None
         self._extras_proc: Any = None
         self._extras_action_label: str = ""
+        self._extras_extra_name: str = ""
+        self._extras_done_note: str = ""
+        self._extras_roll_back: Any = None
         # Owns the structural preview scroll-to-match logic, reading the
         # chunk/match maps and pane back off this app via the host accessors.
         self._preview_scroll_structural = StructuralScrollStrategy(host=self._preview)
@@ -827,6 +830,10 @@ sidebar panels stop showing a stale ``current selection`` band
 
         with contextlib.suppress(Exception):
             self._preview.stop_background_work()
+        from fnd.tui.extras_install_progress import stop_for_quit
+
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await stop_for_quit(self)
         # The drainer is a raw `create_task`, so Textual's worker teardown does
         # not know about it. Left running it can pull one more mount job off the
         # queue while the app is already tearing down: the exact class of work

@@ -98,16 +98,18 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
     .-hidden { display: none; }
     """
 
-    def __init__(self, *, action_label: str) -> None:
+    def __init__(self, *, action_label: str, extra_name: str, done_note: str = "") -> None:
         super().__init__()
         self._action_label = action_label
+        self._extra_name = extra_name
+        self._done_note = done_note
         self._is_terminal = False  # set True after done/cancelled/failed
 
     def compose(self) -> ComposeResult:
         from textual.widgets.option_list import Option
 
         with Vertical(id="extras_box") as box:
-            set_border_title(box, f"{self._action_label} pdf-structure")
+            set_border_title(box, f"{self._action_label} {self._extra_name}")
             yield PlainStatic("Starting…", id="extras_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="extras_progress")
             yield PlainOptionList(
@@ -170,7 +172,9 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         elif ev.phase == "done":
             # Tailor completion copy to action so it never reads as
             # "Restart fnd to use it" on an uninstall (nothing to use).
-            if verb.lower().startswith("install"):
+            if self._done_note:
+                tail = self._done_note
+            elif verb.lower().startswith("install"):
                 tail = "Restart fnd, then run Update index to populate the cache."
             elif verb.lower().startswith("uninstall"):
                 tail = "Restart fnd to apply."
@@ -180,7 +184,9 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
             bar.update(progress=total)
             self._enter_terminal_state()
         elif ev.phase == "cancelled":
-            status.update(ui_text("[bold yellow]Cancelled.[/]  Re-run to resume."))
+            status.update(
+                ui_text("[bold yellow]Cancelled.[/]  $note", note=ev.line or "Re-run to resume.")
+            )
             self._enter_terminal_state()
         elif ev.phase == "failed":
             status.update(
@@ -293,8 +299,11 @@ async def run_install(
     cancel: asyncio.Event,
     events: asyncio.Queue[ProgressEvent],
     on_done: Callable[[], None] | None = None,
+    roll_back: Callable[[], str] | None = None,
+    on_failed: Callable[[], None] | None = None,
 ) -> None:
-    """Run ``cmds`` sequentially. Push a ProgressEvent for each phase
+    """Run ``cmds`` sequentially; a failed or cancelled run calls ``roll_back`` and reports it,
+    then ``on_failed``. Push a ProgressEvent for each phase
     boundary and for every stderr line (which uv uses for its
     progress / installed lines).
 
@@ -317,7 +326,11 @@ async def run_install(
             ProgressEvent(phase="starting", cmd_index=i, cmd_total=total, line=shlex.join(argv))
         )
         if cancel.is_set():
-            events.put_nowait(ProgressEvent(phase="cancelled", cmd_index=i, cmd_total=total))
+            note = await _rolled_back(app, roll_back)
+            events.put_nowait(
+                ProgressEvent(phase="cancelled", cmd_index=i, cmd_total=total, line=note)
+            )
+            _failed(on_failed)
             return
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -326,15 +339,17 @@ async def run_install(
                 stderr=asyncio.subprocess.STDOUT,
             )
         except FileNotFoundError as e:
+            note = await _rolled_back(app, roll_back)
             events.put_nowait(
                 ProgressEvent(
                     phase="failed",
                     cmd_index=i,
                     cmd_total=total,
-                    error=str(e),
+                    error=f"{e} {note}".strip(),
                     line=shlex.join(argv),
                 )
             )
+            _failed(on_failed)
             return
         app._extras_proc = proc  # type: ignore[attr-defined]
         events.put_nowait(ProgressEvent(phase="running", cmd_index=i, cmd_total=total))
@@ -348,21 +363,73 @@ async def run_install(
         rc = await proc.wait()
         app._extras_proc = None  # type: ignore[attr-defined]
         if cancel.is_set():
-            events.put_nowait(ProgressEvent(phase="cancelled", cmd_index=i, cmd_total=total))
+            note = await _rolled_back(app, roll_back)
+            events.put_nowait(
+                ProgressEvent(phase="cancelled", cmd_index=i, cmd_total=total, line=note)
+            )
+            _failed(on_failed)
             return
         if rc != 0:
+            note = await _rolled_back(app, roll_back)
             events.put_nowait(
                 ProgressEvent(
                     phase="failed",
                     cmd_index=i,
                     cmd_total=total,
-                    error=f"exit {rc}",
+                    error=f"exit {rc}. {note}" if note else f"exit {rc}",
                 )
             )
+            _failed(on_failed)
             return
     if on_done is not None:
         on_done()
     events.put_nowait(ProgressEvent(phase="done", cmd_index=total - 1, cmd_total=total))
+
+
+async def _rolled_back(app: Any, roll_back: Callable[[], str] | None) -> str:
+    """Run the rollback once: whoever starts it clears the app's handle, so quit cannot repeat it."""
+    if roll_back is None:
+        return ""
+    if getattr(app, "_extras_roll_back", None) is roll_back:
+        app._extras_roll_back = None
+    return await asyncio.to_thread(roll_back)
+
+
+def _failed(on_failed: Callable[[], None] | None) -> None:
+    if on_failed is not None:
+        on_failed()
+
+
+async def stop_for_quit(app: FNDApp) -> None:
+    """At quit, end a running install and undo it; a running removal is left to finish."""
+    task = getattr(app, "_extras_task", None)
+    roll_back = getattr(app, "_extras_roll_back", None)
+    if task is None or task.done() or roll_back is None:
+        return
+    app._extras_roll_back = None  # type: ignore[attr-defined]
+    task.cancel()
+    proc = getattr(app, "_extras_proc", None)
+    if proc is not None and proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(proc.wait(), timeout=10)
+    await asyncio.to_thread(roll_back)
+
+
+def reattach(app: FNDApp) -> bool:
+    """Reopen the modal of an install still running, titled for it; False when none runs."""
+    existing = getattr(app, "_extras_task", None)
+    if existing is None or existing.done():
+        return False
+    app.push_screen(
+        ExtrasInstallProgressScreen(
+            action_label=app._extras_action_label,  # type: ignore[attr-defined]
+            extra_name=app._extras_extra_name,  # type: ignore[attr-defined]
+            done_note=app._extras_done_note,  # type: ignore[attr-defined]
+        )
+    )
+    return True
 
 
 def start_extras_install(
@@ -370,7 +437,11 @@ def start_extras_install(
     *,
     cmds: list[list[str]],
     action_label: str,
+    extra_name: str,
+    done_note: str = "",
     on_done: Callable[[], None] | None = None,
+    roll_back: Callable[[], str] | None = None,
+    on_failed: Callable[[], None] | None = None,
 ) -> bool:
     """Spawn the install/uninstall task and push the progress modal; ``on_done``
     runs on the loop once every command has succeeded.
@@ -378,15 +449,16 @@ def start_extras_install(
     Idempotent: refuses to start a second run while one is in flight,
     re-attaches the modal to the running task instead.
     """
-    existing = getattr(app, "_extras_task", None)
-    if existing is not None and not existing.done():
-        app.push_screen(ExtrasInstallProgressScreen(action_label=action_label))
+    if reattach(app):
         return False
     app._extras_cancel = asyncio.Event()  # type: ignore[attr-defined]
     app._extras_events = asyncio.Queue()  # type: ignore[attr-defined]
     app._extras_last_event = None  # type: ignore[attr-defined]
     app._extras_proc = None  # type: ignore[attr-defined]
     app._extras_action_label = action_label  # type: ignore[attr-defined]
+    app._extras_extra_name = extra_name  # type: ignore[attr-defined]
+    app._extras_done_note = done_note  # type: ignore[attr-defined]
+    app._extras_roll_back = roll_back  # type: ignore[attr-defined]
     app._extras_task = asyncio.create_task(  # type: ignore[attr-defined]
         run_install(
             app,
@@ -394,15 +466,22 @@ def start_extras_install(
             cancel=app._extras_cancel,  # type: ignore[attr-defined]
             events=app._extras_events,  # type: ignore[attr-defined]
             on_done=on_done,
+            roll_back=roll_back,
+            on_failed=on_failed,
         )
     )
-    app.push_screen(ExtrasInstallProgressScreen(action_label=action_label))
+    app.push_screen(
+        ExtrasInstallProgressScreen(
+            action_label=action_label, extra_name=extra_name, done_note=done_note
+        )
+    )
     return True
 
 
 __all__ = [
     "ExtrasInstallProgressScreen",
     "ProgressEvent",
+    "reattach",
     "run_install",
     "start_extras_install",
 ]

@@ -53,6 +53,14 @@ def is_windows() -> bool:
     return platform.system() == _WINDOWS
 
 
+def command_line(argv: list[str]) -> str:
+    """``argv`` as the user would type it in this OS's usual shell."""
+    import shlex
+    import subprocess
+
+    return subprocess.list2cmdline(argv) if is_windows() else shlex.join(argv)
+
+
 def file_manager_name() -> str:
     """Bare name of the platform file manager, for labels and titles."""
     return _FILE_MANAGERS.get(platform.system(), _FILE_MANAGER_FALLBACK)

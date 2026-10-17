@@ -33,7 +33,14 @@ if TYPE_CHECKING:
     from fnd.query import Hit, Searcher
     from fnd.vectors import RowTable, VectorStore
 
-__all__ = ["CANCELLED_EXIT", "EmbedJobRunner", "Progress", "indexed_sections", "reconcile"]
+__all__ = [
+    "CANCELLED_EXIT",
+    "EmbedJobRunner",
+    "Progress",
+    "TimeLeft",
+    "indexed_sections",
+    "reconcile",
+]
 
 BATCH: Final = 16
 # Batches per segment file: one per batch made ~6,800 files for 109k sections.
@@ -45,6 +52,29 @@ CANCELLED_EXIT: Final = 3
 # Another process holds the store: the CLI's reconcile, or a second app.
 BUSY_EXIT: Final = 4
 _NEVER: Final = ("", 0, 0)
+# Sections tokenised between cancel checks: a first embed tokenises for about 100 s.
+_CANCEL_EVERY: Final = 64
+# Seconds of a run's own progress before its rate is trusted for a time left.
+_RATE_AFTER_S: Final = 20.0
+
+
+class TimeLeft:
+    """Time left at this run's own measured rate, never a figure assumed for the machine."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._start: tuple[float, int] | None = None
+
+    def text(self, done: int, total: int) -> str:
+        now = self._clock()
+        if self._start is None or done < self._start[1]:
+            self._start = (now, done)
+            return ""
+        started, from_done = self._start
+        if now - started < _RATE_AFTER_S or done <= from_done:
+            return ""
+        seconds = (total - done) * (now - started) / (done - from_done)
+        return "under a minute left" if seconds < 60 else f"~{-(-int(seconds) // 60)} min left"
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +203,9 @@ def reconcile(
     by_file: dict[str, list[tuple[str, str]]] = {}
     queued: set[str] = set()
     digests = [stored_digest(h) for h in sections]
-    for h, digest in zip(sections, digests, strict=True):
+    for i, (h, digest) in enumerate(zip(sections, digests, strict=True)):
+        if i and i % _CANCEL_EVERY == 0 and cancel():
+            return _rows(sections[:i], keys, store, opted, stamp, complete=False)
         key = known.get(digest)
         text = None
         if key is None or not store.has(key):
@@ -259,14 +291,18 @@ def _main(argv: list[str]) -> int:
     stop = {"now": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("now", True))
     threads = max(1, (os.cpu_count() or 2) // 2)
-    embedder = _load_embedder(a.embedder, threads)
+    # The real model loads only once the lock is ours: a busy retry should cost nothing.
+    embedder = None if a.embedder is None else _load_embedder(a.embedder, threads)
     header = store_header(GRANITE)
     if a.embedder is not None:
         header = {**header, "model": a.embedder}
+    dim = GRANITE.dim if embedder is None else embedder.dim
     try:
-        store = VectorStore.open_writer(a.store, dim=embedder.dim, header=header)
+        store = VectorStore.open_writer(a.store, dim=dim, header=header)
     except StoreBusyError:
         return BUSY_EXIT
+    if embedder is None:
+        embedder = _load_embedder(None, threads)
     pause = a.store / "pause"
     try:
         reconcile(
@@ -297,6 +333,10 @@ class EmbedJobRunner:
     @property
     def running(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
+
+    @property
+    def exit_code(self) -> int | None:
+        return None if self._proc is None else self._proc.returncode
 
     async def start(self, opted_in: Iterable[str]) -> None:
         if self.running:

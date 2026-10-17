@@ -1,7 +1,7 @@
 """Section vectors beside the index: append-only segments, a manifest, and the row table.
 
-One process writes at a time (:meth:`VectorStore.open_writer` holds ``writer.lock``, refreshed
-on every write and taken over once ten minutes stale); readers never delete or rewrite anything.
+One process writes at a time: :meth:`VectorStore.open_writer` holds an OS lock on ``writer.lock``,
+which ends with the process however it ends. Readers never delete or rewrite anything.
 A save writes one new segment and rewrites only the small manifest. Compaction renumbers rows and
 bumps the manifest's ``generation``; a :class:`RowTable` filed under another generation is stale.
 After a run the segments merge into one, which readers memory-map rather than copy.
@@ -17,7 +17,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import IO, TYPE_CHECKING, Any, Final
 
 from fnd import paths
 
@@ -42,7 +42,6 @@ RECIPE: Final = "title+heading+body/256"
 _MANIFEST: Final = "manifest.json"
 _ROWS: Final = "rows.npz"
 _LOCK: Final = "writer.lock"
-_STALE_LOCK_S: Final = 600.0
 _READ_ATTEMPTS: Final = 5
 
 
@@ -87,19 +86,12 @@ def _sweep(folder: Path, live: set[str]) -> None:
                 path.unlink()
 
 
-def _acquire(folder: Path) -> Path:
-    lock = folder / _LOCK
-    try:
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        with contextlib.suppress(OSError):
-            if time.time() - lock.stat().st_mtime < _STALE_LOCK_S:
-                raise StoreBusyError(str(folder)) from None
-        lock.unlink(missing_ok=True)
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    with os.fdopen(fd, "w") as f:
-        f.write(str(os.getpid()))
-    return lock
+def _acquire(folder: Path) -> IO[bytes]:
+    handle = (folder / _LOCK).open("a+b")
+    if not paths.try_lock(handle):
+        handle.close()
+        raise StoreBusyError(str(folder))
+    return handle
 
 
 def stored_digest(h: Hit) -> str:
@@ -123,7 +115,12 @@ class VectorStore:
     """Unit vectors keyed by section text, stored as float16 segments."""
 
     def __init__(
-        self, folder: Path, dim: int, manifest: dict[str, Any], keys: list[str], lock: Path | None
+        self,
+        folder: Path,
+        dim: int,
+        manifest: dict[str, Any],
+        keys: list[str],
+        lock: IO[bytes] | None,
     ) -> None:
         self.folder = folder
         self.dim = dim
@@ -168,13 +165,15 @@ class VectorStore:
             _sweep(folder, set(manifest["segments"]))
             return cls(folder, dim, manifest, _read_keys(folder, manifest), lock)
         except BaseException:
-            lock.unlink(missing_ok=True)
+            paths.unlock(lock)
+            lock.close()
             raise
 
     def close(self) -> None:
         """Release the writer's lock."""
         if self._lock is not None:
-            self._lock.unlink(missing_ok=True)
+            paths.unlock(self._lock)
+            self._lock.close()
             self._lock = None
 
     def __enter__(self) -> VectorStore:
@@ -200,8 +199,6 @@ class VectorStore:
     def _writing(self) -> None:
         if self._lock is None:
             raise RuntimeError("store opened for reading")
-        with contextlib.suppress(OSError):
-            os.utime(self._lock)
 
     def append(self, keys: list[str], vecs: np.ndarray) -> None:
         import numpy as np
@@ -223,9 +220,21 @@ class VectorStore:
     def snapshot(self) -> Snapshot:
         import numpy as np
 
-        parts = [
-            np.load(self.folder / f"{s}.npy", mmap_mode="r") for s in self._manifest["segments"]
-        ]
+        for attempt in range(_READ_ATTEMPTS):
+            try:
+                parts = [
+                    np.load(self.folder / f"{s}.npy", mmap_mode="r")
+                    for s in self._manifest["segments"]
+                ]
+                break
+            except FileNotFoundError:
+                # A writer merged or compacted since this reader opened; read its new manifest.
+                if self._lock is not None or attempt == _READ_ATTEMPTS - 1:
+                    raise
+                fresh = VectorStore.open(self.folder, dim=self.dim, header=self._manifest["header"])
+                self._manifest, self._keys, self._row = fresh._manifest, fresh._keys, fresh._row
+        else:
+            parts = []
         if not parts:
             vecs: np.ndarray = np.zeros((0, self.dim), np.float16)
         elif len(parts) == 1:

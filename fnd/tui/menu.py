@@ -36,6 +36,7 @@ from fnd.config import (
     ALL_COLLECTIONS,
     DEFAULT_RANKING_PROFILE,
     DEFAULT_RESULT_LIMIT,
+    SettingKey,
     is_all_collections,
 )
 from fnd.display_text import fit
@@ -769,7 +770,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     return tuple(out)
 
 
-def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
+def _setting_writer(path: str | SettingKey) -> Callable[[FNDApp, Any], None]:
     """Setter that writes one config field and reloads the app's cached
     Config / ranking profile."""
 
@@ -1724,7 +1725,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
                 )
             )(name),
             toggle_setter=(
-                lambda n: lambda app, v: _set_semantic(app, f"collections.{n}.semantic", v)
+                lambda n: lambda app, v: _set_semantic(app, ("collections", n, "semantic"), v)
             )(name),
             keywords=("semantic", "meaning", "embedding", "model"),
         ),
@@ -2706,7 +2707,7 @@ def _semantic_items() -> tuple[MenuItem, ...]:
     )
 
 
-def _set_semantic(app: FNDApp, path: str, value: bool) -> None:
+def _set_semantic(app: FNDApp, path: str | SettingKey, value: bool) -> None:
     _setting_writer(path)(app, value)
     service = getattr(app, "_semantic", None)
     if service is not None:
@@ -2722,19 +2723,23 @@ def _semantic_ready() -> bool:
 def _summary_semantic_status(app: FNDApp) -> str:
     from fnd.tui.lazy_trailing import get_or_schedule
 
-    def _compute() -> str:
-        from fnd import semantic
-        from fnd.extras import EXTRAS, actual_disk_mb
+    return get_or_schedule(app, "semantic.status", lambda: _semantic_status_text(app))
 
-        extra = EXTRAS["semantic"]
-        if not semantic.platform_supported():
-            return "Not available on this machine"
-        if not _semantic_ready():
-            return f"✗ Not installed · ~{sum(p.disk_mb for p in extra.packages) + 52} MB to install"
-        coverage = _semantic_coverage(app)
-        return f"✓ Installed · ~{actual_disk_mb(extra)} MB" + (f" · {coverage}" if coverage else "")
 
-    return get_or_schedule(app, "semantic.status", _compute)
+def _semantic_status_text(app: FNDApp) -> str:
+    from fnd import semantic
+    from fnd.extras import EXTRAS, actual_disk_mb
+    from fnd.extras_change import pending_removal
+
+    extra = EXTRAS["semantic"]
+    if not semantic.platform_supported():
+        return "Not available on this machine"
+    if pending_removal("semantic"):
+        return "✗ Removed · its last files go when fnd next starts"
+    if not _semantic_ready():
+        return f"✗ Not installed · ~{sum(p.disk_mb for p in extra.packages) + 52} MB to install"
+    coverage = _semantic_coverage(app)
+    return f"✓ Installed · ~{actual_disk_mb(extra)} MB" + (f" · {coverage}" if coverage else "")
 
 
 def _semantic_coverage(app: FNDApp) -> str:

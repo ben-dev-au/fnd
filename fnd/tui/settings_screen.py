@@ -87,6 +87,8 @@ from fnd.tui.widgets.detail_strip import DetailStrip
 from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem, ToggleTree
 
 if TYPE_CHECKING:
+    from fnd.extras import Extra
+    from fnd.extras_change import Change
     from fnd.tui.app import FNDApp
 
 
@@ -4186,54 +4188,54 @@ class StructuredPdfConfirmScreen(Screen[None]):
         if ev.option.id == "no" or self._extra is None:
             self.app.pop_screen()
             return
-        import sys
-
-        from fnd.extras import (
-            _group_exists_in_pyproject,  # type: ignore[attr-defined]
-            _project_pyproject_for_python,  # type: ignore[attr-defined]
-            install_commands,
-            set_default_group,
-            uninstall_commands,
-        )
-
-        # In a uv-managed project venv, toggle the extra's group in
-        # ``[tool.uv] default-groups`` BEFORE the sync, or the next bare
-        # ``uv sync`` wipes the install.
-        pyproject = _project_pyproject_for_python(sys.executable)
-        extra = self._extra
-        if pyproject is not None and _group_exists_in_pyproject(pyproject, extra.name):
-            set_default_group(pyproject, extra.name, present=not self._installed)
-        if self._installed:
-            cmds = uninstall_commands(extra)
-            label = "Uninstall"
-        else:
-            cmds = install_commands(extra)
-            label = "Install"
         app: FNDApp = self.app  # type: ignore[assignment]
-        removing = self._installed
         self.app.pop_screen()
+        change = begin_change(app, self._extra, removing=self._installed)
+        if change is None:
+            return
         app.run_worker(
-            change_extra(app, extra.name, removing=removing, cmds=cmds, label=label),
+            change_extra(app, change, label="Uninstall" if change.removing else "Install"),
             group="extras_change",
             exit_on_error=False,
         )
 
 
-async def change_extra(
-    app: Any, name: str, *, removing: bool, cmds: list[list[str]], label: str
-) -> None:
-    """Start an install or uninstall; removing semantic search first stops its job,
-    so no file is deleted while the embedding process still writes to it."""
+def begin_change(app: Any, extra: Extra, *, removing: bool) -> Change | None:
+    """Begin a confirmed change, unless another is still running: then its modal comes back."""
+    from fnd.extras_change import Change
+    from fnd.tui import extras_install_progress
+
+    if extras_install_progress.reattach(app):
+        return None
+    return Change.begin(extra, removing=removing)
+
+
+async def change_extra(app: Any, change: Change, *, label: str) -> None:
+    """Run a confirmed install or removal. Removing semantic search first stops its job and lets
+    go of the model and vectors, so their files can be deleted (Windows refuses an open file)."""
     from fnd.tui import extras_install_progress
 
     service = getattr(app, "_semantic", None)
-    if removing and name == "semantic" and service is not None:
+    if not (change.removing and change.extra.name == "semantic"):
+        service = None
+    if service is not None:
         await service.stop()
+        service.release()
+    note = change.extra.removed_note if change.removing else change.extra.installed_note
+    if change.deferred:
+        note = "Its last files go when fnd next starts."
+    if change.after_quit:
+        note = f"Quit fnd, then run: {change.after_quit}"
     extras_install_progress.start_extras_install(
         app,
-        cmds=cmds,
+        cmds=change.commands,
         action_label=label,
-        on_done=lambda: extras_finished(app, name, removed=removing),
+        extra_name=change.extra.name,
+        done_note=note,
+        on_done=lambda: extras_finished(app, change),
+        roll_back=None if change.removing else change.roll_back,
+        # A failed removal released the model; take it up again.
+        on_failed=service.settings_changed if service is not None else None,
     )
 
 
@@ -4298,41 +4300,42 @@ class SemanticConfirmScreen(StructuredPdfConfirmScreen):
                 f"Removes the model, vectors and packages (~{actual_disk_mb(self._extra)} MB).\n"
                 "Searches go back to words alone. The index is untouched."
             )
-        minutes = _first_embed_minutes(self.app)
-        first = f"~{minutes} min" if minutes else "a while"
-        return Text(
-            "Downloads the granite model (52 MB, Apache 2.0) and onnxruntime + tokenizers (~110 MB).\n"
-            f"First embed: {first} in the background; search works throughout. Later: changes only."
-        )
+        return Text(install_summary(_section_count(self.app)))
 
 
-def _first_embed_minutes(app: Any) -> int:
-    """Sections in the index at 50 a second, the rate measured on an M1 Max."""
+def install_summary(sections: int) -> str:
+    """What installing semantic search does; its time is measured once it runs, not guessed."""
+    count = f"{sections:,} sections" if sections else "every section"
+    return (
+        "Downloads the granite model (52 MB, Apache 2.0) and onnxruntime + tokenizers (~110 MB).\n"
+        f"First embed: {count}, in the background; the progress line shows the time left.\n"
+        "Search works throughout. Later: changes only."
+    )
+
+
+def _section_count(app: Any) -> int:
     import tantivy
 
     searcher = getattr(getattr(app, "_search", None), "searcher", None)
     if searcher is None:
         return 0
     with contextlib.suppress(Exception):
-        count = searcher._searcher.search(tantivy.Query.all_query(), limit=1, count=True).count
-        return max(1, round(count / 50 / 60))
+        return searcher._searcher.search(tantivy.Query.all_query(), limit=1, count=True).count
     return 0
 
 
-def extras_finished(app: FNDApp, name: str, *, removed: bool) -> None:
-    """After an install or uninstall: semantic search switches with it, and a
-    removal deletes the model and the vectors."""
-    import shutil
+def extras_finished(app: FNDApp, change: Change) -> None:
+    """After an install or removal: semantic search switches with it, and a removal deletes
+    the model and the vectors (or queues them for the next start when still open)."""
+    from fnd.extras_change import remove_folders
 
-    from fnd.extras import EXTRAS
-
-    if removed:
-        for folder in EXTRAS[name].cache_dirs():
-            shutil.rmtree(folder, ignore_errors=True)
+    name = change.extra.name
+    if change.removing:
+        remove_folders(name, [f for f in change.extra.cache_dirs() if f.exists()])
     if name == "semantic":
         from fnd.tui.menu import _setting_writer  # type: ignore[attr-defined]
 
-        _setting_writer("defaults.semantic_search")(app, not removed)
+        _setting_writer("defaults.semantic_search")(app, not change.removing)
         service = getattr(app, "_semantic", None)
         if service is not None:
             service.settings_changed()

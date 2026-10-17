@@ -22,9 +22,9 @@ def test_uninstall_commands_use_group_sync_in_project_venv() -> None:
     ``uv sync --no-group pdf-structure``. The sync removes the group's
     packages from the venv that owns sys.executable, which is fnd's
     runtime venv."""
-    from fnd.extras import PDF_STRUCTURE, _project_pyproject_for_python, uninstall_commands
+    from fnd.extras import PDF_STRUCTURE, project_pyproject_for_python, uninstall_commands
 
-    assert _project_pyproject_for_python(sys.executable) is not None, (
+    assert project_pyproject_for_python(sys.executable) is not None, (
         "test must run inside the project venv; was sys.executable redirected?"
     )
 

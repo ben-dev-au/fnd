@@ -163,8 +163,10 @@ def platform_supported(
 
 def is_ready(spec: ModelSpec = GRANITE) -> bool:
     """Installed here: a supported platform, the runtime importable, the model on disk."""
+    import importlib
     import importlib.util
 
+    importlib.invalidate_caches()  # an in-app install lands after this process started
     return (
         platform_supported()
         and importlib.util.find_spec("onnxruntime") is not None

@@ -135,15 +135,47 @@ def test_a_second_writer_is_refused(tmp_path: Path) -> None:
     VectorStore.open_writer(tmp_path, dim=4, header=H).close()
 
 
-def test_a_dead_writers_lock_is_taken_over(tmp_path: Path) -> None:
-    """A lock nobody has refreshed for ten minutes belongs to a writer that died."""
+def test_a_killed_writers_lock_is_free_at_once(tmp_path: Path) -> None:
+    """The lock dies with its process, however it ended; no ten-minute wait."""
+    import subprocess
+    import sys
+
+    code = (
+        "import os, sys, pathlib; from fnd.vectors import VectorStore; "
+        f"VectorStore.open_writer(pathlib.Path(sys.argv[1]), dim=4, header={H!r}); os._exit(9)"
+    )
+    done = subprocess.run([sys.executable, "-c", code, str(tmp_path)], check=False)
+    assert done.returncode == 9
+    assert (tmp_path / "writer.lock").exists()
+    VectorStore.open_writer(tmp_path, dim=4, header=H).close()
+
+
+def test_a_live_writer_keeps_its_lock_however_long_it_idles(tmp_path: Path) -> None:
+    """An old lock file does not mean a dead writer: a paused job still owns the store."""
     import os
 
-    VectorStore.open_writer(tmp_path, dim=4, header=H)
+    from fnd.vectors import StoreBusyError
+
+    first = VectorStore.open_writer(tmp_path, dim=4, header=H)
     lock = tmp_path / "writer.lock"
     old = lock.stat().st_mtime - 3600
     os.utime(lock, (old, old))
-    VectorStore.open_writer(tmp_path, dim=4, header=H).close()
+    with pytest.raises(StoreBusyError):
+        VectorStore.open_writer(tmp_path, dim=4, header=H)
+    first.close()
+
+
+def test_a_reader_retries_a_snapshot_a_merge_swept(tmp_path: Path) -> None:
+    """A reader opened before a merge still gets the merged vectors, not FileNotFoundError."""
+    w = VectorStore.open_writer(tmp_path, dim=4, header=H)
+    w.append(["a"], _v(1))
+    w.append(["b"], _v(1, 1))
+    reader = VectorStore.open(tmp_path, dim=4, header=H)
+    w.merge()
+    w.close()
+    snap = reader.snapshot()
+    assert set(snap.key_row) == {"a", "b"}
+    assert snap.vecs.shape == (2, 4)
 
 
 def test_a_reader_never_deletes(tmp_path: Path) -> None:
@@ -179,3 +211,42 @@ def test_a_merged_store_is_one_memory_mapped_segment(tmp_path: Path) -> None:
     snap = VectorStore.open(tmp_path, dim=4, header=H).snapshot()
     assert isinstance(snap.vecs, np.memmap)
     assert snap.key_row["k3"] == 3
+
+
+def test_a_compaction_between_open_and_snapshot_reads_as_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows numbered for the old store must never be paired with compacted vectors."""
+    from types import SimpleNamespace
+
+    from fnd import semantic_search
+    from fnd.semantic import GRANITE
+    from fnd.vectors import store_dir, store_header
+
+    folder = store_dir(GRANITE)
+    header = store_header(GRANITE)
+    w = VectorStore.open_writer(folder, dim=4, header=header)
+    w.append(["a", "b", "c", "d"], _v(4))
+    w.append(["e"], _v(1, 1))
+    RowTable(
+        parent_id=np.array(["p"]),
+        chunk_seq=np.array([0], dtype=np.int32),
+        vec_row=np.array([2], dtype=np.int32),
+        collections=("notes",),
+        member=np.array([[True]]),
+        text_key=np.array(["c"]),
+        stamp=("idx", 1, 1),
+    ).save(folder)
+    real_open = VectorStore.open.__func__  # type: ignore[attr-defined]
+    compacted: list[bool] = []
+
+    def open_then_compact(cls: type[VectorStore], *a: object, **k: object) -> VectorStore:
+        reader = real_open(cls, *a, **k)
+        if not compacted:
+            compacted.append(w.collect({"e"}) > 0)
+        return reader
+
+    monkeypatch.setattr(VectorStore, "open", classmethod(open_then_compact))
+    assert semantic_search.load_context(SimpleNamespace(dim=4)) is None  # type: ignore[arg-type]
+    assert compacted == [True]
+    w.close()

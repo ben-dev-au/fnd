@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import contextlib
 import shlex
-import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -92,6 +91,7 @@ def main() -> None:
 
     if not _reports_only(sys.argv[1:]):
         _migrate_config()
+    _finish_pending_removals()
     try:
         app(args=_rewrite_default_command(sys.argv[1:]))
     except ValidationError as e:
@@ -106,6 +106,14 @@ def main() -> None:
             echo(f"  {where}: {problem['msg']}", err=True)
         echo("Edit it with `fnd config edit`, or check `fnd config validate`.", err=True)
         raise SystemExit(1) from e
+
+
+def _finish_pending_removals() -> None:
+    """Remove what an uninstall left while its files were in use (Windows); a no-op otherwise."""
+    from fnd.extras_change import finish_pending_removals
+
+    for name in finish_pending_removals():
+        echo(f"fnd: finished removing {name}", err=True)
 
 
 def _migrate_config() -> None:
@@ -943,7 +951,7 @@ def _embed_after_index(cfg: Any) -> None:
     import time
 
     from fnd import embed_job
-    from fnd.embed_job import Progress, reconcile
+    from fnd.embed_job import Progress, TimeLeft, reconcile
 
     if not cfg.defaults.semantic_search or not _semantic_ready():
         return
@@ -958,12 +966,14 @@ def _embed_after_index(cfg: Any) -> None:
         echo("embedding is already running in fnd; it picks this update up when it finishes")
         return
     last = [0.0]
+    left = TimeLeft()
 
     def report(p: Progress) -> None:
         now = time.monotonic()
         if p.total and (now - last[0] > 2 or p.done == p.total):
             last[0] = now
-            echo(f"embedding {p.done:,} / {p.total:,} sections")
+            eta = left.text(p.done, p.total)
+            echo(f"embedding {p.done:,} / {p.total:,} sections" + (f", {eta}" if eta else ""))
 
     try:
         reconcile(
@@ -1047,7 +1057,7 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
     if extra.name == "semantic":
         echo("Model: granite, 52 MB, Apache 2.0, downloaded first.")
-        echo("First embed: ~50 sections/s (M1 Max), in the background. Later: changes only.")
+        echo("First embed: in the background, showing the time left. Later: changes only.")
     else:
         echo("ML model weights (a portion of the size above) download on first use.")
     echo("")
@@ -1131,15 +1141,25 @@ def extras_install(
     if not yes and not typer.confirm("Continue?", default=False):
         echo("aborted")
         raise typer.Exit(code=1)
-    # Flip default-groups before sync runs so the install persists
-    # across subsequent ``uv sync`` calls.
-    _toggle_default_group_for_extra(name, present=True)
-    for c in cmds:
-        echo("$ " + shlex.join(c))
-        rc, _stdout, stderr = run_command(c)
-        if rc != 0:
-            echo(f"command failed (exit {rc}):\n{stderr}", err=True)
-            raise typer.Exit(code=rc)
+    from fnd.extras_change import Change
+
+    change = Change.begin(extra, removing=False)
+    try:
+        for c in change.commands:
+            echo("$ " + shlex.join(c))
+            rc, _stdout, stderr = run_command(c)
+            if rc != 0:
+                echo(f"command failed (exit {rc}):\n{stderr}", err=True)
+                echo(change.roll_back(run_command), err=True)
+                raise typer.Exit(code=rc)
+    except KeyboardInterrupt:
+        echo(change.roll_back(run_command), err=True)
+        raise typer.Exit(code=130) from None
+    if change.after_quit:
+        if name == "semantic":
+            _write_semantic_setting(True)
+        echo(f"\nQuit fnd, then run: {change.after_quit}")
+        return
     if name == "semantic":
         _write_semantic_setting(True)
         echo("\nInstalled semantic. Sections are embedded after the next index update.")
@@ -1178,20 +1198,22 @@ def extras_uninstall(
     if not yes and not typer.confirm("Continue?", default=False):
         echo("aborted")
         raise typer.Exit(code=1)
-    # Drop default-groups membership first; uv sync --no-group then
-    # removes the packages and leaves the project unsubscribed.
-    _toggle_default_group_for_extra(name, present=False)
-    for c in cmds:
+    from fnd.extras_change import Change, remove_folders
+
+    change = Change.begin(extra, removing=True)
+    for c in change.commands:
         echo("$ " + shlex.join(c))
         rc, _stdout, stderr = run_command(c)
         if rc != 0:
             echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
-    for folder in leftovers:
-        shutil.rmtree(folder, ignore_errors=True)
+    now = remove_folders(name, leftovers)
     if name == "semantic":
         _write_semantic_setting(False)
-    echo(f"\nUninstalled {name}.")
+    waits = "; its last files go when fnd next starts" if change.deferred or not now else ""
+    echo(f"\nUninstalled {name}{waits}.")
+    if change.after_quit:
+        echo(f"Quit fnd, then run: {change.after_quit}")
 
 
 def _write_semantic_setting(on: bool) -> None:
@@ -1200,25 +1222,6 @@ def _write_semantic_setting(on: bool) -> None:
     write_setting(
         config_path=default_config_path(), dotted_path="defaults.semantic_search", value=on
     )
-
-
-def _toggle_default_group_for_extra(name: str, *, present: bool) -> None:
-    """If fnd is running inside a uv-managed project venv, flip the
-    extra's PEP-735 group in ``[tool.uv] default-groups`` so the
-    install survives subsequent ``uv sync`` calls. No-op when there's
-    no owning pyproject.toml (uv tool install / system Python case)."""
-    import sys
-
-    from fnd.extras import (
-        _group_exists_in_pyproject,  # type: ignore[attr-defined]
-        _project_pyproject_for_python,  # type: ignore[attr-defined]
-        set_default_group,
-    )
-
-    pyproject = _project_pyproject_for_python(sys.executable)
-    if pyproject is None or not _group_exists_in_pyproject(pyproject, name):
-        return
-    set_default_group(pyproject, name, present=present)
 
 
 # ---- cache ----------------------------------------------------------------

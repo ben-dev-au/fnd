@@ -301,3 +301,55 @@ def test_pausing_survives_a_removed_store(tmp_path: Path) -> None:
     runner = EmbedJobRunner(index_dir=tmp_path / "index", store_dir=tmp_path / "gone")
     runner.pause(True)
     runner.pause(False)
+
+
+def test_time_left_comes_from_this_runs_own_rate() -> None:
+    """No figure until 20 s of this run's progress; then the remainder at the measured rate."""
+    from fnd.embed_job import TimeLeft
+
+    now = [0.0]
+    left = TimeLeft(clock=lambda: now[0])
+    assert left.text(100, 2000) == ""
+    now[0] = 10.0
+    assert left.text(200, 2000) == ""
+    now[0] = 30.0
+    assert left.text(400, 2000) == "~3 min left"
+    now[0] = 190.0
+    assert left.text(1900, 2000) == "under a minute left"
+
+
+def test_cancel_is_heard_while_tokenising(
+    index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stop during the first phase ends the run there, not after tokenising every section."""
+    from fnd import embed_job
+
+    monkeypatch.setattr(embed_job, "_CANCEL_EVERY", 1)
+    fake = FakeEmbedder()
+    _run(index, _store(tmp_path), fake, cancel=lambda: fake.tokenised >= 2)
+    assert fake.tokenised == 2
+    assert fake.embedded == 0
+
+
+def test_a_busy_store_is_found_before_the_model_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry against another writer costs a lock attempt, not a model load."""
+    from fnd import embed_job
+    from fnd.semantic import GRANITE
+    from fnd.vectors import store_header
+
+    def no_load(*a: object) -> object:
+        raise AssertionError("model loaded before the lock")
+
+    monkeypatch.setattr(embed_job, "_load_embedder", no_load)
+    monkeypatch.setattr(embed_job.os, "nice", lambda n: 0)
+    monkeypatch.setattr(embed_job.signal, "signal", lambda *a: None)
+    holder = VectorStore.open_writer(tmp_path / "v", dim=GRANITE.dim, header=store_header(GRANITE))
+    try:
+        assert (
+            embed_job._main([str(tmp_path / "i"), str(tmp_path / "v"), "notes"])
+            == embed_job.BUSY_EXIT
+        )  # pyright: ignore[reportPrivateUsage]
+    finally:
+        holder.close()
