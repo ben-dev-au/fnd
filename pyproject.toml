@@ -51,7 +51,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-semantic = ["onnxruntime~=1.25.1", "tokenizers~=0.23.3"]
+semantic = ["onnxruntime~=1.31.0", "tokenizers~=0.23.3"]
 
 [project.urls]
 Homepage = "https://github.com/ben-dev-au/fnd"
@@ -87,16 +87,16 @@ fndr = "fnd.cli:main"
 [dependency-groups]
 dev = [
     { include-group = "semantic" },
-    "ruff>=0.6",
-    "pyright>=1.1.380",
+    "ruff>=0.17.0",
+    "pyright>=1.1.414",
     "pytest>=8",
     "pytest-textual-snapshot>=1.0",
     "pytest-asyncio>=0.24",
-    "hypothesis>=6.110",
+    "hypothesis>=6.169.4",
     # Type stubs for lxml (used by the epub/web/odf extractors) so pyright
     # strict can check the etree/html element APIs.
     "lxml-stubs>=0.5",
-    "pre-commit>=3.8",
+    "pre-commit>=4.7.0",
     "pyte>=0.8.2",
     # pytest-testmon: pre-commit only re-runs tests whose imported
     # lines changed in the diff. .testmondata is per-developer and
@@ -122,7 +122,7 @@ dev = [
 pdf-structure = ["pymupdf4llm~=1.28.2"]
 # Semantic search: opt-in, installed by ``fnd extras install semantic``. The
 # versions measured on 16 Oct 2026; onnxruntime ships macOS wheels for arm64 14+.
-semantic = ["onnxruntime~=1.25.1", "tokenizers~=0.23.3"]
+semantic = ["onnxruntime~=1.31.0", "tokenizers~=0.23.3"]
 
 [tool.uv]
 # Groups installed by ``uv sync`` when no --group flag is passed.
