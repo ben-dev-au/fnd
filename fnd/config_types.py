@@ -402,10 +402,7 @@ def setting_error(key: SettingKey, value: object) -> str:
         low, high = bounds
         return "" if low <= value <= high else f"outside {low:g}-{high:g}"
     try:
-        annotation = (
-            Annotated[info.annotation, *info.metadata] if info.metadata else info.annotation
-        )
-        TypeAdapter(annotation).validate_python(value)
+        TypeAdapter(info.rebuild_annotation()).validate_python(value)
     except ValidationError as e:
         return str(e.errors()[0]["msg"])
     return ""
