@@ -36,6 +36,7 @@ __all__ = [
     "blend",
     "context_for",
     "load_context",
+    "model_text",
     "plain_content",
     "skip_reason",
 ]
@@ -112,6 +113,13 @@ def plain_content(searcher: Searcher, query: str) -> str | None:
         return None
     every_word = parse_query_ast(preprocess(content))
     return " ".join(wanted_words(every_word)) if every_word is not None else None
+
+
+def model_text(content: str, corrections: dict[str, tuple[str, ...]]) -> str:
+    """``content`` as the model reads it: each respelt word as its respellings, words only."""
+    from fnd.typos import respelt
+
+    return respelt(content, {w: (" ".join(o),) for w, o in corrections.items()})
 
 
 def _scope_columns(
@@ -191,15 +199,13 @@ def blend(
     corrections: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[list[FileGroup], SemanticTrace]:
     """fnd's ``groups`` (ranked to at least :data:`LEXICAL_DEPTH`) blended with the model's, cut to ``limit``."""
-    from fnd.typos import respelt
-
     content = plain_content(searcher, query)
     admissible = _admissible(ctx, collection)
     if content is None or not admissible:
         raise ValueError("blend called for a search skip_reason() keeps on words alone")
     rows = ctx.rows
 
-    text = respelt(content, corrections) if corrections else content
+    text = model_text(content, corrections or {})
     ranked = _ranked_rows(ctx, admissible, ctx.embedder.embed([text])[0])
     keys = [(str(rows.parent_id[r]), int(rows.chunk_seq[r])) for r, _ in ranked]
     current = {

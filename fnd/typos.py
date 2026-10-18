@@ -105,11 +105,11 @@ def rare_spellings(searcher: Searcher, words: list[str]) -> dict[str, tuple[str,
 
 def respelt(query: str, fixes: dict[str, tuple[str, ...]]) -> str:
     """``query`` with each corrected word replaced by an OR of its fixes, where it stands
-    as a plain word: not quoted, in a regex, after a field or sign, or carrying ``~*?``."""
+    as a plain word: not quoted, in a regex, after a field or ``-``, or carrying ``~*?``."""
     if not fixes:
         return query
     words = "|".join(re.escape(w) for w in sorted(fixes, key=len, reverse=True))
-    plain = re.compile(rf"(?<![\w:~*?/-])({words})(?![\w:~*?])")
+    plain = re.compile(rf"(?<![\w:~*?/-])({words})(?![\w:~*?'-])")
     return map_outside(query, lambda part: plain.sub(lambda m: _respell(m[1], fixes[m[1]]), part))
 
 

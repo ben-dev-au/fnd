@@ -149,7 +149,9 @@ def _expand_numeric_compare(q: str) -> str:
 # word (``{0}{0}`` → ``"{0}"~0``), which left a brace inside quotes that the next
 # pass re-expanded: breaking idempotency.
 _GROUP: Final = r'\((?=[^()]*\sOR\s)(?:[^()"]|"[^"]*")*\)'
-_RUN_TOKEN: Final = rf'(?:"[^"]*"|{_GROUP}|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s(){{}}]+))'
+_RUN_TOKEN: Final = (
+    rf'(?:"[^"]*"|{_GROUP}(?![^\s)])|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s(){{}}]+))'
+)
 _BRACE_PROX: Final = re.compile(rf"\{{(\d+)\}}\s*((?:{_RUN_TOKEN})(?:\s+{_RUN_TOKEN})*)?")
 _RUN_PART: Final = re.compile(rf'"[^"]*"|{_GROUP}|\S+')
 

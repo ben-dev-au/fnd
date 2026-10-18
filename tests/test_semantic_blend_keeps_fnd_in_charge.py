@@ -15,7 +15,7 @@ from fnd.index import build_index  # noqa: E402
 from fnd.layered import search_layered  # noqa: E402
 from fnd.query import FileGroup, Searcher, decoded_body, file_key  # noqa: E402
 from fnd.semantic import section_key, section_text  # noqa: E402
-from fnd.semantic_search import SemanticContext, plain_content  # noqa: E402
+from fnd.semantic_search import SemanticContext, model_text, plain_content  # noqa: E402
 from tests._semantic_fakes import FakeEmbedder, build_context, every_section  # noqa: E402
 
 _NOTES = {
@@ -343,3 +343,8 @@ def test_a_stale_index_check_tokenises_nothing(tmp_path: Path, tmp_index_dir: Pa
     before = embedder.tokenised
     _search(searcher, "drum flute", semantic=ctx, limit=20)
     assert embedder.tokenised == before
+
+
+def test_a_respelling_reaches_the_model_as_words() -> None:
+    fixes = {"aple": ("apple", "maple")}
+    assert model_text("aple boat", fixes) == "apple maple boat"

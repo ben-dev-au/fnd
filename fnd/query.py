@@ -1083,11 +1083,16 @@ class Searcher:
         return parse_query_ast(content) if content.strip() else None
 
     def plain_words(self, query: str) -> list[str]:
-        """:func:`fnd.query_ast.plain_terms` of ``query``'s text without its filters."""
+        """:func:`fnd.query_ast.plain_terms` of ``query``'s text without its filters, less
+        any word the query also writes elsewhere (excluded, fielded, quoted)."""
+        from collections import Counter
+
         from fnd.query_ast import plain_terms
 
         node = self._content_node(query)
-        return list(dict.fromkeys(plain_terms(node))) if node is not None else []
+        plain = Counter(plain_terms(node)) if node is not None else Counter[str]()
+        written = Counter(re.findall(r"[^\s()\"']+", query))
+        return [w for w in plain if written[w] <= plain[w]]
 
     def wanted_tokens(self, query: str) -> list[str]:
         """The index tokens of the plain words ``query`` asks for that some body, heading

@@ -144,6 +144,8 @@ _NEAR_FILES = {"maven_commands", "mvn_commands", "all_three", "sections"}
         "{5} commands (maven OR mvn)",
         "(maven OR mvn) NEAR/5 commands",
         "maven|mvn NEAR/5 commands",
+        "{5} (maven|mvn) commands",
+        "(maven|mvn) NEAR/5 commands",
     ],
 )
 def test_an_or_group_inside_nearness_finds_either_alternative_near(
@@ -170,3 +172,35 @@ def test_too_many_nearness_alternatives_are_refused_with_the_limit() -> None:
     groups = " ".join("(" + " OR ".join(f"w{g}x{i}" for i in range(5)) + ")" for g in range(3))
     with pytest.raises(QuerySyntaxError, match="64"):
         QueryPlan.from_user_text(f"{{5}} {groups}")
+
+
+def test_a_boosted_group_does_not_end_a_nearness_run_unnoticed() -> None:
+    with pytest.raises(QuerySyntaxError):
+        QueryPlan.from_user_text("{2} (maven OR mvn)^2 commands")
+
+
+def test_the_cascades_synonym_pass_keeps_a_typed_or_as_alternatives(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """No note holds "commands", so only the cascade's synonym pass finds these."""
+    from fnd.synonyms import SynonymTable
+
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note0.md").write_text(f"# Note\n\n{_body('maven mvn cmds')}")
+    (root / "note1.md").write_text(f"# Note\n\n{_body('mvn cmds')}")
+    for i in range(6):
+        (root / f"filler{i}.md").write_text(
+            f"# Filler\n\n{_body('maven cmds' if i < 3 else 'gradle')}"
+        )
+    build_index(roots=[root], index_dir=tmp_index_dir, collection="c")
+    groups, trace = search_layered(
+        Searcher(index_dir=tmp_index_dir),
+        query="(maven OR mvn) AND commands",
+        limit=50,
+        synonyms=SynonymTable.from_groups([["commands", "cmds"]]),
+        with_trace=True,
+    )
+    assert trace.regime.startswith("cascade")
+    score = {Path(g.path).stem: g.hits[0].score for g in groups}
+    assert score["note0"] <= score["note1"]

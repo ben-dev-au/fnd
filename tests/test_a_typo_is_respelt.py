@@ -399,6 +399,7 @@ def test_a_widened_word_keeps_its_own_colour() -> None:
         "polymorphsim AND interface",
         "(polymorphsim OR types) AND interface",
         "kind:md polymorphsim",
+        "polymorphsim polymorphsim-x interface",
     ],
 )
 def test_a_typo_beside_operators_or_filters_is_respelt(searcher: Searcher, query: str) -> None:
@@ -416,6 +417,9 @@ def test_a_typo_beside_operators_or_filters_is_respelt(searcher: Searcher, query
         "{5} polymorphsim interface",
         "title:polymorphsim interface",
         "polymorphsim~1 interface",
+        "polymorphsim interface -(polymorphsim OR types)",
+        "polymorphsim interface NOT polymorphsim",
+        "title:(polymorphsim OR types) polymorphsim",
     ],
 )
 def test_a_quoted_excluded_or_fielded_typo_is_left_as_typed(searcher: Searcher, query: str) -> None:
@@ -429,5 +433,8 @@ def test_a_respelling_keeps_the_query_around_the_word() -> None:
         respelt("(interface OR polymorphsim) -types", fixes)
         == "(interface OR (polymorphism OR polymorphic)) -types"
     )
-    kept = '"polymorphsim" title:polymorphsim polymorphsim~1 polymorphsim* /polymorphsim/'
+    kept = (
+        '"polymorphsim" title:polymorphsim polymorphsim~1 polymorphsim* /polymorphsim/'
+        " polymorphsim-x polymorphsim's"
+    )
     assert respelt(kept, fixes) == kept
