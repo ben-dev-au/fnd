@@ -14,6 +14,7 @@ This pre-pass adds:
 * ``slide:>5`` / ``page:>5``               → ``slide:[6 TO 99999999999]``
 * ``slide:<5``                             → ``slide:[0 TO 4]``
 * ``{N} a b c``                            → ``"a b c"~N`` (Foxtrot-style)
+* ``{N} (a OR b) c``                       → ``("a c"~N OR "b c"~N)``
 * ``a NEAR/N b``                           → ``"a b"~N``
 
 The output is a single string that Tantivy's QueryParser can consume directly.
@@ -22,6 +23,8 @@ The output is a single string that Tantivy's QueryParser can consume directly.
 from __future__ import annotations
 
 import datetime as dt
+import itertools
+import math
 import re
 from typing import Final
 
@@ -140,44 +143,79 @@ def _expand_numeric_compare(q: str) -> str:
     return pat.sub(repl, q)
 
 
-# A proximity run token: a quoted phrase, or a bare word that is neither a
-# boolean operator nor a field qualifier (``word:``) and carries no paren or
-# brace. Excluding braces stops a following ``{N}`` from being swallowed as a
-# run word (``{0}{0}`` → ``"{0}"~0``), which left a brace inside quotes that the
-# next pass re-expanded: breaking idempotency.
-_RUN_TOKEN: Final = r'(?:"[^"]*"|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s(){}]+))'  # noqa: S105 (a regex, not a password)
+# A proximity run token: a quoted phrase, a group holding ``OR``, or a bare word that
+# is neither a boolean operator nor a field qualifier (``word:``) and carries no paren
+# or brace. Excluding braces stops a following ``{N}`` from being swallowed as a run
+# word (``{0}{0}`` → ``"{0}"~0``), which left a brace inside quotes that the next
+# pass re-expanded: breaking idempotency.
+_GROUP: Final = r'\((?=[^()]*\sOR\s)(?:[^()"]|"[^"]*")*\)'
+_RUN_TOKEN: Final = (
+    rf'(?:"[^"]*"|{_GROUP}(?![^\s)])|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s(){{}}]+))'
+)
 _BRACE_PROX: Final = re.compile(rf"\{{(\d+)\}}\s*((?:{_RUN_TOKEN})(?:\s+{_RUN_TOKEN})*)?")
+_RUN_PART: Final = re.compile(rf'"[^"]*"|{_GROUP}|\S+')
 
 # A residual brace group that is a proximity attempt (no ``TO``: that would be
 # a Tantivy exclusive range, which we leave alone).
-_NEAR_WORD: Final = r"[\w*?]+(?:~\d*)?"
+_NEAR_WORD: Final = rf"(?:[\w*?]+(?:~\d*)?|{_GROUP})"
 
 _PROX_RESIDUAL: Final = re.compile(r"\{(?![^}]*\bTO\b)[^}]*\}")
+# The most phrases one ``{N}`` or ``NEAR/N`` spells its OR groups out into.
+MAX_NEAR_ALTERNATIVES: Final = 64
+
+
+def _near_phrases(parts: list[str], slop: int) -> str:
+    """``parts`` (words, quoted phrases and ``(a OR b)`` groups) as one ``"…"~slop``
+    phrase, or an OR of one phrase per choice of alternative from each group."""
+    from fnd.query_errors import QuerySyntaxError
+
+    slots: list[list[list[str]]] = []
+    for part in parts:
+        if not part.startswith("("):
+            slots.append([part.replace('"', " ").split()])
+            continue
+        options = re.split(r"\s+OR\s+", part[1:-1].strip())
+        if any(not o or re.search(r"\b(?:AND|NOT)\b|^[+-]|\s[+-]", o) for o in options):
+            raise QuerySyntaxError(
+                "only OR inside a proximity group",
+                hint="write {N} (a OR b) c: words or quoted phrases joined by OR",
+            )
+        slots.append([o.replace('"', " ").split() for o in options])
+    choices = math.prod(len(s) for s in slots)
+    if choices > MAX_NEAR_ALTERNATIVES:
+        raise QuerySyntaxError(
+            f"a proximity search spells out {choices} phrases; the most is {MAX_NEAR_ALTERNATIVES}",
+            hint="use fewer OR words inside {N} or NEAR/N",
+        )
+    phrases = [
+        f'"{" ".join(w for words in pick for w in words)}"~{slop}'
+        for pick in itertools.product(*slots)
+    ]
+    return phrases[0] if len(phrases) == 1 else f"({' OR '.join(phrases)})"
 
 
 def _expand_proximity_aliases(q: str) -> str:
     """Translate ``{N} a b c`` and ``a NEAR/N b`` into ``"... "~N``.
 
-    ``{N}`` binds to the immediately-following run of plain words / quoted
-    phrases and stops at the first boolean operator, field qualifier, or
-    parenthesis: the remainder is preserved verbatim. A ``{N}`` with no usable
-    run is left in place for :func:`check_proximity` to flag.
+    ``{N}`` binds to the immediately-following run of plain words, quoted phrases
+    and ``(a OR b)`` groups, and stops at the first boolean operator, field
+    qualifier, or other parenthesis: the remainder is preserved verbatim. A group
+    spells the run out into one phrase per alternative, OR-ed. A ``{N}`` with no
+    usable run is left in place for :func:`check_proximity` to flag.
     """
 
     def brace_repl(match: re.Match[str]) -> str:
-        slop = int(match.group(1))
         run = (match.group(2) or "").strip()
         if not run:
             return match.group(0)  # nothing to bind to: leave for validation
-        inner = " ".join(run.replace('"', " ").split())
-        return f'"{inner}"~{slop}'
+        return _near_phrases(_RUN_PART.findall(run), int(match.group(1)))
 
     q = _BRACE_PROX.sub(brace_repl, q)
 
-    # `a NEAR/N b` form: two single words (a glob or `term~N` included) with NEAR/<N> between.
+    # `a NEAR/N b` form: two single words (a glob, `term~N` or an OR group included).
     q = re.sub(
         rf"(?<![\w*?~])({_NEAR_WORD})\s+NEAR/(\d+)\s+({_NEAR_WORD})(?![\w*?~])",
-        lambda m: f'"{m.group(1)} {m.group(3)}"~{m.group(2)}',
+        lambda m: _near_phrases([m.group(1), m.group(3)], int(m.group(2))),
         q,
     )
     return q
@@ -196,7 +234,7 @@ def check_proximity(expanded: str) -> None:
     if _PROX_RESIDUAL.search(without_literals(expanded)):
         raise QuerySyntaxError(
             "malformed proximity",
-            hint="proximity is {N} word word: a number in braces then two or more plain words",
+            hint="proximity is {N} word word: a number in braces then two or more words or (a OR b) groups",
         )
 
 

@@ -11,7 +11,7 @@ from fnd.index import build_index
 from fnd.layered import search_layered
 from fnd.matching import MatchSpec, match_color, word_matches
 from fnd.query import Searcher
-from fnd.typos import corrections, describe, rare_spellings
+from fnd.typos import corrections, describe, rare_spellings, respelt
 
 
 @pytest.fixture
@@ -390,3 +390,51 @@ def test_a_widened_word_keeps_its_own_colour() -> None:
         {"ponter": ("pointer",)}, typed_written=True
     )
     assert [match_color(w, spec) for w in ("heap", "ponter", "pointer")] == [0, 1, 2]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "interface OR polymorphsim",
+        "polymorphsim AND interface",
+        "(polymorphsim OR types) AND interface",
+        "kind:md polymorphsim",
+        "polymorphsim polymorphsim-x interface",
+    ],
+)
+def test_a_typo_beside_operators_or_filters_is_respelt(searcher: Searcher, query: str) -> None:
+    groups, trace = search_layered(searcher, query=query, limit=10, with_trace=True)
+    assert Path(groups[0].path).name == "oop.md"
+    assert trace.corrections == {"polymorphsim": ("polymorphism",)}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        '"polymorphsim interface"',
+        "interface -polymorphsim",
+        "interface NOT polymorphsim",
+        "{5} polymorphsim interface",
+        "title:polymorphsim interface",
+        "polymorphsim~1 interface",
+        "polymorphsim interface -(polymorphsim OR types)",
+        "polymorphsim interface NOT polymorphsim",
+        "title:(polymorphsim OR types) polymorphsim",
+    ],
+)
+def test_a_quoted_excluded_or_fielded_typo_is_left_as_typed(searcher: Searcher, query: str) -> None:
+    _, trace = search_layered(searcher, query=query, limit=10, with_trace=True)
+    assert trace.corrections == {}
+
+
+def test_a_respelling_keeps_the_query_around_the_word() -> None:
+    fixes = {"polymorphsim": ("polymorphism", "polymorphic")}
+    assert (
+        respelt("(interface OR polymorphsim) -types", fixes)
+        == "(interface OR (polymorphism OR polymorphic)) -types"
+    )
+    kept = (
+        '"polymorphsim" title:polymorphsim polymorphsim~1 polymorphsim* /polymorphsim/'
+        " polymorphsim-x polymorphsim's"
+    )
+    assert respelt(kept, fixes) == kept

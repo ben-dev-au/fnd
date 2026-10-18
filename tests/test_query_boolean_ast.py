@@ -11,6 +11,7 @@ import pytest
 
 from fnd.query_ast import (
     FUZZY_MAX,
+    Alternatives,
     And,
     Boosted,
     Fuzzy,
@@ -62,21 +63,31 @@ def test_adjacency_is_implicit_or() -> None:
     assert parse_query_ast("a b c") == Or((Term("a"), Term("b"), Term("c")))
 
 
+def test_a_typed_or_binds_tighter_than_adjacency() -> None:
+    assert parse_query_ast("a OR b c") == Or((Alternatives((Term("a"), Term("b"))), Term("c")))
+
+
+def test_fnds_own_or_parses_as_adjacency() -> None:
+    assert parse_query_ast("a OR b", alternatives=False) == Or((Term("a"), Term("b")))
+
+
 def test_explicit_and() -> None:
     assert parse_query_ast("a AND b") == And((Term("a"), Term("b")))
 
 
 def test_and_binds_tighter_than_or() -> None:
     # ``a OR b AND c`` → ``a OR (b AND c)``
-    assert parse_query_ast("a OR b AND c") == Or((Term("a"), And((Term("b"), Term("c")))))
+    assert parse_query_ast("a OR b AND c") == Alternatives((Term("a"), And((Term("b"), Term("c")))))
 
 
 def test_parenthesised_grouping_overrides_precedence() -> None:
-    assert parse_query_ast("(a OR b) AND c") == And((Or((Term("a"), Term("b"))), Term("c")))
+    assert parse_query_ast("(a OR b) AND c") == And(
+        (Alternatives((Term("a"), Term("b"))), Term("c"))
+    )
 
 
 def test_nested_groups() -> None:
-    assert parse_query_ast("(a AND b) OR (c AND d)") == Or(
+    assert parse_query_ast("(a AND b) OR (c AND d)") == Alternatives(
         (And((Term("a"), Term("b"))), And((Term("c"), Term("d"))))
     )
 
@@ -106,7 +117,7 @@ def test_term_boost() -> None:
 
 
 def test_group_boost() -> None:
-    assert parse_query_ast("(a OR b)^3") == Boosted(Or((Term("a"), Term("b"))), 3.0)
+    assert parse_query_ast("(a OR b)^3") == Boosted(Alternatives((Term("a"), Term("b"))), 3.0)
 
 
 def test_wildcard_with_boost() -> None:

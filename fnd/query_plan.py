@@ -35,14 +35,52 @@ _RANGE_ENDS = str.maketrans("［］", "[]")
 _QUESTION_MARK = re.compile(r"\?+(?![\w*~^?]|[-+/\"']\w)")
 
 
+# ``a|b`` is the group ``(a OR b)``, binding tighter than a space so ``{N}``, a sign or
+# a field prefix takes the whole group; a side may be a quoted phrase or a regex. A
+# spaced ``|`` is ``OR``.
+_PIPED = re.compile(
+    r'(?<![^\s(])((?:\{\d+\})?[+-]?(?:[A-Za-z_]\w*:)?)([^\s|()"]+(?:\|+[^\s|()"]+)+)(?![^\s)])'
+)
+_PIPE = re.compile(r"\s*\|[\s|]*")
+_HELD = re.compile(r"\0(\d+)\0")
+_RANGE = re.compile(r"[A-Za-z_]\w*:[\[{][^\]}]*[\]}]")
+
+
+def _pipes_as_or(text: str) -> str:
+    held: list[str] = []
+
+    def hold(literal: str) -> str:
+        held.append(literal)
+        return f"\0{len(held) - 1}\0"
+
+    # literal_spans opens and closes a literal only at a word boundary, which ``|`` is.
+    for s in reversed(literal_spans(re.sub(r"""(?<=["'/])\||\|(?=["'/])""", " ", text))):
+        text = f"{text[: s.start]}{hold(text[s.start : s.end])}{text[s.end :]}"
+    text = _RANGE.sub(lambda m: hold(m[0]), text)
+
+    def group(m: re.Match[str]) -> str:
+        sides = " OR ".join(re.split(r"[|]+", m[2]))
+        bracketed = (
+            m.string[m.start() - 1 : m.start()] == "(" and m.string[m.end() : m.end() + 1] == ")"
+        )
+        return sides if bracketed and not m[1] else f"{m[1]}({sides})"
+
+    text = _PIPE.sub(" OR ", _PIPED.sub(group, text))
+    for _ in range(2):  # a held range may hold a held literal
+        text = _HELD.sub(lambda m: held[int(m[1])], text)
+    return text
+
+
 def search_text(lexical: str) -> str:
     """``lexical`` (search text, no ``[…]`` filter) with typographic and full-width
-    syntax as ASCII, and each word-ending ``?`` outside a regex as a space."""
+    syntax as ASCII, each word-ending ``?`` outside a regex as a space, and each ``|``
+    outside quotes and regexes as ``OR``."""
     text = quote_view(lexical).translate(_ASCII_SYNTAX)
     text = _FULL_WIDTH_RANGE.sub(lambda m: m.group(0).translate(_RANGE_ENDS), text)
-    return map_outside(
+    text = map_outside(
         text, lambda part: _QUESTION_MARK.sub(lambda m: " " * len(m.group()), part), kinds={"regex"}
     )
+    return _pipes_as_or(text) if "|" in text else text
 
 
 def enforce_query_bounds(query: str) -> None:
@@ -72,11 +110,21 @@ def _refuse_unbalanced_structure(lexical: str) -> None:
             break
     if depth != 0:
         raise QuerySyntaxError("unbalanced parentheses", hint="each ( needs a )")
-    words = structure.replace("(", " ").replace(")", " ").split()
-    if words and (words[0] in {"AND", "OR"} or words[-1] in {"AND", "OR", "NOT"}):
+    words = structure.replace("(", " ( ").replace(")", " ) ").split()
+    edges = zip(["(", *words], [*words, ")"], strict=True)
+    if any(
+        (a == "(" and b in {"AND", "OR"}) or (b == ")" and a in {"AND", "OR", "NOT"})
+        for a, b in edges
+    ):
         raise QuerySyntaxError(
             "a dangling AND, OR or NOT", hint="put a word either side of AND and OR, and after NOT"
         )
+
+
+def _refuse_dangling_pipe(lexical: str) -> None:
+    structure = without_literals(quote_view(lexical).translate(_ASCII_SYNTAX))
+    if re.search(r"(?:^|\()\s*\||\|\s*(?:$|\))", structure):
+        raise QuerySyntaxError("a | with no word beside it", hint="write a|b: a word either side")
 
 
 def _refuse_unclosed_quote(query: str) -> None:
@@ -108,6 +156,7 @@ class QueryPlan:
             lexical, metadata_filter = split_metadata_filter(raw)
         except ValueError as e:
             raise QuerySyntaxError(str(e), hint="check that [ ] brackets are balanced") from e
+        _refuse_dangling_pipe(lexical)
         lexical = search_text(lexical)
         _refuse_unclosed_quote(lexical)
         if metadata_filter is not None:

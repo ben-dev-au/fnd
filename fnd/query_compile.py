@@ -4,7 +4,9 @@ Leaves reuse the existing resolvers: plain terms/phrases through the analyser
 (``parse_query`` for stemming parity), fuzzy through the stem dictionary and
 wildcards/regexes through the word dictionary (BM25-scored ``term_query`` ORs,
 see :mod:`fnd.query_resolvers`). Internal nodes become ``boolean_query`` clauses: ``AND``→Must,
-``OR``/adjacency→Should, ``NOT``/``-``→MustNot, ``+``→Must (forced). A group with
+adjacency→Should, ``NOT``/``-``→MustNot, ``+``→Must (forced). A typed ``OR`` group is a
+``disjunction_max_query``: a section scores as its best alternative, so holding two
+alternatives never outranks holding one alongside the query's other words. A group with
 no positive clause gets an implicit ``all_query`` Must so a pure-negative still
 matches a document set to subtract from.
 """
@@ -19,6 +21,7 @@ from tantivy import Occur, Query
 
 from fnd.analysis import fold, index_token
 from fnd.query_ast import (
+    Alternatives,
     And,
     Boosted,
     Fuzzy,
@@ -97,6 +100,8 @@ class _Compiler:
             return self._assemble(n.children, Occur.Must)
         if isinstance(n, Or):
             return self._assemble(n.children, Occur.Should)
+        if isinstance(n, Alternatives):
+            return self._alternatives(n.children)
         if isinstance(n, Not):  # standalone negation → subtract from everything
             return Query.boolean_query(
                 [(Occur.Must, Query.all_query()), (Occur.MustNot, self.compile(n.child))]
@@ -123,6 +128,20 @@ class _Compiler:
         if len(clauses) == 1 and clauses[0][0] is not Occur.MustNot:
             return clauses[0][1]  # don't wrap a lone positive (keeps BM25 parity)
         return Query.boolean_query(clauses)
+
+    def _alternatives(self, children: tuple[Node, ...]) -> Query:
+        """The best-scoring alternative, never their sum; ``+``/``-`` children
+        apply as they do in any group."""
+        options = [c for c in children if not isinstance(c, Not | Required)]
+        if len(options) < 2:
+            return self._assemble(children, Occur.Should)
+        best = Query.disjunction_max_query([self.compile(c) for c in options])
+        clauses = [(Occur.Should, best)]
+        for c in children:
+            if isinstance(c, Not | Required):
+                occur = Occur.MustNot if isinstance(c, Not) else Occur.Must
+                clauses.append((occur, self.compile(c.child)))
+        return best if len(clauses) == 1 else Query.boolean_query(clauses)
 
     # ── leaves ──────────────────────────────────────────────────────
     def _term(self, text: str) -> Query:

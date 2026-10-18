@@ -143,6 +143,10 @@ def search_layered(
     (:mod:`fnd.typos`). With ``semantic``, the result is blended with the
     meaning model's ranking (:mod:`fnd.semantic_search`).
     """
+    from fnd.query_plan import search_text
+    from fnd.text_canon import canonical
+
+    query = search_text(canonical(query))
     skipped = None
     if semantic is not None:
         from fnd.semantic_search import skip_reason
@@ -187,10 +191,6 @@ def search_layered(
         if not with_trace:
             return blended
         return blended, dataclasses.replace(trace, semantic=semantic_trace)
-    from fnd.query_plan import search_text
-    from fnd.text_canon import canonical
-
-    query = search_text(canonical(query))
     typed = query
     if not query.strip() and metadata_filter:
         # A frontmatter rule alone lists the notes it admits.
@@ -339,7 +339,7 @@ def search_layered(
         fill = (
             _respelt_fill(
                 searcher,
-                respelt(query.split(), widened),
+                respelt(query, widened),
                 hits[:cut],
                 window=window,
                 collection=collection,
@@ -368,7 +368,7 @@ def search_layered(
     )
     groups = by_heading_within_file(
         searcher,
-        f"{query} {respelt(query.split(), {**fixes, **widened})}" if fixes or widened else query,
+        f"{query} {respelt(query, {**fixes, **widened})}" if fixes or widened else query,
         groups,
         sections_per_file=sections_per_file,
         keep_pass_order=regime.startswith("cascade"),
@@ -468,9 +468,11 @@ def by_heading_within_file(
     ``HEADING_TIE_BREAKER`` of the rest), scaled by the share of the query's words the
     section holds. ``keep_pass_order`` keeps a cascade's exact sections above looser ones."""
     shown = {(h.parent_id, h.chunk_seq): h.at for g in groups for h in g.hits}
-    tokens = searcher.wanted_tokens(query) if shown else []
+    slots = searcher.wanted_slots(query) if shown else []
+    tokens = list(dict.fromkeys(t for slot in slots for t in slot))
     evidence = searcher.word_evidence(tokens, shown) if tokens else {}
-    total = sum(e.rarity for e in evidence.values()) if len(evidence) > 1 else 0.0
+    rarity = [max(evidence[t].rarity for t in slot) for slot in slots]
+    total = sum(rarity) if len(slots) > 1 else 0.0
 
     words: dict[str, frozenset[str]] = {}
 
@@ -484,14 +486,21 @@ def by_heading_within_file(
         own = shared.union(analysed(h.heading_path.rsplit(" > ", 1)[-1]))
         lift, held = 0.0, 0.0
         titled = analysed(h.title) if total else frozenset()
-        for token, e in evidence.items():
-            share = 1.0 if token in own else PARENT_HEADING_WEIGHT
-            lifted, plain = (
-                SECTION_HEADING_BOOST * share * e.heading.get(k, 0.0),
-                e.body.get(k, 0.0),
-            )
-            lift += max(0.0, lifted - plain) + HEADING_TIE_BREAKER * min(lifted, plain)
-            held += e.rarity if k in e.body or k in e.heading or token in titled else 0.0
+        for slot, slot_rarity in zip(slots, rarity, strict=True):
+            best = 0.0
+            for token in slot:
+                e = evidence[token]
+                share = 1.0 if token in own else PARENT_HEADING_WEIGHT
+                lifted, plain = (
+                    SECTION_HEADING_BOOST * share * e.heading.get(k, 0.0),
+                    e.body.get(k, 0.0),
+                )
+                best = max(
+                    best, max(0.0, lifted - plain) + HEADING_TIE_BREAKER * min(lifted, plain)
+                )
+            lift += best
+            if any(k in evidence[t].body or k in evidence[t].heading or t in titled for t in slot):
+                held += slot_rarity
         cover = (held / total) ** COVERAGE_POWER if total else 1.0
         return dataclasses.replace(h, section_score=(h.score + lift) * cover)
 
@@ -546,6 +555,7 @@ def _compound_hits(
         return CandidatePool([], exhausted=True, all_files=True)
     pool = searcher._candidates(
         subs[0].query,
+        alternatives=False,
         window=window,
         collection=collection,
         metadata_filter=metadata_filter,

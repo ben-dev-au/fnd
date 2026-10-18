@@ -73,7 +73,21 @@ def test_an_apostrophe_is_never_an_unclosed_quote(query: str) -> None:
     assert QueryPlan.from_user_text(query).lexical == query
 
 
-@pytest.mark.parametrize("query", ["(foo", "foo)", "a AND", "OR b", "a NOT", "(a OR b"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "(foo",
+        "foo)",
+        "a AND",
+        "OR b",
+        "a NOT",
+        "(a OR b",
+        "(a OR) b",
+        "a (OR b)",
+        "title:(a AND) b",
+        "(a NOT) b",
+    ],
+)
 def test_unbalanced_structure_is_refused(query: str) -> None:
     with pytest.raises(QuerySyntaxError):
         QueryPlan.from_user_text(query)
@@ -91,6 +105,8 @@ def test_unbalanced_structure_is_refused(query: str) -> None:
         "a [kind = pdf]",
         "/crypto.*/ AND hash",
         '"a b" OR c',
+        "x (NOT a)",
+        "() a",
     ],
 )
 def test_balanced_structure_passes(query: str) -> None:

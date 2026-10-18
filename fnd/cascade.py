@@ -44,7 +44,7 @@ from fnd.query import (
 )
 from fnd.query_ast import FUZZY_MAX
 from fnd.query_errors import QuerySyntaxError
-from fnd.query_spans import literal_spans
+from fnd.query_spans import literal_spans, without_literals
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -386,9 +386,10 @@ def cascade_search(
 
     window = candidate_window(limit)
 
-    def _pass(q: str) -> CandidatePool:
+    def _pass(q: str, *, alternatives: bool = True) -> CandidatePool:
         return searcher._candidates(
             q,
+            alternatives=alternatives,
             window=window,
             collection=collection,
             metadata_filter=metadata_filter,
@@ -400,7 +401,7 @@ def cascade_search(
     def _derived_pass(q: str) -> CandidatePool:
         # A rewrite the engine refuses widens to nothing; the literal hits stand.
         try:
-            return _pass(q)
+            return _pass(q, alternatives=typed_or)
         except QuerySyntaxError:
             return CandidatePool([], exhausted=True, all_files=True)
 
@@ -424,6 +425,8 @@ def cascade_search(
     # The synonym and compound rewrites read plain words; the literal pass runs the
     # query as typed, so an excluded ``-word~1`` still excludes its variants.
     literal_query = _strip_fuzzy_modifiers(query)
+    # A rewrite cannot tell its own OR from a typed one, so a typed OR keeps both alternatives.
+    typed_or = re.search(r"\bOR\b", without_literals(literal_query)) is not None
 
     # Pass 0: the query as typed, compiled as fusion compiles it.
     pool = _pass(query)

@@ -15,7 +15,7 @@ from fnd.index import build_index  # noqa: E402
 from fnd.layered import search_layered  # noqa: E402
 from fnd.query import FileGroup, Searcher, decoded_body, file_key  # noqa: E402
 from fnd.semantic import section_key, section_text  # noqa: E402
-from fnd.semantic_search import SemanticContext, plain_content  # noqa: E402
+from fnd.semantic_search import SemanticContext, model_text, plain_content  # noqa: E402
 from tests._semantic_fakes import FakeEmbedder, build_context, every_section  # noqa: E402
 
 _NOTES = {
@@ -183,12 +183,19 @@ def test_filter_only_and_stopword_queries_skip_the_model(
 
 @pytest.mark.parametrize(
     ("query", "content"),
-    [("C++ apple", "C++ apple"), ("TCP/IP", "TCP/IP"), ("kind:md apple", "apple")],
+    [
+        ("C++ apple", "C++ apple"),
+        ("TCP/IP", "TCP/IP"),
+        ("kind:md apple", "apple"),
+        ("apple OR boat", "apple boat"),
+        ("(apple OR boat) flute", "apple boat flute"),
+    ],
 )
 def test_plain_punctuated_words_still_use_the_model(
     searcher: Searcher, query: str, content: str
 ) -> None:
-    """Punctuated words and inline field filters still count as plain words."""
+    """Punctuated words, inline field filters and OR groups still count as plain words;
+    the model embeds the words alone."""
     assert plain_content(searcher, query) == content
 
 
@@ -336,3 +343,8 @@ def test_a_stale_index_check_tokenises_nothing(tmp_path: Path, tmp_index_dir: Pa
     before = embedder.tokenised
     _search(searcher, "drum flute", semantic=ctx, limit=20)
     assert embedder.tokenised == before
+
+
+def test_a_respelling_reaches_the_model_as_words() -> None:
+    fixes = {"aple": ("apple", "maple")}
+    assert model_text("aple boat", fixes) == "apple maple boat"
