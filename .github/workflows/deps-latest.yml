@@ -23,7 +23,7 @@ jobs:
         # Windows is excluded on purpose: it fails intermittently with a
         # different test each run, which on a scheduled job would cry wolf
         # often enough to make the signal worthless. ci.yml still covers it.
-        os: [macos-14, ubuntu-latest]
+        os: [macos-15, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:

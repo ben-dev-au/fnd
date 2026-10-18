@@ -21,7 +21,7 @@ Linux and Windows, treat everything as unproven.
 
 ## Requirements
 
-- **macOS** (Apple Silicon or Intel): the supported, tested platform.
+- **macOS 15+ on Apple silicon**: supported.
 - **Linux** or **Windows**: alpha, largely untested. See
   [Platform support](#platform-support).
 - Nothing else to set up. Each install option below brings Python 3.13 with it.
@@ -38,8 +38,7 @@ brew install ben-dev-au/tap/fnd
 ```
 
 [Homebrew](https://brew.sh) is the standard macOS package manager. Install it
-once, then run the line above. Apple Silicon installs a prebuilt binary; Intel
-builds from source, which takes a few minutes.
+once, then run the line above. It installs a prebuilt binary.
 
 ### Option 2: uv or pipx (macOS, or Linux / Windows in alpha)
 
@@ -83,8 +82,8 @@ Releases carry build provenance; see [`SECURITY.md`](SECURITY.md) to verify a do
 
 ## Platform support
 
-macOS is developed and used daily. Linux and Windows are implemented and run in
-CI on `ubuntu-latest` and `windows-latest`, but have had almost no hands-on use.
+- macOS 15+ on Apple silicon: supported.
+- Linux and Windows: alpha.
 
 Read the table as **what is implemented**, not what is verified:
 
@@ -478,7 +477,7 @@ Settings UI.
 - Plain-word searches also rank by meaning. Quoted, `{N}`, wildcard, `-` and regex searches stay word matches.
 - `≈`: a file only the model found. Other rows keep fnd's score.
 - Model: [granite-embedding-small-english-r2](https://huggingface.co/ibm-granite/granite-embedding-small-english-r2), int8, 52 MB, Apache 2.0, English. Runs locally.
-- Install: **Settings → Preferences → Semantic search**, or `fnd extras install semantic` (~160 MB). Not on Intel Macs or macOS before 14.
+- Install: **Settings → Preferences → Semantic search**, or `fnd extras install semantic` (~160 MB).
 - Embeds in the background after indexing, ~50 sections/s (M1 Max). Resumes after quitting.
 - Config: `semantic_search`, `show_embedding_progress`; per collection, `semantic`.
 - `--no-embed` on `fnd index` and `fnd collection reindex` skips embedding.

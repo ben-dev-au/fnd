@@ -29,7 +29,7 @@ on:
         description: "Which OSes to hunt on"
         type: choice
         default: "all"
-        options: ["all", "macos-14", "ubuntu-latest", "windows-latest"]
+        options: ["all", "macos-15", "ubuntu-latest", "windows-latest"]
 
 permissions:
   contents: read
@@ -48,7 +48,7 @@ jobs:
           import json
           n = int("${{ inputs.repeats }}" or "5")
           sel = "${{ inputs.os_filter }}" or "all"
-          oses = ["macos-14", "ubuntu-latest", "windows-latest"] if sel == "all" else [sel]
+          oses = ["macos-15", "ubuntu-latest", "windows-latest"] if sel == "all" else [sel]
           print("indices=" + json.dumps(list(range(1, n + 1))))
           print("oses=" + json.dumps(oses))
           PY
