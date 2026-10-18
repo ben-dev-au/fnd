@@ -42,7 +42,7 @@ records each tree it passes, unless a file changed during the run or the
 harness was absent. A push of a commit with that exact tree skips the pre-push
 checks; any edit after the gate makes a new tree, which is checked as usual.
 
-CI runs the suite on `macos-14`, `ubuntu-latest` and `windows-latest`, plus
+CI runs the suite on `macos-15`, `ubuntu-latest` and `windows-latest`, plus
 ruff-format and pyright (strict). A green matrix means the code runs on all
 three, not that anyone has checked the behaviour outside macOS.
 

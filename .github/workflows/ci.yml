@@ -35,7 +35,7 @@ jobs:
         # Five is a ceiling, not a preference: the free plan allows 5 concurrent
         # macOS jobs, and a sixth queues for a whole shard of wall clock.
         # Unsharded: windows 48.9, macos 32.6, ubuntu 30.5 min.
-        os: [macos-14, ubuntu-latest, windows-latest]
+        os: [macos-15, ubuntu-latest, windows-latest]
         shard: [1, 2, 3, 4, 5]
     runs-on: ${{ matrix.os }}
     # Far above the ~12 min gate: past the limit a job is killed without

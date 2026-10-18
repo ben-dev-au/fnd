@@ -256,7 +256,7 @@ jobs:
     # is smoke-tested in the tap's bottle workflow, which is the only place
     # that knows when bottles are actually ready.
     needs: [build, publish-pypi]
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
