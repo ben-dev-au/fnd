@@ -386,9 +386,10 @@ def cascade_search(
 
     window = candidate_window(limit)
 
-    def _pass(q: str) -> CandidatePool:
+    def _pass(q: str, *, alternatives: bool = True) -> CandidatePool:
         return searcher._candidates(
             q,
+            alternatives=alternatives,
             window=window,
             collection=collection,
             metadata_filter=metadata_filter,
@@ -400,7 +401,7 @@ def cascade_search(
     def _derived_pass(q: str) -> CandidatePool:
         # A rewrite the engine refuses widens to nothing; the literal hits stand.
         try:
-            return _pass(q)
+            return _pass(q, alternatives=False)
         except QuerySyntaxError:
             return CandidatePool([], exhausted=True, all_files=True)
 

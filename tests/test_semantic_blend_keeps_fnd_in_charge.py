@@ -183,12 +183,19 @@ def test_filter_only_and_stopword_queries_skip_the_model(
 
 @pytest.mark.parametrize(
     ("query", "content"),
-    [("C++ apple", "C++ apple"), ("TCP/IP", "TCP/IP"), ("kind:md apple", "apple")],
+    [
+        ("C++ apple", "C++ apple"),
+        ("TCP/IP", "TCP/IP"),
+        ("kind:md apple", "apple"),
+        ("apple OR boat", "apple boat"),
+        ("(apple OR boat) flute", "apple boat flute"),
+    ],
 )
 def test_plain_punctuated_words_still_use_the_model(
     searcher: Searcher, query: str, content: str
 ) -> None:
-    """Punctuated words and inline field filters still count as plain words."""
+    """Punctuated words, inline field filters and OR groups still count as plain words;
+    the model embeds the words alone."""
     assert plain_content(searcher, query) == content
 
 

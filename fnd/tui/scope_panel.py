@@ -1162,7 +1162,7 @@ class ScopeController:
             trace = self._app._search.latest_trace
             fixes = trace.respellings if trace is not None else {}
             respelt_query = (
-                searcher.content_query(respelt(lexical.split(), fixes), DEFAULT_SEARCH_FIELDS)
+                searcher.content_query(respelt(lexical, fixes), DEFAULT_SEARCH_FIELDS)
                 if fixes
                 else None
             )

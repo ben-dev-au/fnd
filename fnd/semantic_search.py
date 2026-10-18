@@ -96,8 +96,9 @@ def context_for(config: Config) -> SemanticContext | None:
 
 
 def plain_content(searcher: Searcher, query: str) -> str | None:
-    """The words to embed: the content after inline filters, if it holds only plain words."""
-    from fnd.query_ast import Or, Term, parse_query_ast, walk
+    """The words to embed: the content's words after inline filters, if it holds only
+    plain words and OR groups. Stopwords stay: the model reads them."""
+    from fnd.query_ast import Alternatives, Or, Term, parse_query_ast, walk, wanted_words
     from fnd.query_dsl import preprocess
     from fnd.query_filters import extract_filters
     from fnd.schema import build_schema
@@ -107,9 +108,10 @@ def plain_content(searcher: Searcher, query: str) -> str | None:
     if not content or is_all_stopwords(content):
         return None
     node = parse_query_ast(strip_query_stopwords(preprocess(content)))
-    if node is None or not all(isinstance(n, Term | Or) for n in walk(node)):
+    if node is None or not all(isinstance(n, Term | Or | Alternatives) for n in walk(node)):
         return None
-    return content
+    every_word = parse_query_ast(preprocess(content))
+    return " ".join(wanted_words(every_word)) if every_word is not None else None
 
 
 def _scope_columns(
@@ -197,7 +199,7 @@ def blend(
         raise ValueError("blend called for a search skip_reason() keeps on words alone")
     rows = ctx.rows
 
-    text = respelt(content.split(), corrections) if corrections else content
+    text = respelt(content, corrections) if corrections else content
     ranked = _ranked_rows(ctx, admissible, ctx.embedder.embed([text])[0])
     keys = [(str(rows.parent_id[r]), int(rows.chunk_seq[r])) for r, _ in ranked]
     current = {

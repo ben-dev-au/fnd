@@ -9,10 +9,12 @@ boolean *structure* (``wildcard_query_to_regex_str`` only translates one term),
 so we own the tree: parse here, lower each leaf with the existing resolvers in
 :mod:`fnd.query_compile`, and assemble with ``boolean_query``.
 
-Grammar (precedence low→high), implicit adjacency = ``OR`` (the weighted
-default: bare multi-term OR-retrieves, BM25 ranks all-term docs higher)::
+Grammar (precedence low→high). Adjacent words are the weighted default: any
+retrieves, and their BM25 scores add, so all-term docs rank higher. A typed ``OR``
+binds tighter and names alternatives, scored as the best one (:class:`Alternatives`)::
 
-    or   := and ( (OR | <adjacent>) and )*
+    or   := alts ( <adjacent> alts )*
+    alts := and ( OR and )*
     and  := unary ( AND unary )*
     unary:= NOT unary | atom
     atom := '(' or ')' ['^'N] | ATOM            # ATOM carries +/- ^N ~N inline
@@ -98,7 +100,14 @@ class Or:
     children: tuple[Node, ...]
 
 
-Node = Term | Phrase | Wildcard | Fuzzy | Regex | Boosted | Not | Required | And | Or
+@dataclass(slots=True, frozen=True)
+class Alternatives:
+    """A typed ``OR`` group: any child matches, scored as the best one."""
+
+    children: tuple[Node, ...]
+
+
+Node = Term | Phrase | Wildcard | Fuzzy | Regex | Boosted | Not | Required | And | Or | Alternatives
 
 
 # ── Tokeniser ────────────────────────────────────────────────────────
@@ -217,9 +226,10 @@ def _consume_suffix(s: str, j: int) -> int:
 
 # ── Parser (recursive descent) ───────────────────────────────────────
 class _Parser:
-    def __init__(self, toks: list[tuple[str, str]]) -> None:
+    def __init__(self, toks: list[tuple[str, str]], *, alternatives: bool = True) -> None:
         self._toks = toks
         self._pos = 0
+        self._group = Alternatives if alternatives else Or
 
     def _peek(self) -> tuple[str | None, str]:
         return self._toks[self._pos] if self._pos < len(self._toks) else (None, "")
@@ -235,20 +245,23 @@ class _Parser:
         return node
 
     def _parse_or(self) -> Node | None:
-        children = [self._parse_and()]
-        while True:
-            kind, _ = self._peek()
-            if kind == "OR":
-                self._next()
-                children.append(self._parse_and())
-            elif kind in ("ATOM", "LP", "NOT", "REQ"):  # implicit adjacency = OR
-                children.append(self._parse_and())
-            else:
-                break
+        children = [self._parse_alternatives()]
+        while self._peek()[0] in ("ATOM", "LP", "NOT", "REQ", "OR"):
+            children.append(self._parse_alternatives())
         kept = [c for c in children if c is not None]
         if not kept:
             return None
         return kept[0] if len(kept) == 1 else Or(tuple(kept))
+
+    def _parse_alternatives(self) -> Node | None:
+        children = [self._parse_and()]
+        while self._peek()[0] == "OR":
+            self._next()
+            children.append(self._parse_and())
+        kept = [c for c in children if c is not None]
+        if not kept:
+            return None
+        return kept[0] if len(kept) == 1 else self._group(tuple(kept))
 
     def _parse_and(self) -> Node | None:
         children = [self._parse_unary()]
@@ -337,7 +350,7 @@ def walk(node: Node) -> Iterator[Node]:
     yield node
     if isinstance(node, Boosted | Not | Required):
         yield from walk(node.child)
-    elif isinstance(node, And | Or):
+    elif isinstance(node, And | Or | Alternatives):
         for child in node.children:
             yield from walk(child)
 
@@ -350,8 +363,36 @@ def wanted_words(node: Node) -> list[str]:
         return node.text.split()
     if isinstance(node, Boosted | Required):
         return wanted_words(node.child)
-    if isinstance(node, And | Or):
+    if isinstance(node, And | Or | Alternatives):
         return [w for child in node.children for w in wanted_words(child)]
+    return []
+
+
+def plain_terms(node: Node) -> list[str]:
+    """The plain words ``node`` asks for, outside any ``Not``, phrase or field: the ones
+    a respelling may stand in for."""
+    if isinstance(node, Term):
+        return [] if ":" in node.text else node.text.split()
+    if isinstance(node, Boosted | Required):
+        return plain_terms(node.child)
+    if isinstance(node, And | Or | Alternatives):
+        return [w for child in node.children for w in plain_terms(child)]
+    return []
+
+
+def wanted_slots(node: Node) -> list[list[str]]:
+    """:func:`wanted_words` grouped by the slot each fills: one slot per word, but
+    one for a whole ``OR`` group, whose alternatives each fill it."""
+    if isinstance(node, Alternatives):
+        return [[w for child in node.children for w in wanted_words(child)]]
+    if isinstance(node, Not):
+        return []
+    if isinstance(node, Term | Phrase):
+        return [[w] for w in node.text.split()]
+    if isinstance(node, Boosted | Required):
+        return wanted_slots(node.child)
+    if isinstance(node, And | Or):
+        return [s for child in node.children for s in wanted_slots(child)]
     return []
 
 
@@ -379,10 +420,12 @@ def is_phrase_pattern(word: str) -> bool:
     return _GLOB_RE.search(word) is not None or _FUZZY_RE.match(word) is not None
 
 
-def parse_query_ast(content: str) -> Node | None:
+def parse_query_ast(content: str, *, alternatives: bool = True) -> Node | None:
     """Parse a scored-content string into a boolean AST, or ``None`` when it
-    carries no searchable atom (empty / only stray operators)."""
+    carries no searchable atom (empty / only stray operators). Without
+    ``alternatives`` an ``OR`` sums like adjacency: fnd's own rewrites (synonyms,
+    respellings) want a section holding several forms to rank higher."""
     toks = _tokenize(content)
     if not toks:
         return None
-    return _Parser(toks).parse()
+    return _Parser(toks, alternatives=alternatives).parse()

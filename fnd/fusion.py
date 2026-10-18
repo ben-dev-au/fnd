@@ -68,6 +68,10 @@ _OPERATOR_SYNTAX_RE: Final = re.compile(
     r"\b(?:AND|OR|NOT)\b|[*?~^()]|(?:^|\s)[+\-]\S|(?:^|\s)/[^/\s]+/(?:\s|$)"
 )
 
+# Passes whose OR fnd wrote, which add up so a section holding several forms ranks
+# higher; as alternatives, synonym queries lost 0.194 nDCG@10 on the judged benchmark.
+_SUMMED_SOURCES: Final = frozenset({"syn", "compound"})
+
 # RRF constant; default 60 matches the original Cormack/Clarke/Buettcher 2009
 # paper and what QMD uses.
 _RRF_K_DEFAULT = 60
@@ -276,13 +280,13 @@ def _is_bag_of_words(query: str) -> bool:
 
 
 def query_corrections(searcher: Searcher, query: str) -> dict[str, tuple[str, ...]]:
-    """Respellings for a plain-words query's unindexed words (see :mod:`fnd.typos`)."""
-    return corrections(searcher, query.split()) if _is_bag_of_words(query) else {}
+    """Respellings for the query's unindexed plain words (see :mod:`fnd.typos`)."""
+    return corrections(searcher, searcher.plain_words(query))
 
 
 def query_rare_spellings(searcher: Searcher, query: str) -> dict[str, tuple[str, ...]]:
-    """Respellings for a plain-words query's rare indexed words (see :mod:`fnd.typos`)."""
-    return rare_spellings(searcher, query.split()) if _is_bag_of_words(query) else {}
+    """Respellings for the query's rare indexed plain words (see :mod:`fnd.typos`)."""
+    return rare_spellings(searcher, searcher.plain_words(query))
 
 
 def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> MultiInput:
@@ -388,15 +392,16 @@ def fusion_search(
     if subqueries is None:
         fixes = query_corrections(searcher, query) if corrections is None else corrections
         if fixes:
-            subs = [*subs, SubQuery(respelt(query.split(), fixes), _TYPO_WEIGHT, "typo")]
+            subs = [*subs, SubQuery(respelt(query, fixes), _TYPO_WEIGHT, "typo")]
     if not subs:
         if with_trace:
             return [], _empty_fusion_trace(query)
         return []
 
-    def _issue(q: str) -> CandidatePool:
+    def _issue(q: str, *, alternatives: bool = True) -> CandidatePool:
         return searcher._candidates(
             q,
+            alternatives=alternatives,
             window=candidate_window(limit),
             collection=collection,
             metadata_filter=metadata_filter,
@@ -424,7 +429,7 @@ def fusion_search(
         # Auto-derived passes (phrase / syn): a malformed sub-query degrades to
         # an empty ranking rather than aborting the whole fused search.
         try:
-            pool = _issue(sub.query)
+            pool = _issue(sub.query, alternatives=sub.source not in _SUMMED_SOURCES)
             rankings.append(keep_shown(pool.hits, query) if sub.source == "compound" else pool.hits)
             degraded.append(False)
             exhausted.append(pool.exhausted)

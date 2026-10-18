@@ -35,14 +35,29 @@ _RANGE_ENDS = str.maketrans("［］", "[]")
 _QUESTION_MARK = re.compile(r"\?+(?![\w*~^?]|[-+/\"']\w)")
 
 
+# ``a|b`` is the group ``(a OR b)``, binding tighter than a space so ``{N}``, a sign or
+# a field prefix takes the whole group. Any other ``|`` (spaced, or by a quote) is ``OR``.
+_PIPED = re.compile(
+    r'(?<![^\s(])((?:\{\d+\})?[+-]?(?:[A-Za-z_]\w*:)?)([^\s|()"]+(?:\|+[^\s|()"]+)+)(?![^\s)])'
+)
+_PIPE = re.compile(r"\s*\|+\s*")
+
+
+def _pipes_as_or(part: str) -> str:
+    part = _PIPED.sub(lambda m: f"{m[1]}({' OR '.join(re.split(r'[|]+', m[2]))})", part)
+    return _PIPE.sub(" OR ", part)
+
+
 def search_text(lexical: str) -> str:
     """``lexical`` (search text, no ``[…]`` filter) with typographic and full-width
-    syntax as ASCII, and each word-ending ``?`` outside a regex as a space."""
+    syntax as ASCII, each word-ending ``?`` outside a regex as a space, and each ``|``
+    outside quotes and regexes as ``OR``."""
     text = quote_view(lexical).translate(_ASCII_SYNTAX)
     text = _FULL_WIDTH_RANGE.sub(lambda m: m.group(0).translate(_RANGE_ENDS), text)
-    return map_outside(
+    text = map_outside(
         text, lambda part: _QUESTION_MARK.sub(lambda m: " " * len(m.group()), part), kinds={"regex"}
     )
+    return map_outside(text, _pipes_as_or) if "|" in text else text
 
 
 def enforce_query_bounds(query: str) -> None:
@@ -79,6 +94,13 @@ def _refuse_unbalanced_structure(lexical: str) -> None:
         )
 
 
+def _refuse_dangling_pipe(lexical: str) -> None:
+    structure = without_literals(quote_view(lexical).translate(_ASCII_SYNTAX))
+    words = structure.replace("(", " ").replace(")", " ").strip()
+    if words.startswith("|") or words.endswith("|"):
+        raise QuerySyntaxError("a | with no word beside it", hint="write a|b: a word either side")
+
+
 def _refuse_unclosed_quote(query: str) -> None:
     for span in literal_spans(query):
         text = query[span.start : span.end]
@@ -108,6 +130,7 @@ class QueryPlan:
             lexical, metadata_filter = split_metadata_filter(raw)
         except ValueError as e:
             raise QuerySyntaxError(str(e), hint="check that [ ] brackets are balanced") from e
+        _refuse_dangling_pipe(lexical)
         lexical = search_text(lexical)
         _refuse_unclosed_quote(lexical)
         if metadata_filter is not None:

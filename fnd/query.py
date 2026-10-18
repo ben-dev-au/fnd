@@ -733,6 +733,7 @@ class Searcher:
         fuzzy_distance: int = 0,
         tag_filter: TagFilter | None = None,
         filter_clauses: Sequence[str] = (),
+        alternatives: bool = True,
     ) -> Query | None:
         """One pass's Tantivy query; None for an explicitly empty scope."""
         import tantivy
@@ -786,7 +787,7 @@ class Searcher:
         # Building and running the query, not reading what it found back.
         with _engine_refusals():
             has_content = bool(content.strip())
-            node = parse_query_ast(content) if has_content else None
+            node = parse_query_ast(content, alternatives=alternatives) if has_content else None
             if has_content:
                 body_required = compile_query(
                     node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs
@@ -939,10 +940,12 @@ class Searcher:
         tag_filter: TagFilter | None = None,
         min_files: int = 0,
         filter_clauses: Sequence[str] = (),
+        alternatives: bool = True,
     ) -> CandidatePool:
         """One pass's light hits; :func:`_collect` decides when paging stops."""
         parsed = self._build_query(
             query,
+            alternatives=alternatives,
             collection=collection,
             source_scope=source_scope,
             fuzzy_distance=fuzzy_distance,
@@ -1079,21 +1082,39 @@ class Searcher:
         )
         return parse_query_ast(content) if content.strip() else None
 
+    def plain_words(self, query: str) -> list[str]:
+        """:func:`fnd.query_ast.plain_terms` of ``query``'s text without its filters."""
+        from fnd.query_ast import plain_terms
+
+        node = self._content_node(query)
+        return list(dict.fromkeys(plain_terms(node))) if node is not None else []
+
     def wanted_tokens(self, query: str) -> list[str]:
         """The index tokens of the plain words ``query`` asks for that some body, heading
         or title holds: excluded words, filters and pattern words are left out."""
+        return list(dict.fromkeys(t for slot in self.wanted_slots(query) for t in slot))
+
+    def wanted_slots(self, query: str) -> list[tuple[str, ...]]:
+        """:meth:`wanted_tokens` grouped as :func:`fnd.query_ast.wanted_slots` groups words."""
         from fnd.analysis import analyse
-        from fnd.query_ast import wanted_words
+        from fnd.query_ast import wanted_slots
 
         node = self._content_node(query)
         if node is None:
             return []
         raw = self._searcher
-        return [
-            t
-            for t in dict.fromkeys(analyse(" ".join(wanted_words(node))))
-            if any(raw.doc_freq(f, t) for f in _WORD_FIELDS)
-        ]
+        out: list[tuple[str, ...]] = []
+        for words in wanted_slots(node):
+            held = tuple(
+                t
+                for t in dict.fromkeys(analyse(" ".join(words)))
+                if any(raw.doc_freq(f, t) for f in _WORD_FIELDS)
+            )
+            if len(words) == 1:
+                out.extend((t,) for t in held)
+            elif held:
+                out.append(held)
+        return list(dict.fromkeys(out))
 
     @_engine_boundary
     def word_evidence(

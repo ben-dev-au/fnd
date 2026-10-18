@@ -566,7 +566,8 @@ markdown frontmatter filters. They compose freely.
 | `holiday budget plan`           | Several terms, ranked. Docs matching more terms rank higher; all-term docs reach the top. |
 | `holiday AND budget`            | Require both terms.                                                                       |
 | `"follow up email"`             | Exact phrase, in order. Also matches `follow-up email`.                                   |
-| `holiday OR vacation`           | Either term.                                                                              |
+| `holiday OR vacation`           | Either term. A note holding both ranks no higher than one holding either.                 |
+| `holiday\|vacation`             | Same as `(holiday OR vacation)`.                                                          |
 | `budget NOT tax`                | Has `budget`, excludes `tax`.                                                             |
 | `+recipe -dessert`              | `+` require, `-` exclude (shorthand for `AND` / `NOT`).                                   |
 | `recipe -(dessert OR cake)`     | A sign applies to a whole group: excludes both.                                           |
@@ -585,20 +586,21 @@ Quoting is the biggest precision win. Quote any common phrase:
 
 Find terms near each other, in any order. `{N}` and `NEAR/N` are equivalent:
 
-| You type                         | Means                                        |
-| -------------------------------- | -------------------------------------------- |
-| `{5} project deadline`           | The two terms within 5 tokens of each other. |
-| `project NEAR/5 deadline`        | Same.                                        |
-| `{20} cancel the gym membership` | All four words within ~one line of text.     |
-| `{60} lost luggage claim`        | Within ~a few lines.                         |
-| `{500} kitchen renovation quote` | Within ~one page.                            |
+| You type                          | Means                                         |
+| --------------------------------- | --------------------------------------------- |
+| `{5} project deadline`            | The two terms within 5 tokens of each other.  |
+| `project NEAR/5 deadline`         | Same.                                         |
+| `{20} cancel the gym membership`  | All four words within ~one line of text.      |
+| `{20} (cancel OR end) membership` | Either word within 20 tokens of `membership`. |
+| `{60} lost luggage claim`         | Within ~a few lines.                          |
+| `{500} kitchen renovation quote`  | Within ~one page.                             |
 
 - **Scale:** `5` ≈ very near, `20` ≈ a line, `60` ≈ a few lines, `500` ≈ a page.
 - **Order doesn't matter.** Quote (`"project deadline"`) when it does.
-- `{N}` covers the words right after it, up to the first operator, `(`, or
-  filter, so `{10} lost luggage kind:pdf` slops only `lost luggage`.
+- `{N}` covers the words and `(a OR b)` groups right after it, up to the first
+  operator, other `(`, or filter, so `{10} lost luggage kind:pdf` slops only `lost luggage`.
 - Can't cross a chunk boundary; if terms are far apart, drop the `{N}`.
-- `NEAR/N` takes exactly two words.
+- `NEAR/N` takes exactly two words; either may be an `(a OR b)` group.
 - A word may carry `*` or `~N` (`{5} insurance~ claim`).
 
 ### Fuzzy matching for typos and variants

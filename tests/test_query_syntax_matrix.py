@@ -52,6 +52,8 @@ PIECES: list[tuple[str, str, str]] = [
     ("proximity_wildcard", "{3} crypto* keys", "Z"),
     ("proximity_fuzzy", "{5} cryptography~ keys", "Z"),
     ("proximity_wide", "{60} quokka marmalade", "Q"),
+    ("proximity_alternatives", "{5} (zephyr OR quokka) tundra", "ZN"),
+    ("near_alternatives", "zephyr|quokka NEAR/5 tundra", "ZN"),
     ("fuzzy_1", "mitochondira~1", "O"),
     ("fuzzy_2", "mitochondira~2", "ON"),
     ("fuzzy_far", "kubernates~2", "R"),
@@ -63,6 +65,8 @@ PIECES: list[tuple[str, str, str]] = [
     ("one_char", "gr?y", "QP"),
     ("question_mark", "lantern?", "QPTD"),
     ("regex", "/cryptograph(y|ic)/", "ZN"),
+    ("pipe", "zephyr|harbour", "ZQTOR"),
+    ("regex_pipe", "/zephyr|harbour/", "ZQTOR"),
 ]
 # (name, query, expected files): constructs and README examples that stand alone.
 SOLO: list[tuple[str, str, str]] = [
@@ -310,6 +314,7 @@ README_EXAMPLES: dict[str, str] = {
     "holiday AND budget": "and",
     '"follow up email"': "phrase_hyphenated",
     "holiday OR vacation": "or",
+    "holiday|vacation": "pipe",
     "budget NOT tax": "not",
     "+recipe -dessert": "plus_minus",
     "recipe -(dessert OR cake)": "signed_group",
@@ -319,6 +324,7 @@ README_EXAMPLES: dict[str, str] = {
     "{5} project deadline": "proximity",
     "project NEAR/5 deadline": "near",
     "{20} cancel the gym membership": "proximity_wide",
+    "{20} (cancel OR end) membership": "proximity_alternatives",
     "{60} lost luggage claim": "proximity_wide",
     "{500} kitchen renovation quote": "proximity_wide",
     "recieve~1": "fuzzy_1",

@@ -21,6 +21,7 @@ import re
 from typing import TYPE_CHECKING, Final
 
 from fnd.analysis import index_token, word_token
+from fnd.query_spans import map_outside
 from fnd.schema import F_BODY, F_WORDS
 from fnd.stopwords import STOPWORDS
 
@@ -102,9 +103,14 @@ def rare_spellings(searcher: Searcher, words: list[str]) -> dict[str, tuple[str,
     return out
 
 
-def respelt(words: list[str], fixes: dict[str, tuple[str, ...]]) -> str:
-    """``words`` joined, each corrected word replaced by an OR of its fixes."""
-    return " ".join(_respell(w, fixes.get(w, ())) for w in words)
+def respelt(query: str, fixes: dict[str, tuple[str, ...]]) -> str:
+    """``query`` with each corrected word replaced by an OR of its fixes, where it stands
+    as a plain word: not quoted, in a regex, after a field or sign, or carrying ``~*?``."""
+    if not fixes:
+        return query
+    words = "|".join(re.escape(w) for w in sorted(fixes, key=len, reverse=True))
+    plain = re.compile(rf"(?<![\w:~*?/-])({words})(?![\w:~*?])")
+    return map_outside(query, lambda part: plain.sub(lambda m: _respell(m[1], fixes[m[1]]), part))
 
 
 def _respell(word: str, options: tuple[str, ...]) -> str:
