@@ -41,7 +41,7 @@ _QUESTION_MARK = re.compile(r"\?+(?![\w*~^?]|[-+/\"']\w)")
 _PIPED = re.compile(
     r'(?<![^\s(])((?:\{\d+\})?[+-]?(?:[A-Za-z_]\w*:)?)([^\s|()"]+(?:\|+[^\s|()"]+)+)(?![^\s)])'
 )
-_PIPE = re.compile(r"\s*\|+\s*")
+_PIPE = re.compile(r"\s*\|[\s|]*")
 _HELD = re.compile(r"\0(\d+)\0")
 _RANGE = re.compile(r"[A-Za-z_]\w*:[\[{][^\]}]*[\]}]")
 
@@ -110,8 +110,12 @@ def _refuse_unbalanced_structure(lexical: str) -> None:
             break
     if depth != 0:
         raise QuerySyntaxError("unbalanced parentheses", hint="each ( needs a )")
-    words = structure.replace("(", " ").replace(")", " ").split()
-    if words and (words[0] in {"AND", "OR"} or words[-1] in {"AND", "OR", "NOT"}):
+    words = structure.replace("(", " ( ").replace(")", " ) ").split()
+    edges = zip(["(", *words], [*words, ")"], strict=True)
+    if any(
+        (a == "(" and b in {"AND", "OR"}) or (b == ")" and a in {"AND", "OR", "NOT"})
+        for a, b in edges
+    ):
         raise QuerySyntaxError(
             "a dangling AND, OR or NOT", hint="put a word either side of AND and OR, and after NOT"
         )
@@ -119,8 +123,7 @@ def _refuse_unbalanced_structure(lexical: str) -> None:
 
 def _refuse_dangling_pipe(lexical: str) -> None:
     structure = without_literals(quote_view(lexical).translate(_ASCII_SYNTAX))
-    words = structure.replace("(", " ").replace(")", " ").strip()
-    if words.startswith("|") or words.endswith("|"):
+    if re.search(r"(?:^|\()\s*\||\|\s*(?:$|\))", structure):
         raise QuerySyntaxError("a | with no word beside it", hint="write a|b: a word either side")
 
 

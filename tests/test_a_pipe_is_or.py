@@ -16,6 +16,7 @@ from fnd.query_plan import QueryPlan
         ("maven||mvn", "(maven OR mvn)"),
         ("maven | mvn", "maven OR mvn"),
         ("maven || mvn", "maven OR mvn"),
+        ("maven | | mvn", "maven OR mvn"),
         ("title:zephyr|quokka", "title:(zephyr OR quokka)"),
         ("-maven|mvn build", "-(maven OR mvn) build"),
         ("+maven|mvn build", "+(maven OR mvn) build"),
@@ -41,7 +42,18 @@ def test_a_pipe_reads_as_or(typed: str, lexical: str) -> None:
     assert QueryPlan.from_user_text(typed).lexical == lexical
 
 
-@pytest.mark.parametrize("typed", ["maven|", "|maven", "maven | ", "maven || commands |"])
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "maven|",
+        "|maven",
+        "maven | ",
+        "maven || commands |",
+        "(maven|) commands",
+        "a (|b)",
+        "a (b |) c",
+    ],
+)
 def test_a_pipe_without_a_word_beside_it_is_refused(typed: str) -> None:
     with pytest.raises(QuerySyntaxError, match=r"\|"):
         QueryPlan.from_user_text(typed)
