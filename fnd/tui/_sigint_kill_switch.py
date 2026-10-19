@@ -11,7 +11,9 @@ enabled. The tty driver then converts ``^C`` to a real ``SIGINT``, which
 the kernel delivers to the Python process even while asyncio is wedged.
 We install a Python signal handler that asks the app to exit cleanly on
 the first press, then unconditionally hard-exits on any subsequent press
-so a wedged loop can never trap the user.
+so a wedged loop can never trap the user. Once ``run`` returns,
+``quiet_teardown_on_sigint`` swallows one further press so teardown can
+finish silently, and hard-exits on the next.
 
 Implementation notes:
 
@@ -24,10 +26,8 @@ Implementation notes:
   primitive is ``loop.call_soon_threadsafe(app.exit)``: thread-safe by
   design, fires the wakeup pipe, and the loop processes the callback
   on its next iteration.
-- The hard-exit threshold is a count, not a time window. Any second
-  ``^C`` triggers ``os._exit(130)`` regardless of how slowly the user
-  paces presses. A natural double-tap was previously misclassified as
-  "still the first press" if the user paused more than a second.
+- The hard-exit threshold is a count, not a time window, so it holds
+  however slowly the user paces presses.
 """
 
 from __future__ import annotations
@@ -112,3 +112,16 @@ def install(app: App[Any]) -> Iterator[None]:
 @contextlib.contextmanager
 def kill_switch(app: App[Any]) -> Generator[None]:
     yield from install(app)
+
+
+def quiet_teardown_on_sigint() -> None:
+    """After the app has quit, a first ^C lets teardown finish silently; any further ^C hard-exits."""
+    presses = 0
+
+    def _handler(_signum: int, _frame: Any) -> None:
+        nonlocal presses
+        presses += 1
+        if presses > 1:
+            _hard_exit()
+
+    signal.signal(signal.SIGINT, _handler)

@@ -24,7 +24,7 @@ import signal
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from fnd.tui._sigint_kill_switch import _ENV_VAR, kill_switch
+from fnd.tui._sigint_kill_switch import _ENV_VAR, kill_switch, quiet_teardown_on_sigint
 
 
 def _stub_app() -> MagicMock:
@@ -133,3 +133,15 @@ def test_call_soon_threadsafe_arg_is_app_exit_not_a_lambda() -> None:
             handler(signal.SIGINT, None)
     (scheduled,), _kwargs = fake_loop.call_soon_threadsafe.call_args
     assert scheduled is app.exit
+
+
+def test_after_quit_the_first_sigint_is_swallowed_and_the_second_hard_exits() -> None:
+    """Post-quit teardown absorbs one ^C silently; the next one still escapes a wedged teardown."""
+    with patch("fnd.tui._sigint_kill_switch._hard_exit") as hard_exit:
+        quiet_teardown_on_sigint()
+        handler = signal.getsignal(signal.SIGINT)
+        assert callable(handler)
+        handler(signal.SIGINT, None)
+        hard_exit.assert_not_called()
+        handler(signal.SIGINT, None)
+    hard_exit.assert_called_once()

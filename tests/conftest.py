@@ -7,6 +7,7 @@ import contextlib
 import importlib
 import importlib.util
 import os
+import signal
 import sys
 from collections.abc import Generator
 from pathlib import Path
@@ -232,6 +233,14 @@ def saved_empty_scope(isolated_ui_state: Path) -> Path:
 
     save(UiState(), path=isolated_ui_state)
     return isolated_ui_state
+
+
+@pytest.fixture(autouse=True)
+def restored_sigint_handler() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+    """`fnd tui` leaves a post-quit SIGINT handler installed; keep it out of the pytest process."""
+    previous = signal.getsignal(signal.SIGINT)
+    yield
+    signal.signal(signal.SIGINT, previous)
 
 
 @pytest.fixture(autouse=True)

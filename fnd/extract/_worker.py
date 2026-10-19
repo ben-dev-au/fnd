@@ -19,10 +19,12 @@ import atexit
 import faulthandler
 import multiprocessing as mp
 import os
+import signal
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Any
 
 # Optional per-process trace. FND_WORKER_TRACE=/path enables it; unset
@@ -57,6 +59,10 @@ class StallError(RuntimeError):
     """Raised when the subprocess worker stopped emitting heartbeats
     while still holding a task. The worker has been killed; the next
     call gets a fresh worker."""
+
+
+class WorkerInterrupted(BrokenProcessPool):
+    """The worker died of the user's ^C (it shares the terminal's process group); never retried."""
 
 
 # Module-level pool singleton. Lazy-initialised so importing the module
@@ -99,12 +105,19 @@ def _get_pool() -> ProcessPoolExecutor:
             _pool = ProcessPoolExecutor(
                 max_workers=1,
                 mp_context=mp.get_context("spawn"),
+                initializer=_die_silently_on_sigint,
             )
             atexit.register(shutdown_pool)
     return _pool
 
 
 _pool_lock = threading.Lock()
+
+
+def _die_silently_on_sigint() -> None:
+    # The TUI's ^C reaches this worker too (same process group). Ignoring it
+    # would orphan the worker after the kill switch's os._exit, so die quietly.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
 def _noop_worker() -> int:
@@ -167,6 +180,12 @@ def _kill_pool_workers(pool: ProcessPoolExecutor) -> None:
     for proc in list(procs.values()):
         with _suppress(ProcessLookupError, PermissionError, AttributeError, ValueError):
             proc.kill()
+
+
+def _killed_by_sigint(pool: ProcessPoolExecutor) -> bool:
+    # A broken pool keeps its dead Process objects in _processes until shutdown.
+    procs = getattr(pool, "_processes", {}) or {}
+    return any(proc.exitcode == -signal.SIGINT for proc in list(procs.values()))
 
 
 def _suppress(*excs: type[BaseException]) -> Any:
@@ -390,7 +409,7 @@ def run_in_pool_sync_with_stall_detection[T](
             # BrokenProcessPool, and respawning would put the same
             # slow PDF back on the worker (Cancel would never
             # actually cancel).
-            if attempt == 0 and not _cancel_requested:
+            if attempt == 0 and not _cancel_requested and not isinstance(e, WorkerInterrupted):
                 # Pool was already shutdown_pool'd by the inner handler.
                 continue
             raise
@@ -475,9 +494,12 @@ def _submit_with_stall_detection[T](
 
         try:
             return future.result()
-        except BrokenProcessPool:
+        except BrokenProcessPool as e:
             _trace(f"future-broken arg={args[0] if args else '?'}")
+            interrupted = _killed_by_sigint(pool)
             shutdown_pool()
+            if interrupted:
+                raise WorkerInterrupted(str(e)) from e
             raise
     finally:
         with _suppress(Exception):
