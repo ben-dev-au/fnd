@@ -330,12 +330,8 @@ def tui(
     # hover wheel-scroll); Reading View (`z`) flips it off for native
     # selection/copy/TTS and back on when exited.
     #
-    # ``kill_switch`` sets ``TEXTUAL_ALLOW_SIGNALS=1`` so the tty driver
-    # turns ^C into a real SIGINT (rather than a stdin byte handled by
-    # an asyncio-bound key binding). The installed handler exits the
-    # app cleanly on the first press and unconditionally hard-exits on
-    # any subsequent press, so a wedged event loop can never trap the
-    # user regardless of how slowly they pace presses.
+    # ^C policy (real SIGINT, two-press hard exit, quiet teardown) is in
+    # fnd/tui/_sigint_kill_switch.py's module docstring.
     from fnd.tui._sigint_kill_switch import kill_switch
 
     fnd_app = FNDApp(
@@ -344,7 +340,7 @@ def tui(
         config=cfg,
         launch_filters=launch_filters or None,
     )
-    with kill_switch(fnd_app):
+    with kill_switch(fnd_app, quiet_teardown=True):
         fnd_app.run(mouse=True)
 
 
