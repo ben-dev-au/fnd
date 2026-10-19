@@ -332,7 +332,7 @@ def tui(
     #
     # ^C policy (real SIGINT, two-press hard exit, quiet teardown) is in
     # fnd/tui/_sigint_kill_switch.py's module docstring.
-    from fnd.tui._sigint_kill_switch import kill_switch, quiet_teardown_on_sigint
+    from fnd.tui._sigint_kill_switch import kill_switch
 
     fnd_app = FNDApp(
         collection=collection,
@@ -340,9 +340,8 @@ def tui(
         config=cfg,
         launch_filters=launch_filters or None,
     )
-    with kill_switch(fnd_app):
+    with kill_switch(fnd_app, quiet_teardown=True):
         fnd_app.run(mouse=True)
-    quiet_teardown_on_sigint()
 
 
 @app.command()

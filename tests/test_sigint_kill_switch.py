@@ -145,3 +145,19 @@ def test_after_quit_the_first_sigint_is_swallowed_and_the_second_hard_exits() ->
         hard_exit.assert_not_called()
         handler(signal.SIGINT, None)
     hard_exit.assert_called_once()
+
+
+def test_quiet_teardown_replaces_the_handler_on_exit_without_restoring_the_prior() -> None:
+    """With quiet_teardown, unwinding installs the post-quit handler directly, so no ^C meets the prior one."""
+    prior_calls: list[int] = []
+    signal.signal(signal.SIGINT, lambda signum, _frame: prior_calls.append(signum))
+    with patch("fnd.tui._sigint_kill_switch._hard_exit") as hard_exit:
+        with kill_switch(_stub_app(), quiet_teardown=True):
+            pass
+        handler = signal.getsignal(signal.SIGINT)
+        assert callable(handler)
+        handler(signal.SIGINT, None)
+        hard_exit.assert_not_called()
+        handler(signal.SIGINT, None)
+    hard_exit.assert_called_once()
+    assert prior_calls == []

@@ -54,7 +54,7 @@ def _hard_exit() -> None:
     os._exit(_HARD_EXIT_CODE)
 
 
-def install(app: App[Any]) -> Iterator[None]:
+def install(app: App[Any], *, quiet_teardown: bool = False) -> Iterator[None]:
     """Yield a context manager wrapping ``app.run`` with the kill switch.
 
     Sets ``TEXTUAL_ALLOW_SIGNALS`` so Textual leaves ``ISIG`` on, then
@@ -73,7 +73,8 @@ def install(app: App[Any]) -> Iterator[None]:
 
     Previous environment + handler are restored on exit so a test or a
     repeated launch in the same Python process behaves like a no-op when
-    the context manager unwinds.
+    the context manager unwinds. ``quiet_teardown`` instead hands SIGINT
+    straight to ``quiet_teardown_on_sigint``, leaving no unhandled gap.
     """
     prev_env = os.environ.get(_ENV_VAR)
     os.environ[_ENV_VAR] = "1"
@@ -101,8 +102,11 @@ def install(app: App[Any]) -> Iterator[None]:
     try:
         yield
     finally:
-        with contextlib.suppress(Exception):
-            signal.signal(signal.SIGINT, prev_handler)
+        if quiet_teardown:
+            quiet_teardown_on_sigint()
+        else:
+            with contextlib.suppress(Exception):
+                signal.signal(signal.SIGINT, prev_handler)
         if prev_env is None:
             os.environ.pop(_ENV_VAR, None)
         else:
@@ -110,8 +114,8 @@ def install(app: App[Any]) -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def kill_switch(app: App[Any]) -> Generator[None]:
-    yield from install(app)
+def kill_switch(app: App[Any], *, quiet_teardown: bool = False) -> Generator[None]:
+    yield from install(app, quiet_teardown=quiet_teardown)
 
 
 def quiet_teardown_on_sigint() -> None:
