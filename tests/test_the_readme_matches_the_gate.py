@@ -9,6 +9,7 @@ lacks a block.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fnd.file_facts import FileFacts
@@ -47,7 +48,7 @@ def test_the_readme_says_which_kinds() -> None:
     """The row named no kinds at all, so "whatever the extension" was the only
     scope a reader could take from it."""
     readme = Path("README.md").read_text(encoding="utf-8")
-    row = next(line for line in readme.splitlines() if line.startswith("| `frontmatter` |"))
+    row = next(line for line in readme.splitlines() if re.match(r"\| `frontmatter` +\|", line))
 
     assert ".md" in row, row
     assert ".txt" in row, row
@@ -56,6 +57,6 @@ def test_the_readme_says_which_kinds() -> None:
 
 def test_the_readme_does_not_promise_a_pass_for_every_blockless_file() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
-    row = next(line for line in readme.splitlines() if line.startswith("| `frontmatter` |"))
+    row = next(line for line in readme.splitlines() if re.match(r"\| `frontmatter` +\|", line))
 
     assert "A file without one passes" not in row, row

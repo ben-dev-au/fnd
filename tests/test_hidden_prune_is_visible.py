@@ -22,7 +22,7 @@ _README = Path(__file__).resolve().parent.parent / "README.md"
 
 
 def test_the_readme_filter_table_lists_it() -> None:
-    table = _README.read_text(encoding="utf-8").split("| Filter | What it does |")[1]
+    table = re.split(r"\| Filter +\| What it does +\|", _README.read_text(encoding="utf-8"))[1]
     row = table.splitlines()[2]
     assert "Hidden files" in row, row
     assert "always on" in row.lower(), row

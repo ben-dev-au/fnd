@@ -3,29 +3,28 @@
 [![CI](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml/badge.svg)](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![Platform: macOS | Linux (alpha) | Windows (alpha)](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20(alpha)%20%7C%20Windows%20(alpha)-lightgrey.svg)](#platform-support)
+[![Platform: macOS | Linux (alpha) | Windows (alpha)](<https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20(alpha)%20%7C%20Windows%20(alpha)-lightgrey.svg>)](#platform-support)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/ben.dev.au)
 
-Fast, free, keyboard-driven document search for macOS. Indexes PDF, DOCX, PPTX,
-MD and 60 different file types, with strong BM25 ranking, in-file navigation, an
-"Open with…" launcher, and a lazygit-style TUI.
+Fast, free, keyboard-driven document search for macOS. **100% local and
+private.** Built for Markdown, and indexes PDF, DOCX, PPTX, EPUB and 35 more
+file types, with strong BM25 ranking, in-file navigation, an "Open with…"
+launcher, and a lazygit-style TUI.
 
-> **Linux and Windows are alpha**: CI-tested, never used in anger.
+<p align="center">
+<img src="https://raw.githubusercontent.com/ben-dev-au/fnd/main/assets/fnd_screenshot_sml.jpg" alt="fnd: results, outline and preview" width="65%">
+</p>
+
+> **macOS is stable; Linux and Windows are alpha**: CI-tested, never used in anger.
 > [Open an issue](https://github.com/ben-dev-au/fnd/issues) when you hit
 > something. See [Platform support](#platform-support).
-
-## Status
-
-On macOS, core features are complete and stable, in a refinement period. On
-Linux and Windows, treat everything as unproven.
 
 ## Requirements
 
 - **macOS 15+ on Apple silicon**: supported.
-- **Linux** or **Windows**: alpha, largely untested. See
-  [Platform support](#platform-support).
-- Nothing else to set up. Each install option below brings Python 3.13 with it.
-- A modern terminal is recommended (see [Terminal compatibility](#terminal-compatibility)).
+- **Linux** or **Windows**: alpha. See [Platform support](#platform-support).
+- Homebrew and uv bring Python 3.13 with them; pipx needs it installed.
+- A modern terminal (see [Terminal compatibility](#terminal-compatibility)).
 
 ## Install
 
@@ -58,32 +57,36 @@ Releases carry build provenance; see [`SECURITY.md`](SECURITY.md) to verify a do
 
 ## Features
 
-- **Multi-format indexing**: PDF, DOCX, PPTX, Markdown, and plain text.
-- **Named collections**: group sources (per-source roots, include/exclude
-  globs, optional symlink-following) and search them individually or together.
+- **Markdown first, 40 file types**: Markdown and plain text, PDF, DOCX,
+  PPTX, OpenDocument, EPUB, HTML, 22 code languages, data files (JSON, YAML,
+  CSV, …), Jupyter notebooks.
+- **Named collections**: group sources and search them individually or
+  together; each source has its own **Index filters** and honours
+  `.gitignore` / `.fndignore`.
 - **Strong ranking**: BM25 with regime-aware fusion (strong-signal / fusion /
   cascade) for stable results across corpora of different sizes.
+- **Auto-fuzzy matching**: a word no file holds is respelt, and the line under
+  the query says so; `Ctrl+T` searches as typed.
 - **Expressive query language**: phrases, boolean, proximity, fuzzy, field
-  qualifiers, wildcards, date filters, and markdown-frontmatter predicates
+  qualifiers, wildcards, regex, date filters, and Markdown frontmatter filters
   (see [Search how-to](#search-how-to)).
 - **lazygit-style TUI**: live search as you type, syntax-highlighted preview,
-  and in-file navigation that jumps to the matching PDF page, PPTX slide, or
-  Markdown heading.
+  an Outline pane, match navigation, Reading View, and in-file navigation that
+  jumps to the matching PDF page, PPTX slide, or Markdown heading.
 - **"Open with…" launcher**: open a hit in Preview, Skim, Obsidian, VS Code,
   PDF Expert, or your own configured app, with page/line/heading deep-links
   where the app supports them (see [Open with…](#open-with-apps)).
 - **Obsidian integration**: vault auto-detection, frontmatter filters, and
   line-precise jumps via the Advanced URI plugin.
-- **Structured PDF extraction (opt-in)**: headings, lists, tables, and
-  bold/italic, with a shared content-addressed extraction cache and
-  auto-resume on interrupted reindexes.
-- **Local and private**: no network, no telemetry. The index lives on your
-  machine; state is hardened to `0o700`.
+- **Semantic search (opt-in)**: a local embedding model blended into the BM25
+  ranking (see [Semantic search](#semantic-search-opt-in)).
+- **PDF texturising (opt-in)**: structured PDF extraction (headings, lists,
+  tables, bold/italic) with a shared PDF Texture Cache (see
+  [PDF texturising](#pdf-texturising-opt-in)).
+- **100% local and private**: no account, no cloud, no telemetry. The network
+  is used only to download an opt-in extra.
 
 ## Platform support
-
-- macOS 15+ on Apple silicon: supported.
-- Linux and Windows: alpha.
 
 Read the table as **what is implemented**, not what is verified:
 
@@ -94,65 +97,95 @@ Read the table as **what is implemented**, not what is verified:
 | Open in app / **Open with…**      | ✓              | ✓                                | ✓                  |
 | Reveal in file manager (`R`)      | Finder         | file-manager `--select` → folder | Explorer `/select` |
 | PDF page-jump on Open             | Skim, Preview  | Zathura, Okular                  | SumatraPDF         |
-| Structured PDF extra (docling)    | ✓              | ✓                                | ✓                  |
+| PDF texturising (opt-in)          | ✓              | ✓                                | ✓                  |
 | Created-date filter               | ✓ (birth time) | best-effort (statx)              | ✓ (creation time)  |
 | Cloud-only file handling          | iCloud Drive   | not detectable                   | OneDrive & co.     |
 | Finder tag filtering              | ✓              | no OS equivalent                 | no OS equivalent   |
 | YAML `tags:` filtering            | ✓              | ✓                                | ✓                  |
 
-Where an OS has no equivalent, fnd degrades rather than errors. PDF viewers are
-auto-detected, so the "Open with…" picker lists only what is installed. On
-Linux/Windows point `[app_defaults].pdf` at your viewer, or add one with an
-`[apps.<id>]` block ([`docs/apps.md`](docs/apps.md)); those handlers are written
-from each app's documented CLI and unconfirmed against a live install. Homebrew
-is macOS-only; `uv`/`pipx` work anywhere.
-
-Reports from Linux and Windows are valuable, "it worked fine" included.
+- Where an OS has no equivalent, the feature is skipped, not an error.
+- "Open with…" lists only the apps you have installed.
+- Linux and Windows app handlers follow each app's documentation and are
+  unconfirmed; to add a viewer, see [`docs/apps.md`](docs/apps.md).
+- Reports from Linux and Windows are valuable, "it worked fine" included.
 
 ## Quick start
 
+### First collection: from the TUI
+
+1. Run `fnd`. With no collections yet, it opens straight into **Add collection**.
+2. Fill in the **Name** and the source's **Path** (`~/…` is fine). Optionally
+   set its **Index filters** (file types, excluded paths and folders, tags,
+   size, dates) and **Frontmatter rule**.
+3. **Ctrl+S** saves and opens the collection's page; **Update index** builds it.
+4. `Esc` back to the search and start typing.
+
+- Later collections: `Tab` out of the query bar, press `:`, then
+  **Collections → Add collection**.
+- Add more folders: open the collection → **Sources → Add source**.
+- Saving never indexes: `↻` marks a collection that is behind; press `u` on it.
+
+### First collection: from the CLI
+
 ```sh
-fnd index ~/Documents/Notes       # ad-hoc index a folder into the default collection
-fnd search "holiday budget"       # search from the terminal
-fnd                               # launch the interactive TUI
+fnd collection add notes --source ~/Notes --include "**/*.md" --exclude-dir archive
+fnd collection reindex notes
 ```
 
-For ongoing use, define collections (see [Collections & sources](#collections--sources))
-and reindex them with `fnd collection reindex <name>`.
+### Everyday use
+
+```sh
+fnd binary tree -c notes     # open the TUI on that query, scoped to notes
+fnd binary tree              # the same, across your selected collections
+```
+
+### Obsidian
+
+1. Add the vault as a collection, as above (Path: the vault folder).
+2. Open notes in Obsidian: Settings (`:`, outside the query bar) → **Collections →** the vault → **Sources →** the source →
+   **App: Obsidian** (the **Obsidian vault** name fills in) → **Ctrl+S**.
+3. Install Obsidian's **Advanced URI** plugin to land on the matching line;
+   without it, `⌥O` opens the note at the matching heading.
+
+- Frontmatter: filter a query with `[Status == 'draft']`, or a source with a
+  **Frontmatter rule** (`--filter` on the CLI). See
+  [Markdown frontmatter filter](#markdown-frontmatter-filter).
+- `tags:` work with the Filters pane and `--tag`; tag a note `no_index` to keep it out.
+- `.obsidian/` is hidden, so never indexed.
 
 ## Using the TUI
 
-Run `fnd` with no arguments for the interactive interface: the **query bar** at
-the top, the **results tree** (hits grouped by file) on the left with the
-**outline** of the previewed document beneath it, and the **preview pane** on the
-right showing the matching passage with your search terms highlighted. Just start typing, and results update as you go,
-and the [query language](#search-how-to) works exactly as it does from the CLI.
+Run `fnd` with no arguments:
+
+- **Query bar** (top): results update as you type; same [query language](#search-how-to) as the CLI.
+- **Results** (left): hits grouped by file, with the **Outline**, **Collections** and **Filters** panes beneath.
+- **Preview** (right): the matching passage, search terms highlighted.
 
 ### Moving around with the keyboard
 
-| Key            | What it does                                                                                                                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `↑` / `↓`      | Move the cursor up/down through results (vim's `k` / `j` also work).                                                                                                                                                                               |
-| `⌥↑` / `⌥↓`    | **Skip**: hold Option (Alt) and arrow to move through results _without_ loading each preview. Browse fast with no per-row mount/lag. The preview loads again on a normal `↑`/`↓` (the row you land on) or `Enter` (the exact row you skipped to). |
-| `Enter`        | Load the highlighted result into the preview (handy right after an Option-skip).                                                                                                                                                                   |
-| `→`            | Expand the focused file to its matching sections; press again to drill into the first.                                                                                                                                                             |
-| `←`            | Collapse the focused node, or back out to its parent (lazygit-style).                                                                                                                                                                              |
-| `Ctrl→` / `⌥→` | **Expand all**: expand the focused node _and its whole subtree_ (results, collections and filters trees).                                                                                                                                          |
-| `Ctrl←` / `⌥←` | **Collapse children**: fold away every descendant, keeping the node itself open.                                                                                                                                                                   |
-| `Tab`          | Move focus to the next pane.                                                                                                                                                                                                                       |
-| `/`            | Jump back to the query bar to refine your search.                                                                                                                                                                                                  |
-| `o`            | Focus the **Outline**. `Enter` on a heading (or `→` on one with nothing to expand) moves the preview there.                                                                                                                                        |
-| `↑` / `↓`      | When the preview pane is focused, scroll the preview.                                                                                                                                                                                              |
+| Key             | What it does                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `↑` / `↓`       | Move the cursor up/down through results (vim's `k` / `j` also work).                                                                       |
+| `⌥↑` / `⌥↓`     | **Skip**: hold Option (Alt) to move through results _without_ loading each preview. The preview loads again on a plain `↑`/`↓` or `Enter`. |
+| `Enter`         | Load the highlighted result into the preview (handy right after an Option-skip).                                                           |
+| `→`             | Expand the focused file to its matching sections; press again to drill into the first.                                                     |
+| `←`             | Collapse the focused node, or back out to its parent (lazygit-style).                                                                      |
+| `Ctrl→` / `⌥→`  | **Expand all**: expand the focused node _and its whole subtree_ (results, collections and filters trees).                                  |
+| `Ctrl←` / `⌥←`  | **Collapse children**: fold away every descendant, keeping the node itself open.                                                           |
+| `Tab`           | Move focus to the next pane.                                                                                                               |
+| `/`             | Jump back to the query bar to refine your search.                                                                                          |
+| `r` `p` `c` `f` | Focus **Results**, **Preview**, **Collections**, **Filters**.                                                                              |
+| `o`             | Focus the **Outline**. `Enter` on a heading (or `→` on one with nothing to expand) moves the preview there.                                |
+| `n` / `b`       | Next / previous match in the preview.                                                                                                      |
+| `↑` / `↓`       | When the preview pane is focused, scroll the preview.                                                                                      |
+| `z`             | **Reading View**: hide the sidebar so the preview fills the width, for clean text selection.                                               |
 
 ### The outline
 
-The Outline pane lists the headings of the document in the preview: Markdown,
-Word, OpenDocument, HTML and EPUB headings, slide titles, notebook headings, and
-a PDF's bookmarks (without bookmarks, the headings its preview shows). Its
-highlight follows you as you move between results and as you scroll. A heading
-you jump to lands where matches land, a quarter of the way down the preview.
-Code, data and plain-text files have no outline. Collapse the pane with `←` at
-its top level, like the others.
+- Lists the headings of the previewed document: document headings, slide
+  titles, a PDF's bookmarks (or, without any, its preview headings).
+- Follows you as you move between results and scroll.
+- Code, data and plain-text files have no outline.
 
 > **Option-skip on Apple Terminal:** for `⌥↑` / `⌥↓` to reach fnd, enable
 > _Settings → Profiles → Keys → Left Option key → Esc+_. iTerm2 and most modern
@@ -164,118 +197,107 @@ its top level, like the others.
 > for typing: Danish, Norwegian and many other layouts put letters and symbols
 > there.
 >
-> **Expand/collapse-all: Ctrl or Option?** These are bound to _both_ `Ctrl` and
-> `Alt`+arrow, because a single physical combo reaches the app under different
-> names per terminal. On macOS, `⌃←`/`⌃→` are usually captured by Mission
-> Control ("Move a space"), so use **`⌥←`/`⌥→`**; your terminal forwards it as
-> whichever of the two the app has bound. On Windows/Linux, `Ctrl`+arrow works
-> directly.
+> **Expand/collapse all:** on macOS use **`⌥←`/`⌥→`**, since Mission Control
+> usually takes `⌃←`/`⌃→`. On Windows and Linux, `Ctrl`+arrow works.
 
 ### Opening and acting on a result
 
-| Key            | What it does                                                                                                                                                                       |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `⌥O` / `Ctrl+O` | Open the hit in its resolved app, jumping to the matching page / slide / line / heading. A chord, so a stray `o` cannot launch an app (`Alt+O` on Windows and Linux).        |
-| `O`            | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels.                                 |
-| `R`            | **Reveal**: show the file in your file manager (Finder on macOS, File Explorer on Windows) with it selected, without opening it. Also on the last row of the `O` picker. |
-| `Space`        | Quick Look the file.                                                                                                                                                               |
-| `:`            | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list.                                                                               |
-| `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                                                  |
-| `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                                                              |
-| `Shift+Esc` / `Ctrl+T` | Search the current query as typed, respelling no word; press again to respell. Shift+Esc needs the Kitty keyboard protocol (Kitty, Ghostty); Ctrl+T works everywhere. |
-| `h`            | Toggle search-term highlighting in the preview.                                                                                                                                    |
-| `w`            | Warm the focused file completely, so scrolling anywhere in it is instant. Asks first on a large file; press again on that file to stop.                                                          |
-| `q` / `Ctrl+C` | Quit. `Esc` backs out of any overlay or nested screen.                                                                                                                             |
+| Key                     | What it does                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `⌥O` / `Ctrl+O`         | Open the file at the matching page / slide / line / heading (`Alt+O` on Windows and Linux).                                                                              |
+| `O`                     | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels.                       |
+| `R`                     | **Reveal**: show the file in your file manager (Finder on macOS, File Explorer on Windows) with it selected, without opening it. Also on the last row of the `O` picker. |
+| `:`                     | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list. Not from the query bar, where it types a `:`.                       |
+| `?`                     | Keybindings cheat sheet (press again to dismiss).                                                                                                                        |
+| `Ctrl+F`                | Toggle auto-fuzzy matching (persists to your config).                                                                                                                    |
+| `Shift+Esc` / `Ctrl+T`  | Search the current query as typed, respelling no word; press again to respell. Shift+Esc needs the Kitty keyboard protocol (Kitty, Ghostty); Ctrl+T works everywhere.    |
+| `h`                     | Toggle search-term highlighting in the preview.                                                                                                                          |
+| `w`                     | Warm the focused file completely, so scrolling anywhere in it is instant. Asks first on a large file; press again on that file to stop.                                  |
+| `X`                     | Clear every active filter (file type, dates, tags); the collection scope stays.                                                                                          |
+| `Ctrl+Enter` / `⌥Enter` | In Collections or Filters, toggle a row without re-running the query, to change several at once.                                                                         |
+| `u`                     | In Collections, update the highlighted collection's index (`↻` marks one that needs it).                                                                                 |
+| `Ctrl+Y`                | Copy the query and active filters as a runnable `fnd` command.                                                                                                           |
+| `q` / `Ctrl+C`          | Quit. `Esc` backs out of any overlay or nested screen.                                                                                                                   |
 
-Inside the Settings menu (`:`) navigate with `↑↓` (or `j`/`k`), press `Enter` to
-open / edit / toggle the focused row, `/` to filter rows by label, and `Esc` or
-`←` to step back.
+- Settings menu (`:`): `↑↓` or `j`/`k` to move, `Enter` to open / edit / toggle, `/` to filter rows, `Esc` or `←` to step back.
+- Rebind keys in `keybindings.toml`: **Settings → External → Keybindings file**.
 
 ### Terminal compatibility
 
-A modern terminal is required for optimal formatting. For example:
-
-- **macOS**: iTerm2, Ghostty, Kitty, WezTerm. Terminal.app works but its
-  formatting varies by font (Menlo is a reasonable default); a modern terminal
-  is strongly suggested.
-- **Linux**: Kitty, WezTerm, Alacritty, GNOME Terminal, or Konsole should all be
-  fine: expected to work, not yet confirmed.
-- **Windows**: **Windows Terminal** (bundled with Windows 11) or WezTerm. The
-  legacy `conhost.exe` console renders box-drawing and colours poorly. Untested;
-  if the TUI looks wrong, the terminal is the first thing to change.
+- **macOS**: iTerm2, Ghostty, Kitty or WezTerm. Terminal.app works, but how it
+  draws borders depends on the font (Menlo is a reasonable default).
+- **Linux**: Kitty, WezTerm, Alacritty, GNOME Terminal or Konsole (expected to
+  work, not yet confirmed).
+- **Windows**: Windows Terminal (built into Windows 11) or WezTerm. The old
+  console draws borders and colours poorly.
+- If the TUI looks wrong, try another terminal first.
 
 ## Command reference
 
-| Command                                         | What it does                                                                                           |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `fnd`                                           | Launch the interactive TUI.                                                                            |
-| `fnd <query>`                                   | Launch the TUI with `<query>` pre-filled.                                                              |
-| `fnd -c <collection> <query>`                   | Launch the TUI scoped to a collection (`-c all` for every collection).                                 |
-| `fnd tui [query]`                               | Explicitly launch the TUI (optional seed query).                                                       |
-| `fnd search "<query>"`                          | Terminal search. Flags: `--limit`, `-c/--collection`, `--meta`, `--explain N`, plus the filters below. |
-| `fnd index <root>`                              | Ad-hoc index a single root into the default collection.                                                |
-| `fnd collection list`                           | List configured collections and their sources.                                                         |
-| `fnd collection add <name>`                     | Add (or extend) a collection in the config TOML.                                                       |
-| `fnd collection reindex <name>`                 | Index or re-index a configured collection (`--rebuild` to start fresh).                                |
-| `fnd config show`                               | Print the effective merged config as JSON.                                                             |
-| `fnd config path`                               | Print the path to the config TOML.                                                                     |
-| `fnd config edit`                               | Open the config TOML in `$EDITOR` (creates a template if missing).                                     |
-| `fnd config validate`                           | Validate the config TOML.                                                                              |
-| `fnd extras list`                               | List optional extras and their installed status.                                                       |
-| `fnd extras status`                             | Show installed extras with disk usage.                                                                 |
-| `fnd extras install <name>`                     | Install an extra after a disk-impact disclosure prompt.                                                |
-| `fnd extras uninstall <name>`                   | Remove an extra (indexed chunks remain).                                                               |
-| `fnd cache status` / `info` / `prune` / `clear` | Manage the PDF extraction cache.                                                                       |
-| `fnd version`                                   | Print the fnd version.                                                                                 |
+| Command                                                           | What it does                                                                                                                 |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `fnd <query> -c <collection>`                                     | **The usual way in**: launch the TUI with `<query>` pre-filled, scoped to a collection.                                      |
+| `fnd <query>`                                                     | Launch the TUI with `<query>` pre-filled, across the remembered collections.                                                 |
+| `fnd` / `fnd -c <collection>`                                     | Launch the TUI with an empty query (`-c all` for every collection).                                                          |
+| `fnd tui [query]`                                                 | Explicitly launch the TUI; use it when the query starts with a subcommand name (`fnd tui version`). Takes the filters below. |
+| `fnd search "<query>"`                                            | Terminal search. Flags: `--limit`, `-c/--collection`, `--meta`, `--as-typed`, `--explain N`, plus the filters below.         |
+| `fnd index <root>`                                                | Ad-hoc index one folder into the default collection (`--no-embed` skips semantic embedding).                                 |
+| `fnd collection list`                                             | List configured collections and their sources.                                                                               |
+| `fnd collection add <name>`                                       | Add (or extend) a collection in the config TOML.                                                                             |
+| `fnd collection reindex <name>`                                   | Index or re-index a configured collection (`--rebuild` to start fresh).                                                      |
+| `fnd config show`                                                 | Print the effective merged config as JSON.                                                                                   |
+| `fnd config path`                                                 | Print the path to the config TOML.                                                                                           |
+| `fnd config edit`                                                 | Open the config TOML in `$EDITOR` (creates a template if missing).                                                           |
+| `fnd config validate`                                             | Validate the config TOML.                                                                                                    |
+| `fnd extras list`                                                 | List optional extras and their installed status.                                                                             |
+| `fnd extras status`                                               | Show installed extras with disk usage.                                                                                       |
+| `fnd extras install <name>`                                       | Install an extra after a disk-impact disclosure prompt.                                                                      |
+| `fnd extras uninstall <name>`                                     | Remove an extra (indexed chunks remain).                                                                                     |
+| `fnd cache status` / `info` / `prune` / `prune-orphans` / `clear` | Manage the PDF Texture Cache.                                                                                                |
+| `fnd version`                                                     | Print the fnd version.                                                                                                       |
 
 ### Search filters
 
-`fnd search` takes the same filters as the TUI's Filters pane:
+`fnd search` and `fnd tui` take the same filters as the TUI's Filters pane:
 
-| Flag                   | Meaning                                                   |
-| ---------------------- | --------------------------------------------------------- |
-| `--tag <name>`         | Only files carrying this tag. Repeatable.                 |
-| `--not-tag <name>`     | Exclude files carrying this tag. Repeatable.              |
-| `--tag-match all\|any` | Combine multiple `--tag`s. Default `all`.                 |
-| `--created <window>`   | Created within `today`/`yesterday`/`week`/`month`/`year`. |
-| `--modified <window>`  | Modified within the same windows.                         |
-| `--kind <ext>`         | Restrict to `pdf`/`docx`/`pptx`/`md`/`txt`. Repeatable.   |
+| Flag                   | Meaning                                                              |
+| ---------------------- | -------------------------------------------------------------------- |
+| `--tag <name>`         | Only files carrying this tag. Repeatable.                            |
+| `--not-tag <name>`     | Exclude files carrying this tag. Repeatable.                         |
+| `--tag-match all\|any` | Combine multiple `--tag`s. Default `all`.                            |
+| `--created <window>`   | Created within `today`/`yesterday`/`week`/`month`/`year`.            |
+| `--modified <window>`  | Modified within the same windows.                                    |
+| `--kind <kind>`        | A file type or category (`md`, `pdf`, `code`, `ebooks`). Repeatable. |
 
 ```bash
 fnd search "risotto" --tag recipe --not-tag draft --created month
 ```
 
-Tags come from Obsidian-style YAML frontmatter (`tags:`) and, on macOS, from
-Finder tags. Nested tags work as a hierarchy: `--tag project` also matches
-`project/alpha`. Tag matching is case-insensitive, and a leading `#` is
-optional. Which sources are read is set by `defaults.tag_sources` in the config
-TOML; disabling one takes effect immediately, with no re-index.
-
-Created dates come from the filesystem's creation time: macOS birth time,
-Windows creation time, and statx-capable Linux filesystems (e.g. ext4). Files
-without one match only the default (unfiltered) window. Only the macOS path has
-been exercised against a real corpus.
+- Tags come from YAML frontmatter (`tags:`, Obsidian-style) and, on macOS, Finder tags.
+- `--tag project` also matches `project/alpha`; case and a leading `#` don't matter.
+- `defaults.tag_sources` picks which tags are read; no reindex needed.
+- Created dates are the filesystem's creation time: macOS birth time, Windows
+  creation time, statx-capable Linux filesystems (e.g. ext4). A file without
+  one matches only the unfiltered window.
 
 ## Open with… apps
 
-`⌥O` (`Alt+O` on Windows and Linux, or `Ctrl+O` anywhere) opens a hit in its
-resolved app, jumping to the matching page, slide, line or heading where the
-app allows. `O` opens the **Open with…** picker, listing
-only installed apps: **Skim, Preview, PDF Expert** (macOS), **Zathura, Okular**
-(Linux), **SumatraPDF** (Windows), plus **Obsidian, VS Code, System Default**.
-
-Set a default per file type with `[app_defaults]`, or per source. Add your own
-with an `[apps.<id>]` block ([`docs/apps.md`](docs/apps.md)). Templates are
-passed as argv lists, never a shell, so a path cannot inject commands.
+- `⌥O` or `Ctrl+O` opens a hit in its resolved app at the matching page, slide, line or heading,
+  where the app allows.
+- `O` opens the **Open with…** picker, listing only installed apps: **Skim, Preview, PDF Expert** (macOS),
+  **Zathura, Okular** (Linux), **SumatraPDF** (Windows), plus **Obsidian, VS
+  Code, System Default**.
+- Set a default app per file type with `[app_defaults]`, or per source.
+- Add your own app: [`docs/apps.md`](docs/apps.md).
 
 ## Collections & sources
 
-A **collection** is a named group of source folders you search together; each
-**source** is a folder plus the include/exclude globs that decide which files in
-it get indexed. Out of the box fnd searches **all** your collections; tick
-individual ones in the sidebar to narrow that, and the selection is remembered
-for next launch. `-c <name>` scopes a single launch, and `-c all` widens it back
-out again without touching what's remembered.
+- A **collection** is a named group of folders (**sources**) you search
+  together; each source's **Index filters** decide which of its files get indexed.
+- fnd searches **all** collections by default; tick some in the Collections pane
+  to narrow it, and the choice is remembered.
+- `fnd -c <name>` narrows one launch; `-c all` widens it, leaving the remembered
+  choice alone.
 
 Searching several collections marks each result with its collection:
 
@@ -287,46 +309,48 @@ Globs match the path relative to the source root. `*`, `?` and `[abc]` stop at a
 `/`; a whole `**` segment spans zero or more folders, so `**/*.md` catches both
 `a.md` and `notes/deep/a.md`. The `~~` operator uses the same language.
 
-There are three ways to manage collections, and they're interchangeable, because
-the UI writes the same config file you can edit by hand.
+Manage collections from the TUI, the command line or the config file; all
+three edit the same file.
 
 ### From the TUI
 
-Press `:` to open Settings, move to **Collections**, then:
+`Tab` out of the query bar, press `:` to open Settings, move to **Collections**, then:
 
 - **Add a collection**: choose **Add collection** and fill in:
-  - **Collection**: its **Name**.
-  - **Source**, its first folder: a **Path** (`~/…` is fine), **Follow
-    symlinks**, then what gets indexed from it: **Index filters** (file
-    types, excluded paths, tags, size, dates), the **Frontmatter rule**, and
-    **Restrict to these paths**.
+    - **Collection**: its **Name**.
+    - **Source**, its first folder: a **Path** (`~/…` is fine), **Follow
+      symlinks**, then what gets indexed from it: **Index filters** (file
+      types, excluded paths, tags, size, dates), the **Frontmatter rule**, and
+      **Restrict to these paths**.
 
-  Press **Ctrl+S** to save; you land on the new collection's page, where
-  **Update index** builds it.
+    Press **Ctrl+S** to save; you land on the new collection's page, where
+    **Update index** builds it.
+
 - **Add a source to an existing collection**: open the collection, then
   **Sources → Add source**, and set the path, its Index filters, an optional
   per-source app, and (for Obsidian) the vault name. **Ctrl+S** saves and
   returns; **Ctrl+A** saves and adds another.
 - **How editing works**:
-  - A single setting (a toggle, a picker, a value) applies the moment it changes.
-  - A form (a source, Add collection, Index filters) saves with **Ctrl+S**;
-    `Esc` goes back, and asks first if there are unsaved changes.
-  - A screen opened from a form (a source's filters, a picker) carries its
-    changes back to the form on `Esc`.
-  - Saving never indexes. A collection whose index no longer matches its
-    config shows `↻` in the Collections pane; press `u` there, or on its
-    Settings page, to update it.
+    - A single setting (a toggle, a picker, a value) applies the moment it changes.
+    - A form (a source, Add collection, Index filters) saves with **Ctrl+S**;
+      `Esc` goes back, and asks first if there are unsaved changes.
+    - A screen opened from a form (a source's filters, a picker) carries its
+      changes back to the form on `Esc`.
+    - Saving never indexes. A collection whose index no longer matches its
+      config shows `↻` in the Collections pane; press `u` there, or on its
+      Settings page, to update it.
 
 ### From the command line
 
 ```sh
-# Create a collection with one source (repeat --source for more folders)
+# One source per command; run it again to add another folder to the collection
 fnd collection add reading --source ~/Documents/Books
+fnd collection add reading --source ~/Documents/Papers
 
-# Narrow it with globs, or a markdown frontmatter filter
+# Index filters: globs, excluded folders, a frontmatter rule
 fnd collection add notes --source ~/Notes --include "**/*.md" --exclude "drafts/**"
-fnd collection add notes --source ~/Notes --exclude-dir archive --exclude-dir projects/old
-fnd collection add notes --source ~/Vault --filter "NOT ('private' in tags)"
+fnd collection add work --source ~/Work --exclude-dir archive --exclude-dir projects/old
+fnd collection add vault --source ~/Vault --filter "NOT ('private' in tags)"
 
 fnd collection list             # show what's configured
 fnd collection reindex reading  # build/update the index (--rebuild to start fresh)
@@ -362,21 +386,21 @@ existing index returns. They live in `[defaults.filters]`, and per source in
 `[…sources.filters]` which overrides field by field. Settings → **Filters →
 Index filters** edits the defaults; a source's **Index filters** row edits it.
 
-| Filter | What it does |
-| --- | --- |
-| *(always on)* | Hidden files and folders (`.foo`) are skipped, whatever the filters say. Only an `includes` glob naming a dot-prefixed component (`.obsidian/**`) admits one, and then only the paths that glob itself matches. A file whose own name starts with `.` still meets the default `**/.*` exclude: to index one, give the source its own `excludes` without that glob. |
-| `respect_gitignore` | Honours every `.gitignore` down the tree, with git's rules: negation, directory patterns, nearest file wins. Not `.git/info/exclude` and not `core.excludesFile`: neither is in the tree, so honouring them would make one corpus index differently on two machines. Use `.fndignore` for a rule that is yours alone. **On by default.** |
-| `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd: how to hide something from search without hiding it from git. **On by default.** |
-| `excludes` | Path globs never indexed; a folder a `name/**` glob covers is pruned unopened. Settings shows them as **Excluded paths** (presets such as Node modules) plus **Excluded globs** you type. Set once in the defaults for every source; a source's own list replaces it. **System files by default**: `**/.*`, `.DS_Store`, `Thumbs.db`, `desktop.ini` and `.git`. |
-| `exclude_dirs` | Folders under one source's root that are never indexed, e.g. `["archive", "notes/drafts"]`; pruned unopened, matched exactly (case-sensitive), and an `includes` glob cannot bring them back. Settings shows them as **Excluded folders** (a tree to tick, where a ticked folder covers everything in it) plus **Excluded folders (as paths)** you type. Per source only; the source still inherits `excludes`. `fnd collection add --exclude-dir` sets it. |
-| `include_tags` | Index only files carrying one of these tags; the tag rows' `●`. Empty means the tag is not consulted. |
-| `exclude_tags` | Tags that keep a file out; the tag rows' `⊘`. From any source fnd reads: macOS Finder tags and a note's YAML `tags:`. Defaults to `["no_index"]`, so tagging a file `no_index` either way keeps it out. |
-| `kinds` | Restrict to given file types. Empty means every supported type. A source's `includes` folds into this when it names every suffix of a type (`["**/*.md", "**/*.markdown"]`, not `["**/*.md"]` alone). Anything else stays a glob. |
-| `min_size` / `max_size` | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out. |
-| `created_after` / `created_before` | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window: a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept. |
-| `modified_after` / `modified_before` | ISO dates, same semantics. |
-| `frontmatter` | A frontmatter predicate, same syntax as a query: `type == 'note' AND status != 'draft'`. Applies to the kinds that carry frontmatter: **`.md` and its variants, and `.txt`**. A note without a block, or with one that fails the rule, is kept out; a PDF is out of scope and passes. A block that fails to parse fails the rule. |
-| `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
+| Filter                               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(always on)_                        | Hidden files and folders (`.foo`) are skipped, whatever the filters say. Only an `includes` glob naming a dot-prefixed component (`.obsidian/**`) admits one, and then only the paths that glob itself matches. A file whose own name starts with `.` still meets the default `**/.*` exclude: to index one, give the source its own `excludes` without that glob.                                                                                          |
+| `respect_gitignore`                  | Honours every `.gitignore` down the tree, with git's rules: negation, directory patterns, nearest file wins. Not `.git/info/exclude` and not `core.excludesFile`: neither is in the tree, so honouring them would make one corpus index differently on two machines. Use `.fndignore` for a rule that is yours alone. **On by default.**                                                                                                                    |
+| `respect_fndignore`                  | The same syntax in a `.fndignore`, read only by fnd: how to hide something from search without hiding it from git. **On by default.**                                                                                                                                                                                                                                                                                                                       |
+| `excludes`                           | Path globs never indexed; a folder a `name/**` glob covers is pruned unopened. Settings shows them as **Excluded paths** (presets such as Node modules) plus **Excluded globs** you type. Set once in the defaults for every source; a source's own list replaces it. **System files by default**: `**/.*`, `.DS_Store`, `Thumbs.db`, `desktop.ini` and `.git`.                                                                                             |
+| `exclude_dirs`                       | Folders under one source's root that are never indexed, e.g. `["archive", "notes/drafts"]`; pruned unopened, matched exactly (case-sensitive), and an `includes` glob cannot bring them back. Settings shows them as **Excluded folders** (a tree to tick, where a ticked folder covers everything in it) plus **Excluded folders (as paths)** you type. Per source only; the source still inherits `excludes`. `fnd collection add --exclude-dir` sets it. |
+| `include_tags`                       | Index only files carrying one of these tags; the tag rows' `●`. Empty means the tag is not consulted.                                                                                                                                                                                                                                                                                                                                                       |
+| `exclude_tags`                       | Tags that keep a file out; the tag rows' `⊘`. From any source fnd reads: macOS Finder tags and a note's YAML `tags:`. Defaults to `["no_index"]`, so tagging a file `no_index` either way keeps it out.                                                                                                                                                                                                                                                     |
+| `kinds`                              | Restrict to given file types. Empty means every supported type. A source's `includes` folds into this when it names every suffix of a type (`["**/*.md", "**/*.markdown"]`, not `["**/*.md"]` alone). Anything else stays a glob.                                                                                                                                                                                                                           |
+| `min_size` / `max_size`              | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `created_after` / `created_before`   | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window: a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept.                                                                                                                                                                                                                                                     |
+| `modified_after` / `modified_before` | ISO dates, same semantics.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `frontmatter`                        | A frontmatter predicate, same syntax as a query: `type == 'note' AND status != 'draft'`. Applies to the kinds that carry frontmatter: **`.md` and its variants, and `.txt`**. A note without a block, or with one that fails the rule, is kept out; a PDF is out of scope and passes. A block that fails to parse fails the rule.                                                                                                                           |
+| `expression`                         | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it.                                                                                                                                                                                                                                                                                            |
 
 The tree shows one branch per rule. Markers: `●` keep only these, `⊘` never
 these, `○` no rule. An empty branch says what that means, so the file types read
@@ -391,16 +415,8 @@ overrides to nothing; left empty it inherits.
 No rebuild needed: the next update prunes what a new filter excludes.
 
 **Ignore files** apply from the source folder downwards, so an enclosing repo
-does not govern it. Note that a `.gitignore` often excludes large PDFs
-precisely because they are big, and those may be what you want to find.
-
-**Upgrading an existing index.** These defaults are new, so the first update
-after upgrading prunes what they exclude: about 260 files on a 4,700-file
-corpus, mostly build artefacts. Set `respect_gitignore = false` to keep the old
-behaviour.
-
-**`exclude_tags` is cross-platform.** Finder tags are macOS-only, but the same
-setting reads a note's `tags: [no_index]` on any OS.
+does not govern it. A `.gitignore` often excludes large PDFs precisely because
+they are big; set `respect_gitignore = false` if you want those found.
 
 ## Configuration
 
@@ -426,7 +442,7 @@ fuzzy_enabled = true       # auto-fuzzy in the cascade fallback (toggle with Ctr
 # A collection named "papers" with two source folders.
 [[collections.papers.sources]]
 path     = "~/Documents/Research"
-includes = ["**/*.pdf", "**/*.md"]        # ORed globs; see filters.kinds below
+includes = ["**/*.md", "**/*.pdf"]        # ORed globs; see filters.kinds below
 follow_symlinks = false
 
 [collections.papers.sources.filters]
@@ -469,8 +485,8 @@ argv         = ["open", "-a", "Marked 2", "{path}"]
 
 `[defaults]` also controls preview behaviour and auto-resume. Every option is
 documented in the file itself: run `fnd config edit` to read it. After changing
-collections or sources, run `fnd collection reindex <name>`, or Reindex from the
-Settings UI.
+collections or sources, run `fnd collection reindex <name>`, or **Update index**
+on the collection's Settings page.
 
 ## Semantic search (opt-in)
 
@@ -487,69 +503,51 @@ Settings UI.
 
 ## Indexing
 
-### Structured PDF extraction (opt-in)
+### PDF texturising (opt-in)
 
 PDFs render as flat extracted text by default. The opt-in `pdf-structure` extra
-adds headings, lists, tables, bold/italic, and recovered image-rendered tables.
-It is installed via [uv](https://docs.astral.sh/uv/) (see the uv docs for the
-one-line installer on your OS).
+(the texturising engine) adds headings, lists, tables, bold/italic, and
+recovered image-rendered tables. It installs via
+[uv](https://docs.astral.sh/uv/).
 
-In the TUI: **Settings → Indexing → Status / Install…** shows current state,
-disk impact (`~900 MB`), and a tight disclosure before any download. Install
-runs in a modal with progress; **Esc** sends it to the background, **c** cancels
-(SIGTERM).
+- TUI: **Settings → Indexing & PDF Texture → Install texturising engine**. It
+  states the disk impact (`~900 MB`) before any download; **Esc** sends the
+  install to the background, **c** cancels.
+- CLI:
 
-From the CLI:
+    ```sh
+    fnd extras install pdf-structure   # ~900 MB total, with disclosure prompt
+    fnd extras status                  # disk usage per installed extra
+    fnd extras uninstall pdf-structure # indexed chunks remain until the next reindex
+    ```
 
-```sh
-fnd extras install pdf-structure   # ~900 MB total, with disclosure prompt
-fnd extras list                    # show available + installed
-fnd extras status                  # disk usage per installed extra
-fnd extras uninstall pdf-structure # revert; indexed chunks remain in index
-```
+- Then run **Texturise flat PDFs** on each collection's Settings page (or
+  `fnd collection reindex <name> --rebuild`); new PDFs are texturised as they
+  are indexed.
+- Packages: `pymupdf4llm` (pulls `pymupdf-layout`, Polyform Noncommercial 1.0)
+  and `docling-slim[standard]` (Apache-2.0). fnd redistributes neither, so
+  Polyform's non-commercial restriction binds your use directly: check it before
+  commercial use. ML weights (~400 MB) download on first use.
+- Cost: ~30 s per PDF on an M1 Max, so 200 books take about 2 hours, once.
+  Later updates re-process only changed files.
 
-After installing, reindex from **Settings → Collections → ‹name› → Reindex** (or
-`fnd collection reindex <name>`). New PDFs added later are extracted structurally
-automatically.
+### PDF Texture Cache
 
-Two packages: `pymupdf4llm` (which pulls `pymupdf-layout`, Polyform
-Noncommercial 1.0) and `docling-slim[standard]` (Apache-2.0). fnd redistributes
-neither: the install fetches them onto your machine, so Polyform's
-non-commercial restriction binds your use of `pymupdf-layout` directly. Check it
-before installing this extra in a commercial setting. ML weights (~400 MB)
-download on first use. Uninstall removes the packages; indexed structured chunks
-remain in the index until the next reindex.
-
-### Cost on first reindex
-
-~30 s per PDF on M1 Max (pymupdf4llm; longer for pages routed through the docling
-fallback). **A 200-book corpus is roughly a 2-hour one-time cost.** Subsequent
-reindexes only re-process changed files.
-
-### Cache
-
-Extracted chunks are content-addressed in fnd's cache directory:
-`~/Library/Caches/fnd/pdf-structure/` on macOS, the platform cache dir elsewhere
-(`fnd cache info` prints it). Shared across collections: the same file in two
-collections is extracted once.
-
-In the TUI: **Settings → Indexing → Cache size** shows entries + disk;
-**Cache maintenance…** drills to Prune stale (recoverable) and Clear
-(destructive, confirms with `⚠ Cannot be undone`).
-
-From the CLI: `fnd cache status / info / prune / clear`.
+- Content-addressed in `~/Library/Caches/fnd/pdf-structure/` on macOS, the
+  platform cache dir elsewhere (`fnd cache info` prints it).
+- Shared across collections: a file in two collections is texturised once.
+- TUI: **Settings → Indexing & PDF Texture**: **Saved texturings**, **Remove
+  orphaned texturings**, **Clear texture cache** (asks first; cannot be undone).
+- CLI: `fnd cache status / info / prune / prune-orphans / clear`.
 
 ### Auto-resume on launch
 
-A Ctrl+C, sleep, terminal close, or fnd quit during reindex leaves the cache and
-a state file in fnd's data directory at `reindex/<collection>.state.toml`.
-
-Reopen the TUI and indexing auto-resumes silently in the background.
-Already-cached files return in milliseconds, so resume effectively starts where
-you left off.
-
-Toggle off from **Settings → Indexing → Auto-resume on launch**, or set
-`defaults.indexer_auto_resume = false` in your config.
+- Quitting, Ctrl+C, sleep or a closed terminal mid-index leaves a state file at
+  `reindex/<collection>.state.toml` in fnd's data directory.
+- The next launch resumes in the background; cached files return in
+  milliseconds, so it picks up where it stopped.
+- Turn off with **Settings → Indexing & PDF Texture → Auto-resume on launch**,
+  or `defaults.indexer_auto_resume = false`.
 
 ## Search how-to
 
@@ -625,15 +623,15 @@ fuzzy keeps it, and a plain misspelling is respelt instead.
 A field qualifier is a hard filter: it narrows the result set (it does not just
 boost), so you can combine it with search terms to constrain them.
 
-| You type                   | What it does                                           |
-| -------------------------- | ------------------------------------------------------ |
-| `title:invoice`            | Only documents whose title contains `invoice`.         |
-| `heading_path:"chapter 4"` | Only sections under that heading path.                 |
-| `author:austen`            | Only documents with that author metadata.              |
-| `kind:pdf`                 | Only a file type (`pdf`, `docx`, `pptx`, `md`, `txt`). |
-| `path_tokens:taxes`        | Only paths containing `taxes`.                         |
-| `title:(recipe OR menu)`   | Group alternatives within one field.                   |
-| `has:author`               | Only documents that have a non-empty `author` field.   |
+| You type                   | What it does                                         |
+| -------------------------- | ---------------------------------------------------- |
+| `title:invoice`            | Only documents whose title contains `invoice`.       |
+| `heading_path:"chapter 4"` | Only sections under that heading path.               |
+| `author:austen`            | Only documents with that author metadata.            |
+| `kind:pdf`                 | Only a file type or category (`md`, `pdf`, `code`).  |
+| `path_tokens:taxes`        | Only paths containing `taxes`.                       |
+| `title:(recipe OR menu)`   | Group alternatives within one field.                 |
+| `has:author`               | Only documents that have a non-empty `author` field. |
 
 Combine with terms to constrain them: `kind:pdf "travel insurance"` finds the
 phrase in **PDFs only**.
@@ -648,7 +646,7 @@ search to one or more:
 | `c:work deadline`    | Search the `work` collection only. |
 | `c:work,home budget` | Search two collections.            |
 
-Without `c:` the active collection (settings menu) is used.
+Without `c:`, the Collections pane selection applies.
 
 ### Page, slide, and date filters
 
@@ -664,6 +662,8 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 | `mtime:week` / `mtime:month` / `mtime:year` | Within the last 7 / 30 / 365 days. |
 | `mtime:>2024-01-01`                         | Modified on or after 2024-01-01.   |
 | `mtime:[2024-01-01 TO 2024-06-30]`          | Modified in that ISO range.        |
+
+`created:` takes the same forms as `mtime:`.
 
 ### Wildcards and regex
 
@@ -712,8 +712,8 @@ escaping. Only notes can match (markdown and plain text); other kinds are left
 out. A rule on its own, with no search words, lists every note it admits.
 
 > **A missing field fails every comparison, including negative ones.** On a
-> note with no `tags:`, `['x' not in tags]` is *false*, so the note is dropped;
-> `[NOT ('x' in tags)]` is *true*, so it is kept. To exclude a tag without also
+> note with no `tags:`, `['x' not in tags]` is _false_, so the note is dropped;
+> `[NOT ('x' in tags)]` is _true_, so it is kept. To exclude a tag without also
 > losing untagged notes, negate the whole test: `NOT (… in …)`. The same rule
 > makes `[Status != 'draft']` skip notes that have no `Status` at all.
 >
@@ -753,8 +753,9 @@ for dev setup and the "Open with…" app-catalogue workflow.
 
 ## Security
 
-fnd is local-only (no network, no telemetry). For the threat model and private
-vulnerability reporting, see [`SECURITY.md`](SECURITY.md).
+fnd runs locally with no telemetry; it uses the network only to download an
+extra you install. For the threat model and private vulnerability reporting, see
+[`SECURITY.md`](SECURITY.md).
 
 ## Support
 
@@ -778,16 +779,3 @@ what was true of fnd all along.
 
 Releases up to and including `fndr` 0.0.5 were published under MIT and remain
 MIT.
-
-## Acknowledgments
-
-Some design choices in fnd's search layer are adapted from sibling
-open-source projects:
-
-- **[tobi/qmd](https://github.com/tobi/qmd)** (MIT): the strong-signal bypass
-  (skip parallel sub-queries when the literal probe is already unambiguous),
-  the score normalization `s / (1 + s)` that makes its thresholds (0.85
-  score, 0.15 gap) corpus-stable, and the `intent:` line in the multi-line
-  query DSL.
-- The Reciprocal Rank Fusion constant `k = 60` follows
-  Cormack/Clarke/Buettcher (2009).
