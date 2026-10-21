@@ -206,11 +206,24 @@ class SearchController:
 
     # ── prepare (event loop) ─────────────────────────────────────
 
+    def _take_up_outside_index(self) -> Searcher | None:
+        """An index the CLI built while the app ran without one, opened as a reindex would."""
+        from fnd.migrate import SchemaStatus, check_schema_status
+
+        try:
+            ready = check_schema_status(self._app._index_dir)[0] is SchemaStatus.READY
+        except Exception:
+            return None
+        if ready:
+            self._app._indexer.on_reindex_complete()
+        return self.searcher
+
     def _prepare(self, query: str) -> _SearchRequest | None:
         """Parse and validate on the loop, so a malformed query raises its
         notice immediately rather than a thread-hop later. Returns None when
         there is nothing to execute."""
-        if self.searcher is None:
+        searcher = self.searcher or self._take_up_outside_index()
+        if searcher is None:
             return None
         was_idle = not self._searches_running()
         # Claim the generation FIRST, before anything that can fail. _fail()
@@ -236,7 +249,7 @@ class SearchController:
 
         if was_idle:
             with _contextlib.suppress(FileNotFoundError, RuntimeError, ValueError):
-                self.searcher.reload()
+                searcher.reload()
 
         from fnd.query_errors import QueryError
         from fnd.query_plan import QueryPlan

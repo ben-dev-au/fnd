@@ -314,7 +314,8 @@ def tui(
     collection = resolve_launch_collection(collection, cfg, issues)
     resolve_or_exit(issues)
 
-    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg, invoked="tui")
+    # A fresh install has no index: the app opens so Settings can add the first collection.
+    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg, missing_ok=True)
 
     # Spawn the PDF extraction worker before Textual's run() rewires
     # stdin/stderr. macOS multiprocessing.spawn validates fds_to_keep
