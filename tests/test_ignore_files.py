@@ -7,6 +7,7 @@ global excludes and ``.git/info/exclude``; without that, a machine with a
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -462,7 +463,9 @@ def test_the_local_git_excludes_are_documented_as_skipped(tmp_path: Path) -> Non
     blanks the file for oracle hygiene, so this pins the decision. It is a
     decision, recorded: `.fndignore` is fnd's local half."""
     readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
-    row = next(line for line in readme.splitlines() if line.startswith("| `respect_gitignore` |"))
+    row = next(
+        line for line in readme.splitlines() if re.match(r"\| `respect_gitignore` +\|", line)
+    )
     assert ".git/info/exclude" in row, row
     assert ".fndignore" in row, row
 
