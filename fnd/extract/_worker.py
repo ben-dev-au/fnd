@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
 import faulthandler
 import multiprocessing as mp
 import os
 import signal
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any
@@ -118,6 +119,9 @@ def _die_silently_on_sigint() -> None:
     # The TUI's ^C reaches this worker too (same process group). Ignoring it
     # would orphan the worker after the kill switch's os._exit, so die quietly.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
+    # Booted under ``_sigint_held``: a ^C that landed meanwhile is delivered now, quietly.
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
 
 
 def _noop_worker() -> int:
@@ -125,22 +129,31 @@ def _noop_worker() -> int:
 
 
 def warm_pool() -> None:
-    """Spawn the PDF extraction worker now, before the caller does
-    anything that would mutate the parent's FD table.
+    """Spawn the PDF extraction worker while the FD table is still clean, without waiting for it.
 
-    Once Textual's run() has rewired stdin/stderr and registered
-    signal-wakeup pipes, ``_posixsubprocess.fork_exec`` rejects the
-    next spawn with ``ValueError: bad value(s) in fds_to_keep`` and
-    every PDF in the chain fails. Forcing the spawn now (the submit-
-    and-wait actually starts the subprocess, not just the executor's
-    bookkeeping) captures the clean FD state."""
-    import contextlib
-
+    After Textual's run() rewires stdin/stderr, a spawn fails with ``bad value(s) in
+    fds_to_keep``. ``submit`` spawns synchronously; waiting only for the boot would delay the TUI.
+    """
     pool = _get_pool()
     # Best-effort: if warming fails, the regular extraction path will
     # surface the real error. Don't crash the TUI launch.
     with contextlib.suppress(Exception):
-        pool.submit(_noop_worker).result(timeout=30)
+        if not hasattr(signal, "pthread_sigmask"):
+            # No mask to boot under, so the ^C window closes only once the worker is up.
+            pool.submit(_noop_worker).result(timeout=30)
+            return
+        with _sigint_held():
+            pool.submit(_noop_worker)
+
+
+@contextlib.contextmanager
+def _sigint_held() -> Generator[None]:
+    """Block SIGINT in this thread; a child spawned meanwhile boots with it blocked."""
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
 
 
 def shutdown_pool() -> None:
@@ -189,8 +202,6 @@ def _killed_by_sigint(pool: ProcessPoolExecutor) -> bool:
 
 
 def _suppress(*excs: type[BaseException]) -> Any:
-    import contextlib
-
     return contextlib.suppress(*excs)
 
 
