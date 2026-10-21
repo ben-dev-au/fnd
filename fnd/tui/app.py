@@ -865,6 +865,15 @@ sidebar panels stop showing a stale ``current selection`` band
                 watch.stop()
         await super()._on_exit_app()
 
+    def _end_batch(self) -> None:
+        # A visible screen's paint tick skips its frame while a batch is open, and
+        # Textual re-arms only the App when it closes: without this prompt the
+        # frame waits for the next message to that screen, usually a keypress.
+        super()._end_batch()
+        if not self._batch_count and self.screen_stack:
+            for screen in (*self._background_screens, self.screen):
+                screen.check_idle()
+
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"

@@ -1068,7 +1068,7 @@ class SettingsList(Widget, can_focus=True):
     ) -> None:
         self._items = list(items)
         self._search_breadcrumbs = dict(breadcrumbs) if breadcrumbs else {}
-        # _init_cursor (deferred below) lands here if the id is present.
+        # _init_cursor (below) lands here if the id is present.
         self._pending_cursor_id = cursor_id
         body = self.query_one("#settings_list_body", VerticalScroll)
         # Remove existing rows synchronously by walking the DOM directly:
@@ -1115,7 +1115,10 @@ class SettingsList(Widget, can_focus=True):
             row = PlainStatic("", classes=cls)
             current_container.mount(row)
             self._rows.append(row)
-        self.call_after_refresh(self._init_cursor)
+        # Not `call_after_refresh`: Textual queues that on the top screen and drops
+        # the queue when that screen closes, leaving every row blank. A width not
+        # yet laid out is corrected by `on_resize`.
+        self._init_cursor()
 
     def _init_cursor(self) -> None:
         target: int | None = None
@@ -1492,10 +1495,8 @@ class SettingsScreen(Screen[None]):
             return
         # Preserve cursor position by item id: a structural edit (add /
         # remove row) shifts indices, so the closest semantic anchor is
-        # the previously-cursored row's stable id. Threaded through
-        # set_items → _init_cursor so the restore is atomic: a separate
-        # deferred restore loses the race against _init_cursor's own
-        # deferred reset-to-first and the cursor jumps back to the top.
+        # the previously-cursored row's stable id, threaded through
+        # set_items → _init_cursor so the restore lands with the rebuild.
         prev_id: str | None = None
         if 0 <= lst.cursor_index < len(lst._items):
             prev_id = lst._items[lst.cursor_index].id

@@ -45,3 +45,30 @@ async def test_two_rebuilds_under_a_covering_screen_leave_no_row_blank(
     assert len(painted) == len(lst._items), painted
     blank = [it.label for it, text in zip(lst._items, painted, strict=True) if it.label not in text]
     assert not blank, blank
+
+
+@pytest.mark.asyncio
+async def test_a_rebuild_labels_every_row_before_it_returns(
+    tmp_path: Path, tmp_index_dir: Path, isolated_config_path: Path
+) -> None:
+    """Labelled in the call: a deferred fill queues on the top screen, which drops it on closing."""
+    isolated_config_path.write_text(
+        f'[[collections.alpha.sources]]\npath = "{tmp_path.as_posix()}"\n', encoding="utf-8"
+    )
+    app = FNDApp(index_dir=tmp_index_dir, config=load())
+    async with app.run_test(size=(110, 34)) as pilot:
+        await pilot.pause()
+        open_settings_section(app, SECTION_COLLECTIONS)
+        await settings_ready(pilot, app)
+        covered = app.screen
+        assert isinstance(covered, SettingsScreen)
+        open_settings_section(app, SECTION_PREFERENCES)
+        await settings_ready(pilot, app)
+
+        covered.refresh_items()
+        lst = covered.query_one(SettingsList)
+        painted = [str(row.content) for row in lst._rows]
+
+    assert len(painted) == len(lst._items), painted
+    blank = [it.label for it, text in zip(lst._items, painted, strict=True) if it.label not in text]
+    assert not blank, blank
