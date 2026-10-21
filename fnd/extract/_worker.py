@@ -24,7 +24,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable, Generator
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any
 
@@ -138,17 +138,24 @@ def warm_pool() -> None:
     # Best-effort: if warming fails, the regular extraction path will
     # surface the real error. Don't crash the TUI launch.
     with contextlib.suppress(Exception):
+        future = _submit(pool, _noop_worker)
         if not hasattr(signal, "pthread_sigmask"):
             # No mask to boot under, so the ^C window closes only once the worker is up.
-            pool.submit(_noop_worker).result(timeout=30)
-            return
-        with _sigint_held():
-            pool.submit(_noop_worker)
+            future.result(timeout=30)
+
+
+def _submit[T](pool: ProcessPoolExecutor, fn: Callable[..., T], *args: Any) -> Future[T]:
+    """``pool.submit`` with SIGINT held, so any worker it spawns boots with SIGINT blocked."""
+    with _sigint_held():
+        return pool.submit(fn, *args)
 
 
 @contextlib.contextmanager
 def _sigint_held() -> Generator[None]:
     """Block SIGINT in this thread; a child spawned meanwhile boots with it blocked."""
+    if not hasattr(signal, "pthread_sigmask"):
+        yield
+        return
     old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
     try:
         yield
@@ -324,7 +331,7 @@ async def run_in_pool[T](fn: Callable[..., T], *args: Any) -> T:
     ``fn`` and its arguments must be picklable.
     """
     pool = _get_pool()
-    future = pool.submit(fn, *args)
+    future = _submit(pool, fn, *args)
     return await asyncio.wrap_future(future)
 
 
@@ -340,7 +347,7 @@ def run_in_pool_sync[T](fn: Callable[..., T], *args: Any) -> T:
     for attempt in range(2):
         pool = _get_pool()
         try:
-            return pool.submit(fn, *args).result()
+            return _submit(pool, fn, *args).result()
         except BrokenProcessPool as e:
             # Native crash in the worker (segfault, OOM-killed). Tear
             # the pool down so the NEXT PDF gets a healthy worker
@@ -467,7 +474,7 @@ def _submit_with_stall_detection[T](
     ctx = mp.get_context("spawn")
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     pool = _get_pool()
-    future = pool.submit(fn, child_conn, *args)
+    future = _submit(pool, fn, child_conn, *args)
 
     start = time.monotonic()
     last_beat: float | None = None
