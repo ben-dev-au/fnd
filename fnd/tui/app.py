@@ -885,30 +885,7 @@ sidebar panels stop showing a stale ``current selection`` band
         if self._stall_watch is not None:
             self._stall_watch.start()
 
-        # One-time: promote PDF-texture cache entries produced by the current
-        # engine but under the pre-`tex-vN` key format to the coarse
-        # signature, so current-engine work is recognised as current (not
-        # "outdated"). Genuinely-older entries are left as-is and surface in
-        # Settings for opt-in re-texturising. Sentinel-guarded → runs once.
-        import contextlib as _contextlib
-
-        with _contextlib.suppress(Exception):
-            from fnd.cache import PdfStructureCache
-            from fnd.extract.pdf import _config_hash, texture_signature
-
-            _cache = PdfStructureCache()
-            _sentinel = _cache.root / ".keys-migrated"
-            # Only when a cache actually exists: never create the dir for a
-            # fresh user (a freshly-written entry is already tex-vN anyway).
-            if _cache.root.exists() and not _sentinel.exists():
-                _migrated, _failed = _cache.promote_current_engine_entries(
-                    current_sig=texture_signature(),
-                    current_cfg_marker=f"cfg-{_config_hash()}",
-                )
-                # Mark done only on a clean pass; a partial promotion retries
-                # next launch rather than stranding entries as "outdated".
-                if _failed == 0:
-                    _sentinel.write_text(texture_signature(), encoding="utf-8")
+        self.call_after_refresh(self._promote_texture_cache_keys)
 
         # Route fnd.apps notices through an in-app modal for AX issues, and
         # through Textual.notify for everything else. Without this hook, the
@@ -990,6 +967,27 @@ sidebar panels stop showing a stale ``current selection`` band
         # version) are surfaced passively in Settings → Indexing & PDF
         # Texture, not via a startup popup: re-texturising is a
         # preview-quality refresh the user opts into, never urgent.
+
+    def _promote_texture_cache_keys(self) -> None:
+        """One-time: re-key current-engine PDF-texture entries from the pre-``tex-vN`` format,
+        so they read as current, not outdated. After the first frame: it loads pymupdf."""
+        with contextlib.suppress(Exception):
+            from fnd.cache import PdfStructureCache
+
+            cache = PdfStructureCache()
+            sentinel = cache.root / ".keys-migrated"
+            # Never create the dir for a fresh user: a new entry is already tex-vN.
+            if not cache.root.exists() or sentinel.exists():
+                return
+            from fnd.extract.pdf import _config_hash, texture_signature
+
+            _migrated, failed = cache.promote_current_engine_entries(
+                current_sig=texture_signature(),
+                current_cfg_marker=f"cfg-{_config_hash()}",
+            )
+            # A partial promotion retries next launch rather than stranding entries as outdated.
+            if failed == 0:
+                sentinel.write_text(texture_signature(), encoding="utf-8")
 
     def _on_screen_change(self, _published: Screen[Any]) -> None:
         """The main footer was last rendered while another screen held focus.
