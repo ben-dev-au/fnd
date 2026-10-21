@@ -323,6 +323,8 @@ class ScopeController:
             self.tag_include = {k: set(v) for k, v in saved.tag_include.items()}
             self.tag_exclude = {k: set(v) for k, v in saved.tag_exclude.items()}
             self.tag_match_all = saved.tag_match_all
+        cfg = self._app._config
+        self._panel_names: set[str] = set(cfg.collections) if cfg else set()
 
     def _seed_from_defaults(self) -> dict[str, _FullScope | set[str]]:
         """Scope for a profile that has never saved one.
@@ -344,6 +346,13 @@ class ScopeController:
             else list(cfg.collections)
         )
         return dict.fromkeys(names, FULL)
+
+    def _seed_first_collections(self, names: list[str]) -> None:
+        """An empty scope over a config that had no collections was never a choice: seed it."""
+        if not self.selection and not self._panel_names and names:
+            self.selection = self._seed_from_defaults()
+            self._app._search.ranking_profile = self._app._search.resolve_profile()
+        self._panel_names = set(names)
 
     def _valid_collection_names(self, raw: str) -> list[str]:
         """Resolve a ``--collection`` value to real config collection names.
@@ -603,6 +612,7 @@ class ScopeController:
             except Exception:
                 cfg = None
         names = sorted(cfg.collections.keys()) if cfg else []
+        self._seed_first_collections(names)
         # Drop persisted expand entries for collections that no longer
         # exist so the saved set stays bounded over time.
         self.expanded_collections &= set(names)

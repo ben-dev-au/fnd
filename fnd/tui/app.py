@@ -29,6 +29,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import NoMatches
+from textual.screen import Screen
 from textual.scrollbar import ScrollBar
 from textual.widget import Widget
 from textual.widgets import (
@@ -980,10 +981,31 @@ sidebar panels stop showing a stale ``current selection`` band
         with contextlib.suppress(Exception):
             self._indexer.maybe_resume()
         self._semantic.on_launch()
+        self.screen_change_signal.subscribe(self, self._on_screen_change)
+        if self._is_fresh_install():
+            from fnd.tui.settings_screen import AddCollectionWizard
+
+            self.push_screen(AddCollectionWizard())
         # Pre-upgrade cache entries (PDFs textured on an older extractor
         # version) are surfaced passively in Settings → Indexing & PDF
         # Texture, not via a startup popup: re-texturising is a
         # preview-quality refresh the user opts into, never urgent.
+
+    def _on_screen_change(self, _published: Screen[Any]) -> None:
+        """The main footer was last rendered while another screen held focus.
+
+        The callback is deferred, so the published screen may no longer be the active one.
+        """
+        if self.screen_stack and self.screen is self.screen_stack[0]:
+            self._refresh_footer_hints()
+
+    def _is_fresh_install(self) -> bool:
+        """No collection configured and no index on disk: nothing to search yet."""
+        return (
+            self._config is not None
+            and not self._config.collections
+            and self._search.searcher is None
+        )
 
     # ── Ranking profile ───────────────────────────────────────────
 
