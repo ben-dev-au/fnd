@@ -21,10 +21,12 @@ import fnd.extract.markdown as markdown_extract
 from fnd.extract import extract
 from fnd.extract.base import Chunk
 from fnd.matching import MatchSpec
+from fnd.query import FileChunk
 from fnd.seams import Seam, read_seams, with_seams
 from fnd.tui.app import FNDApp
 from fnd.tui.match_evidence import rendered_text
 from fnd.tui.preview.frozen import FrozenChunk, stands_in_for
+from fnd.tui.preview.presenter import PreviewPresenter
 from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownBlockQuote, FNDMarkdownParagraph
 
 _SHAPES = {
@@ -208,6 +210,19 @@ def test_a_capture_still_stands_in_when_only_the_marks_hold_the_query() -> None:
     )
 
     assert stands_in_for(capture, source, MatchSpec.from_query("note"), ("t", False))
+
+
+def test_the_marks_take_no_rows_in_the_context_mounted_above_a_match() -> None:
+    seam = Seam(levels=("quote=note",))
+    chunks = [
+        FileChunk(
+            "p", "n.md", "md", 0, 0, "", i, [], body_md=with_seams("> x", above=seam, below=seam)
+        )
+        for i in range(8)
+    ]
+    presenter = PreviewPresenter.__new__(PreviewPresenter)
+
+    assert presenter.above_window_start(chunks, focus_idx=7, viewport_h=4) == 3
 
 
 _LAZY = {
