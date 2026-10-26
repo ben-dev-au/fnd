@@ -22,8 +22,10 @@ from __future__ import annotations
 import dataclasses
 import re
 from collections.abc import Iterable, Iterator
+from itertools import takewhile
 
 from fnd.extract.base import MAX_CHUNK_CHARS, MAX_TABLE_CHARS, Block, Chunk
+from fnd.seams import Seam, with_seams
 from fnd.text_canon import canonical
 
 __all__ = ["bounded"]
@@ -31,15 +33,47 @@ __all__ = ["bounded"]
 
 def bounded(chunks: Iterable[Chunk]) -> Iterator[Chunk]:
     """Yield ``chunks`` with every body under the budget, every text field
-    :func:`~fnd.text_canon.canonical`, and ``chunk_seq`` renumbered."""
+    :func:`~fnd.text_canon.canonical`, ``chunk_seq`` renumbered, and each seam
+    through a container or fence marked (see :mod:`fnd.seams`)."""
     seq = 0
+    held: Chunk | None = None
+    held_from: Chunk | None = None
     for chunk in chunks:
         for raw in _pieces(chunk):
             # After the cut: an extractor's spans count lines its own way.
             piece = _canonical(raw)
             piece.chunk_seq = seq
             seq += 1
-            yield piece
+            if held is not None:
+                _stitch(held, piece, same_chunk=held_from is chunk)
+                yield held
+            held, held_from = piece, chunk
+    if held is not None:
+        yield held
+
+
+def _stitch(above: Chunk, below: Chunk, *, same_chunk: bool) -> None:
+    """Mark the seam between consecutive pieces when a container or fence crosses it."""
+    if not (above.body_struct and below.body_struct):
+        return
+    last, first = above.body_struct[-1], below.body_struct[0]
+    pairs = zip(last.containers, first.containers, strict=False)
+    crossing = [a for a, _ in takewhile(lambda pair: pair[0] == pair[1], pairs)]
+    # A fence's pieces share its opening line as head, and never leave its chunk.
+    code = (
+        same_chunk
+        and first.kind == last.kind == "code"
+        and first.head is not None
+        and first.head == last.head
+    )
+    if not crossing and not code:
+        return
+    seam = Seam(levels=tuple(c.level for c in crossing), code=code)
+    # Each side on its own: a piece after plain lines still reopens its items.
+    if above.body_md:
+        above.body_md = with_seams(above.body_md, below=seam)
+    if below.body_md:
+        below.body_md = with_seams(below.body_md, above=seam)
 
 
 _TEXT_FIELDS = ("body", "body_md", "heading_path", "title", "author", "page_label")
@@ -59,17 +93,33 @@ def _canonical(chunk: Chunk) -> Chunk:
 
 
 def _pieces(chunk: Chunk) -> Iterator[Chunk]:
+    offset = chunk.line - 1
     if len(chunk.body) <= MAX_CHUNK_CHARS:
+        if chunk.body_md and chunk.body_struct:
+            chunk.body_md = _reopened(chunk.body_md, chunk.body_struct[0], offset)
         yield chunk
         return
     blocks = chunk.body_struct or [Block(kind="p", text=chunk.body)]
     for run in _block_runs(blocks):
+        body_md = _slice_source(chunk.body_md, run)
+        if body_md:
+            top = run[0].head or run[0].span
+            assert top is not None
+            body_md = _reopened(body_md, run[0], offset + top[0])
         yield dataclasses.replace(
             chunk,
             body="\n".join(b.text for b in run).strip(),
             body_struct=list(run),
-            body_md=_slice_source(chunk.body_md, run),
+            body_md=body_md,
         )
+
+
+def _reopened(body_md: str, first: Block, top: int) -> str:
+    """``body_md``, starting on absolute line ``top``, under the items it starts inside."""
+    openers = [
+        c.opener for c in first.containers if c.kind == "item" and c.start < top and c.opener
+    ]
+    return "\n".join([*openers, body_md]) if openers else body_md
 
 
 def _block_runs(blocks: list[Block]) -> Iterator[list[Block]]:
@@ -88,7 +138,7 @@ def _block_runs(blocks: list[Block]) -> Iterator[list[Block]]:
                 yield held
                 held, size = [], 0
             for text in _split_text(block.text):
-                yield [Block(kind=block.kind, text=text, span=None)]
+                yield [dataclasses.replace(block, text=text, span=None, head=None)]
             continue
         if held and size + len(block.text) + 1 > MAX_CHUNK_CHARS:
             yield held
@@ -138,7 +188,8 @@ def _slice_source(source: str, run: list[Block]) -> str:
     assert last is not None
     lines = source.splitlines()
     body = lines[max(first[0], 0) : last[1]]
+    # Any run length: a short last piece shares a run with the blocks after it.
     head = run[0].head
-    if len(run) == 1 and head is not None:
+    if head is not None:
         return "\n".join(lines[max(head[0], 0) : head[1]] + body)
     return "\n".join(body)

@@ -30,6 +30,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 
 from fnd.matching import MatchSpec
+from fnd.seams import read_seams
 from fnd.tui.preview.match_row import (
     chunk_stop_rows,
     heading_rows,
@@ -204,7 +205,8 @@ def stands_in_for(
     """
     if capture.painted_match or capture.source != source or capture.style_key != key:
         return False
-    return not paints_match((source,), spec) and not paints_match(capture.block_plains, spec)
+    visible = read_seams(source)[2]
+    return not paints_match((visible,), spec) and not paints_match(capture.block_plains, spec)
 
 
 class FrozenChunkView(Widget):

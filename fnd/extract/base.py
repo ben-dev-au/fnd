@@ -61,6 +61,24 @@ def no_text_reason(path: str | Path) -> str:
 
 
 @dataclass(slots=True, frozen=True)
+class Container:
+    """A blockquote, list or list item holding a block: absolute source lines."""
+
+    kind: str  # "quote", "list" or "item"
+    start: int
+    end: int
+    # A callout quote's ``[!type]`` word, or an ordered list's last number.
+    detail: str = ""
+    # An item's first source line cut after its marker: replayed to reopen it.
+    opener: str = ""
+
+    @property
+    def level(self) -> str:
+        """This container as a seam level (see :mod:`fnd.seams`)."""
+        return f"{self.kind}={self.detail}" if self.detail else self.kind
+
+
+@dataclass(slots=True, frozen=True)
 class Block:
     """One renderable element of body_struct (preview pane).
 
@@ -72,8 +90,11 @@ class Block:
     # Line span of this block within its chunk's ``body_md``, when the
     # extractor knows it. Read by the chunk bound; not written to the index.
     span: tuple[int, int] | None = None
-    # A table split by rows: the span of the header its piece is rendered under.
+    # A piece of a split table or fence: the span of the header or opening line
+    # it is rendered under.
     head: tuple[int, int] | None = None
+    # The containers holding this block, outermost first; read by the chunk bound.
+    containers: tuple[Container, ...] = ()
 
 
 # The most body a chunk may carry. Enforced for every kind in `_bound.py`,

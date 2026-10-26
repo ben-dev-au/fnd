@@ -23,6 +23,7 @@ from textual.widgets import Static, Tree
 
 from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
+from fnd.seams import read_seams
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
 from fnd.tui.preview import decode_progress, tuning
 from fnd.tui.preview.coverage import coverage_targets, neighbour_order
@@ -2478,7 +2479,8 @@ class PreviewPresenter:
         start = focus_idx
         for i in range(focus_idx - 1, floor - 1, -1):
             start = i
-            rows += (chunks[i].body_md or chunks[i].body_text or "").count("\n") + 1
+            source = read_seams(chunks[i].body_md)[2] or chunks[i].body_text or ""
+            rows += source.count("\n") + 1
             if rows >= rows_wanted:
                 break
         return start

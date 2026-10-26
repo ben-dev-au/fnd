@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fnd.render import text_has_any_match
+from fnd.seams import read_seams
 from fnd.tui.preview_dispatcher import PreviewBody, uses_markdown_renderer
 
 if TYPE_CHECKING:
@@ -67,7 +68,7 @@ def rendered_text(body: PreviewBody) -> str:
     same predicate the mount loop uses) so this can't disagree with what gets
     mounted.
     """
-    return body.body_md if uses_markdown_renderer(body) else body.body_text
+    return read_seams(body.body_md)[2] if uses_markdown_renderer(body) else body.body_text
 
 
 def has_paintable_match(body: PreviewBody, spec: MatchSpec) -> bool:
