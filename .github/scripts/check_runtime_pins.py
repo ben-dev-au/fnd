@@ -36,7 +36,11 @@ def offenders(pyproject: dict[str, object]) -> list[tuple[str, str]]:
     for name in USER_FACING_GROUPS:
         checked += [(f"dependency-groups.{name}", d) for d in groups.get(name, [])]
 
-    return [(where, spec) for where, spec in checked if not PIN.match(spec)]
+    return [(where, spec) for where, spec in checked if not PIN.match(_requirement(spec))]
+
+
+def _requirement(spec: str) -> str:
+    return spec.partition(";")[0].strip()
 
 
 def _normalise(name: str) -> str:
@@ -44,28 +48,34 @@ def _normalise(name: str) -> str:
 
 
 def pinned(spec: str, lock: dict[str, object]) -> str:
-    """Return `spec` rewritten as `name[extras]~=X.Y.Z` at the version uv.lock resolves."""
-    match = NAME.match(spec)
+    """Return `spec` rewritten as `name[extras]~=X.Y.Z; marker` at the version uv.lock resolves."""
+    match = NAME.match(_requirement(spec))
     if match is None:
         raise SystemExit(f"::error::cannot read a package name from {spec!r}")
     name, extras = match.group(1), match.group(2) or ""
+    marker = spec.partition(";")[2].strip()
 
     packages = lock.get("package", [])
     assert isinstance(packages, list)
-    locked = next(
-        (
-            p["version"]
-            for p in packages
-            if isinstance(p, dict) and _normalise(str(p.get("name"))) == _normalise(name)
-        ),
-        None,
-    )
-    release = RELEASE.match(str(locked)) if locked is not None else None
-    if release is None:
+    # A forked resolution locks one entry per platform; the pin must cover them all.
+    releases = [
+        RELEASE.match(str(p["version"]))
+        for p in packages
+        if isinstance(p, dict) and _normalise(str(p.get("name"))) == _normalise(name)
+    ]
+    if not releases or None in releases:
         raise SystemExit(f"::error::uv.lock resolves no release version for {name}")
 
-    major, minor, micro = release.group(1), release.group(2), release.group(3) or "0"
-    return f"{name}{extras}~={major}.{minor}.{micro}"
+    versions = sorted(
+        (int(r.group(1)), int(r.group(2)), int(r.group(3) or 0)) for r in releases if r is not None
+    )
+    if len({v[:2] for v in versions}) > 1:
+        raise SystemExit(
+            f"::error::uv.lock resolves {name} to several minors; no `~=` pin covers them"
+        )
+
+    major, minor, micro = versions[0]
+    return f"{name}{extras}~={major}.{minor}.{micro}" + (f"; {marker}" if marker else "")
 
 
 def fix(root: Path) -> list[tuple[str, str]]:

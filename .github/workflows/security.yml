@@ -39,7 +39,7 @@ jobs:
         # 0 of the publish runbook lands `fnd` on PyPI, the flag stays:
         # we don't need to audit ourselves, only our deps.
         run: |
-          uv export \
+          uv export --frozen \
             --format requirements-txt \
             --no-hashes \
             --no-emit-project \
@@ -55,19 +55,20 @@ jobs:
         # Its findings are what main already carries; the PR audit skips them.
         if: github.event_name == 'pull_request'
         run: |
-          uv export --project base \
+          uv export --frozen --project base \
             --format requirements-txt \
             --no-hashes \
             --no-emit-project \
             -o base.frozen.txt
           uv tool run pip-audit -r base.frozen.txt --strict --format json -o base-audit.json || true
       - name: Audit
+        if: github.event_name != 'pull_request'
+        run: uv tool run pip-audit -r requirements.frozen.txt --strict
+      - name: Audit what the PR introduces
+        if: github.event_name == 'pull_request'
         run: |
-          ignores=()
-          if [ -d base ]; then
-            mapfile -t ignores < <(python3 .github/scripts/base_vulns.py base-audit.json)
-          fi
-          uv tool run pip-audit -r requirements.frozen.txt --strict "${ignores[@]}"
+          uv tool run pip-audit -r requirements.frozen.txt --strict --format json -o pr-audit.json || true
+          python3 .github/scripts/new_vulns.py base-audit.json pr-audit.json
 
   ruff-security:
     name: ruff (bandit ruleset)

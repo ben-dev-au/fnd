@@ -1,46 +1,61 @@
-"""`base_vulns.py` ignores exactly the base branch's findings, and nothing when the base audit failed."""
+"""`new_vulns.py` fails a PR only on a package and advisory pair the base branch lacks."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-
-import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location(
-    "base_vulns", _ROOT / ".github" / "scripts" / "base_vulns.py"
+    "new_vulns", _ROOT / ".github" / "scripts" / "new_vulns.py"
 )
 assert _SPEC is not None
 assert _SPEC.loader is not None
-base_vulns = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(base_vulns)
-
-_REPORT = {
-    "dependencies": [
-        {"name": "filelock", "version": "3.29.0", "vulns": [{"id": "CVE-1"}, {"id": "CVE-2"}]},
-        {"name": "rich", "version": "15.0.4", "vulns": []},
-        {"name": "fndr", "skip_reason": "not on PyPI"},
-    ],
-    "fixes": [],
-}
+new_vulns = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(new_vulns)
 
 
-def test_every_base_finding_becomes_an_ignore(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    report = tmp_path / "base-audit.json"
-    report.write_text(json.dumps(_REPORT), encoding="utf-8")
-
-    assert base_vulns.main(str(report)) == 0
-
-    assert capsys.readouterr().out.split() == ["--ignore-vuln", "CVE-1", "--ignore-vuln", "CVE-2"]
+def _report(path: Path, *deps: tuple[str, str, Sequence[Mapping[str, object]]]) -> str:
+    body = [{"name": n, "version": v, "vulns": vulns} for n, v, vulns in deps]
+    body.append({"name": "fndr", "skip_reason": "not on PyPI"})
+    path.write_text(json.dumps({"dependencies": body, "fixes": []}), encoding="utf-8")
+    return str(path)
 
 
-def test_a_missing_base_report_ignores_nothing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert base_vulns.main(str(tmp_path / "absent.json")) == 0
+_FILELOCK = ("filelock", "3.29.0", [{"id": "CVE-1", "aliases": ["GHSA-a"]}])
 
-    assert capsys.readouterr().out == ""
+
+def test_a_finding_the_base_carries_passes(tmp_path: Path) -> None:
+    base = _report(tmp_path / "base.json", _FILELOCK)
+    renamed = ("FileLock", "3.29.1", [{"id": "GHSA-a", "aliases": []}])
+    pr = _report(tmp_path / "pr.json", renamed)
+
+    assert new_vulns.main(base, pr) == 0
+
+
+def test_a_new_finding_fails(tmp_path: Path) -> None:
+    base = _report(tmp_path / "base.json", _FILELOCK)
+    pr = _report(tmp_path / "pr.json", _FILELOCK, ("virtualenv", "21.7.13", [{"id": "CVE-2"}]))
+
+    assert new_vulns.main(base, pr) == 1
+
+
+def test_a_shared_advisory_on_another_package_fails(tmp_path: Path) -> None:
+    base = _report(tmp_path / "base.json", _FILELOCK)
+    pr = _report(tmp_path / "pr.json", _FILELOCK, ("py-filelock", "1.0", [{"id": "CVE-1"}]))
+
+    assert new_vulns.main(base, pr) == 1
+
+
+def test_a_missing_base_report_audits_strictly(tmp_path: Path) -> None:
+    pr = _report(tmp_path / "pr.json", _FILELOCK)
+
+    assert new_vulns.main(str(tmp_path / "absent.json"), pr) == 1
+
+
+def test_a_missing_pr_report_fails(tmp_path: Path) -> None:
+    base = _report(tmp_path / "base.json")
+
+    assert new_vulns.main(base, str(tmp_path / "absent.json")) == 1

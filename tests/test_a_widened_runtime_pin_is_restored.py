@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,29 @@ def test_an_unlocked_dependency_refuses_rather_than_guessing(tmp_path: Path) -> 
 
     with pytest.raises(SystemExit, match="notlocked"):
         check_runtime_pins.fix(root)
+
+
+def test_a_marked_requirement_keeps_its_marker(tmp_path: Path) -> None:
+    marked = _PYPROJECT.replace('"rich~=15.0.0",', "\"rich>=15.0,<17 ; sys_platform == 'darwin'\",")
+    root = _project(tmp_path, marked)
+
+    check_runtime_pins.fix(root)
+
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert "\"rich~=15.0.4; sys_platform == 'darwin'\"" in text
+    assert check_runtime_pins.offenders(tomllib.loads(text)) == []
+
+
+def _forked(*versions: str) -> dict[str, object]:
+    return {"package": [{"name": "onnxruntime", "version": v} for v in versions]}
+
+
+def test_a_forked_lock_pins_the_lowest_patch_of_its_one_minor() -> None:
+    lock = _forked("1.32.4", "1.32.1")
+
+    assert check_runtime_pins.pinned("onnxruntime>=1.31,<1.33", lock) == "onnxruntime~=1.32.1"
+
+
+def test_a_forked_lock_across_minors_refuses() -> None:
+    with pytest.raises(SystemExit, match="several minors"):
+        check_runtime_pins.pinned("onnxruntime>=1.31,<1.34", _forked("1.32.1", "1.33.0"))
