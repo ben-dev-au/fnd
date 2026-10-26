@@ -44,8 +44,30 @@ jobs:
             --no-hashes \
             --no-emit-project \
             -o requirements.frozen.txt
+      - name: Check out the base branch
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - name: Audit the base branch
+        # Its findings are what main already carries; the PR audit skips them.
+        if: github.event_name == 'pull_request'
+        run: |
+          uv export --project base \
+            --format requirements-txt \
+            --no-hashes \
+            --no-emit-project \
+            -o base.frozen.txt
+          uv tool run pip-audit -r base.frozen.txt --strict --format json -o base-audit.json || true
       - name: Audit
-        run: uv tool run pip-audit -r requirements.frozen.txt --strict
+        run: |
+          ignores=()
+          if [ -d base ]; then
+            mapfile -t ignores < <(python3 .github/scripts/base_vulns.py base-audit.json)
+          fi
+          uv tool run pip-audit -r requirements.frozen.txt --strict "${ignores[@]}"
 
   ruff-security:
     name: ruff (bandit ruleset)

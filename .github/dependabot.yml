@@ -23,9 +23,8 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(deps)"
-    # Ineffective for the uv ecosystem as of 2026-08-31: Dependabot widens
-    # `~=X.Y.Z` to a range regardless (#134 twice, #138). The pin is enforced
-    # by .github/scripts/check_runtime_pins.py, not by this setting.
+    # Ineffective for uv: Dependabot widens `~=X.Y.Z` to a range regardless.
+    # check_runtime_pins.py enforces the pin; dependabot-pins.yml restores it.
     versioning-strategy: "increase"
     groups:
       dev-tooling:
