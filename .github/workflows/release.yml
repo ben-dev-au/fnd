@@ -46,7 +46,7 @@ jobs:
           echo "tag and pyproject version agree: $ver"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
 
@@ -117,7 +117,7 @@ jobs:
           path: dist/
 
       - name: Publish (OIDC, no token)
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           # Configure the Trusted Publisher at
           # https://pypi.org/manage/account/publishing/ pointing at
@@ -259,7 +259,7 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - run: uv python install 3.13
       - name: Install from PyPI and run it
         env:
