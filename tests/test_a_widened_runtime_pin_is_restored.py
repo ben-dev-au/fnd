@@ -138,3 +138,9 @@ def test_a_forked_lock_pins_the_lowest_patch_of_its_one_minor() -> None:
 def test_a_forked_lock_across_minors_refuses() -> None:
     with pytest.raises(SystemExit, match="several minors"):
         check_runtime_pins.pinned("onnxruntime>=1.31,<1.34", _forked("1.32.1", "1.33.0"))
+
+
+@pytest.mark.parametrize("version", ["2.0.0rc1", "2.0.0.dev3", "1.2.3+cpu", "1!2.0.0"])
+def test_a_locked_non_final_release_refuses(version: str) -> None:
+    with pytest.raises(SystemExit, match="no release version"):
+        check_runtime_pins.pinned("onnxruntime>=1.31", _forked(version))

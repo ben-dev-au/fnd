@@ -60,15 +60,15 @@ jobs:
             --no-hashes \
             --no-emit-project \
             -o base.frozen.txt
-          uv tool run pip-audit -r base.frozen.txt --strict --format json -o base-audit.json || true
+          uv tool run pip-audit -r base.frozen.txt --strict --format json -o "$RUNNER_TEMP/base-audit.json" || true
       - name: Audit
         if: github.event_name != 'pull_request'
         run: uv tool run pip-audit -r requirements.frozen.txt --strict
       - name: Audit what the PR introduces
         if: github.event_name == 'pull_request'
         run: |
-          uv tool run pip-audit -r requirements.frozen.txt --strict --format json -o pr-audit.json || true
-          python3 .github/scripts/new_vulns.py base-audit.json pr-audit.json
+          uv tool run pip-audit -r requirements.frozen.txt --strict --format json -o "$RUNNER_TEMP/pr-audit.json" || true
+          python3 .github/scripts/new_vulns.py "$RUNNER_TEMP/base-audit.json" "$RUNNER_TEMP/pr-audit.json"
 
   ruff-security:
     name: ruff (bandit ruleset)
