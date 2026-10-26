@@ -13,15 +13,21 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=2000"]
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Keep in sync with the ruff pin in pyproject.toml dev deps; CI runs
-    # `uv run ruff format --check .` so drift here will reformat files
-    # locally that CI then rejects.
-    rev: v0.17.0
+  - repo: local
+    # The ruff uv.lock resolves, so the hook and CI cannot run different versions.
     hooks:
       - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
       - id: ruff
-        args: ["--fix"]
+        name: ruff check
+        entry: uv run --frozen ruff check --force-exclude --fix
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
 
   - repo: local
     # Each pre-push check skips a tree `make batch-close` already passed

@@ -81,8 +81,10 @@ Out of scope (today):
   `deps-latest.yml` is the deliberate exception: it runs `uv lock
   --upgrade` first, precisely to test outside the lock.
 - CI runs `pip-audit --strict` against the exported lockfile on every
-  push and weekly on a cron (`.github/workflows/security.yml`). The
-  build fails on any HIGH/CRITICAL CVE in a direct dep.
+  push to main and weekly on a cron (`.github/workflows/security.yml`).
+  On a PR it fails only on advisories the PR introduces: findings the
+  base branch already carries are listed as warnings and left to the
+  main audit and Dependabot security updates.
 - `.github/workflows/ci.yml` runs `check_runtime_pins.py` on every PR
   and it is a required check: a user-facing dependency that is not
   pinned `~=X.Y.Z` fails the build. Dependabot rewrites these pins into
@@ -90,7 +92,10 @@ Out of scope (today):
   stop it, so this guard, not the Dependabot config, is what holds
   the convention. A patch bump is lock-only and passes untouched; a minor
   or major bump falls outside the pin, so Dependabot rewrites the range
-  and the specifier needs correcting by hand in that PR.
+  and `.github/workflows/dependabot-pins.yml` pushes the `~=` pin back
+  onto that PR (it needs the `PIN_FIX_DEPLOY_KEY` Dependabot secret).
+  Dependabot then treats the PR as edited and stops rebasing it; use
+  `@dependabot recreate`, after which the pin is restored again.
 - `.github/workflows/deps-latest.yml` runs weekly, resolves every
   dependency at its newest allowed version ignoring `uv.lock`, and runs
   the suite against it. With `~=X.Y.Z` pins that is the patch float:

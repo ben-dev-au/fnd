@@ -1,0 +1,90 @@
+name: dependabot-pins
+
+# Dependabot's uv ecosystem widens `~=X.Y.Z` to a range whatever
+# `versioning-strategy` says; this re-pins its PR and re-locks.
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [pyproject.toml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-pins-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  repin:
+    name: restore runtime pins
+    # Holds no secret: the only job that resolves packages.
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv python install 3.13
+      - run: python3 .github/scripts/check_runtime_pins.py --fix
+      - run: uv lock --no-build
+      - id: diff
+        run: |
+          git diff --binary -- pyproject.toml uv.lock > repin.patch
+          # A lock-only diff is a uv format difference, not a restored pin.
+          if ! git diff --quiet -- pyproject.toml; then echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: repin-patch
+          path: repin.patch
+          retention-days: 1
+
+  push:
+    name: push restored pins
+    # Runs only git, hooks off; the deploy key cannot bypass the main ruleset.
+    needs: repin
+    if: needs.repin.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the deploy key
+        # Without it checkout falls back to the read-only GITHUB_TOKEN.
+        env:
+          KEY: ${{ secrets.PIN_FIX_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::PIN_FIX_DEPLOY_KEY is not set as a Dependabot secret"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.head_ref }}
+          ssh-key: ${{ secrets.PIN_FIX_DEPLOY_KEY }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: repin-patch
+          path: ${{ runner.temp }}
+      - name: Apply and push
+        env:
+          PATCH: ${{ runner.temp }}/repin.patch
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          git apply "$PATCH"
+          # Porcelain -z lists every path whole (rename sources too); --summary adds mode changes.
+          extra="$(git status --porcelain -z | tr '\0' '\n' | grep -vxE ' M (pyproject\.toml|uv\.lock)' || true)$(git diff --summary)"
+          if [ -n "$extra" ]; then
+            echo "::error::the re-pin patch changes more than pyproject.toml and uv.lock:"
+            echo "$extra"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -c core.hooksPath=/dev/null commit --no-verify -m "chore(deps): restore the ~=X.Y.Z runtime pin" -- pyproject.toml uv.lock
+          git push origin "HEAD:${HEAD_REF}"
