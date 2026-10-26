@@ -231,7 +231,7 @@ requires-dist = [
     { name = "textual", specifier = "~=8.2.8" },
     { name = "tokenizers", marker = "extra == 'semantic'", specifier = "~=0.23.3" },
     { name = "tomli-w", specifier = "~=1.2.0" },
-    { name = "tomlkit", specifier = ">=0.14,<0.16" },
+    { name = "tomlkit", specifier = "~=0.15.2" },
     { name = "typer", specifier = "~=0.27.3" },
 ]
 provides-extras = ["semantic"]
