@@ -544,6 +544,7 @@ class FNDApp(PlainToastApp):
        reader can still see chunk boundaries without the locator
        header text (which lives in the sidebar). */
     .chunk-first { padding: 1 0 0 0; }
+    .chunk-first.-seam-above { padding: 0; }
     #placeholder { color: $text-muted; }
     Tree > .tree--label { padding: 0 1; }
     /* Selected-row highlight: only when the panel actually owns focus,

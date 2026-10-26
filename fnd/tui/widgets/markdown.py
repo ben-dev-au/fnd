@@ -6,12 +6,14 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from textual import events
-from textual.containers import VerticalScroll
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.widgets import Markdown
 from textual.widgets._markdown import (
     MarkdownBlock,
     MarkdownBlockQuote,
+    MarkdownBullet,
     MarkdownFence,
     MarkdownH1,
     MarkdownH2,
@@ -19,6 +21,8 @@ from textual.widgets._markdown import (
     MarkdownH4,
     MarkdownH5,
     MarkdownH6,
+    MarkdownListItem,
+    MarkdownOrderedList,
     MarkdownOrderedListItem,
     MarkdownParagraph,
     MarkdownTable,
@@ -34,9 +38,10 @@ from fnd.render import (
     match_word_spans_multi,
     phrase_gap_spans,
 )
+from fnd.seams import Seam, read_seams
 from fnd.tui.mermaid_render import MermaidRenderer, in_rgb
 from fnd.tui.syntax_theme import highlight_fenced, inline_code_spans
-from fnd.tui.widgets.callouts import rewrite_callouts
+from fnd.tui.widgets.callouts import rewrite_callouts, stitch_seams
 from fnd.tui.widgets.md_inline import apply_obsidian_inline
 
 if TYPE_CHECKING:
@@ -361,12 +366,38 @@ class FNDMarkdownBlockQuote(_HighlightingBlockMixin, MarkdownBlockQuote):
             self.add_class("callout", f"callout-{key}")
 
 
+def _continued(token: Any) -> bool:
+    """Whether a chunk boundary cut ``token``'s block above this chunk."""
+    return "above" in token.meta.get("fnd_seam", ())
+
+
+class FNDMarkdownOrderedList(MarkdownOrderedList):
+    def compose(self) -> ComposeResult:
+        # Stock compose, sized to the whole list when a chunk boundary cut it, and
+        # blank where an item reopened from the chunk above shows its number there.
+        items = [b for b in self._blocks if isinstance(b, MarkdownListItem)]
+        try:
+            start = int(items[0].bullet) if items else 1
+        except ValueError:
+            start = 1
+        last = max(start + len(items) - 1, self._token.meta.get("fnd_list_last", 0))
+        for number, item in enumerate(items, start):
+            symbol = f"{number}. ".rjust(len(f"{last}. ") + 1)
+            bullet = MarkdownBullet()
+            bullet.symbol = " " * len(symbol) if _continued(item._token) else symbol
+            yield Horizontal(bullet, Vertical(*item._blocks))
+        self._blocks.clear()
+
+
 class FNDMarkdownOrderedListItem(_HighlightingBlockMixin, MarkdownOrderedListItem):
     pass
 
 
 class FNDMarkdownUnorderedListItem(_HighlightingBlockMixin, MarkdownUnorderedListItem):
-    pass
+    def __init__(self, markdown: Markdown, token: Any, bullet: str) -> None:
+        super().__init__(markdown, token, bullet)
+        if _continued(token):
+            self.bullet = " " * len(bullet)
 
 
 class FNDMarkdownTH(_HighlightingBlockMixin, MarkdownTH):
@@ -951,6 +982,7 @@ class FNDMarkdown(Markdown):
         "h6": FNDMarkdownH6,
         "paragraph_open": FNDMarkdownParagraph,
         "blockquote_open": FNDMarkdownBlockQuote,
+        "ordered_list_open": FNDMarkdownOrderedList,
         "list_item_ordered_open": FNDMarkdownOrderedListItem,
         "list_item_unordered_open": FNDMarkdownUnorderedListItem,
         "th_open": FNDMarkdownTH,
@@ -978,6 +1010,7 @@ class FNDMarkdown(Markdown):
         # query: the source it was built from, its blocks' rendered text, and
         # whether any of that text was highlighted.
         self.source_text: str = markdown or ""
+        self._seams: tuple[Seam | None, Seam | None] = (None, None)
         self.block_plains: tuple[str, ...] = ()
         self.painted_match: bool = False
         # Read by ``FNDMarkdownFence`` to decide whether a mermaid fence
@@ -1036,18 +1069,43 @@ class FNDMarkdown(Markdown):
         self._match_blocks = []
         self._dim_match_blocks = []
         self.source_text = markdown
+        above, below, body = read_seams(markdown or "")
+        self._seams = (above, below)
+        self.set_class(above is not None, "-seam-above")
+        self.set_class(below is not None, "-seam-below")
         self.block_plains = ()
         self.painted_match = False
         self._build_gen += 1
         gen = self._build_gen
-        aw = super().update(markdown)
+        # Without the marks: a mark below a fence left open would render as its code.
+        aw = super().update(body)
         aw._future.add_done_callback(  # type: ignore[attr-defined]
-            lambda _: self.build_done.set() if self._build_gen == gen else None
+            lambda _: self._finish_build() if self._build_gen == gen else None
         )
         return aw
 
+    def _finish_build(self) -> None:
+        try:
+            if self._seams != (None, None):
+                self._close_seams()
+        finally:
+            self.build_done.set()
+
+    def _close_seams(self) -> None:
+        """Zero the margin on each cut side of the blocks a chunk boundary runs through."""
+        # Per side, off the computed margin: a CSS ``margin-top`` alone replaces the
+        # whole stock margin, and the stock values differ by block and nesting.
+        for block in self.query(MarkdownBlock):
+            sides = block._token.meta.get("fnd_seam", ())  # type: ignore[attr-defined]
+            if sides:
+                m = block.styles.margin
+                top = 0 if "above" in sides else m.top
+                bottom = 0 if "below" in sides else m.bottom
+                block.styles.margin = (top, m.right, bottom, m.left)
+
     def _parse_markdown(self, tokens):  # type: ignore[no-untyped-def, override]
         tokens = list(tokens)
+        stitch_seams(tokens, *self._seams)
         rewrite_callouts(tokens)
         # Materialise the block tree before yielding any of it: the two-tier
         # proximity decision needs the whole chunk's text at once, and right here

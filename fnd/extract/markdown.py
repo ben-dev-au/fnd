@@ -14,17 +14,22 @@ separate so the snippet path doesn't end up showing markdown markers like
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import dataclasses
+import re
+from bisect import bisect_right
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from markdown_it import MarkdownIt
 
+from fnd.callout_syntax import callout_marker
 from fnd.extract.base import (
     MAX_CHUNK_CHARS,
     MAX_TABLE_CHARS,
     Block,
     Chunk,
+    Container,
     ExtractError,
     file_parent_id,
 )
@@ -56,6 +61,98 @@ _CONTENT_TOKEN_TYPES: frozenset[str] = frozenset(
 )
 
 
+_CONTAINERS = {
+    "blockquote_open": "quote",
+    "bullet_list_open": "list",
+    "ordered_list_open": "list",
+    "list_item_open": "item",
+}
+_LEAVES = frozenset({"paragraph_open", "heading_open", "fence", "code_block", "table_open"})
+
+
+class _Containers:
+    """The containers open around each leaf block of a parse, looked up by source line."""
+
+    def __init__(self, tokens: list[Any], source_lines: list[str]) -> None:
+        last_numbers = _ordered_list_last_numbers(tokens)
+        stack: list[Container] = []
+        self._starts: list[int] = []
+        self._ends: list[int] = []
+        self._chains: list[tuple[Container, ...]] = []
+        for i, tok in enumerate(tokens):
+            if tok.type in _CONTAINERS:
+                start, end = tok.map or (-1, -1)
+                detail = opener = ""
+                if marker := callout_marker(tokens, i):
+                    detail = marker.group(1)
+                elif i in last_numbers:
+                    detail = str(last_numbers[i])
+                elif tok.type == "list_item_open" and 0 <= start < len(source_lines):
+                    # `- - a` opens two items on one line: the inner one is the second marker.
+                    depth = sum(c.kind == "item" and c.start == start for c in stack)
+                    opener = _item_opener(source_lines[start], depth)
+                stack.append(Container(_CONTAINERS[tok.type], start, end, detail, opener))
+            elif tok.nesting == -1 and tok.type.replace("_close", "_open") in _CONTAINERS:
+                stack.pop()
+            elif tok.type in _LEAVES and tok.map and stack:
+                self._starts.append(tok.map[0])
+                self._ends.append(tok.map[1])
+                self._chains.append(tuple(stack))
+
+    def at(self, line: int) -> tuple[Container, ...]:
+        """The containers holding the leaf block at absolute source ``line``."""
+        k = bisect_right(self._starts, line) - 1
+        return self._chains[k] if k >= 0 and line < self._ends[k] else ()
+
+    def tag(self, blocks: list[Block], offset: int) -> list[Block]:
+        """``blocks``, spans relative to ``offset``, each with the containers holding it."""
+        out: list[Block] = []
+        for block in blocks:
+            chain = self.at(block.span[0] + offset) if block.span is not None else ()
+            out.append(dataclasses.replace(block, containers=chain) if chain else block)
+        return out
+
+
+def _ordered_list_last_numbers(tokens: list[Any]) -> dict[int, int]:
+    """Each ordered list's last item number, keyed by its opening token's index."""
+    counts: dict[int, int] = {}
+    open_lists: list[int] = []
+    for i, tok in enumerate(tokens):
+        if tok.type == "ordered_list_open":
+            open_lists.append(i)
+            counts[i] = 0
+        elif tok.type == "ordered_list_close":
+            open_lists.pop()
+        elif tok.type == "list_item_open" and open_lists:
+            if tokens[open_lists[-1]].level == tok.level - 1:
+                counts[open_lists[-1]] += 1
+    starts = {i: tokens[i].attrGet("start") for i in counts}
+    return {i: (1 if starts[i] is None else int(starts[i])) + n - 1 for i, n in counts.items()}
+
+
+# One step of a line's container prefix: whitespace, a quote marker or a list marker.
+_PREFIX_PART = re.compile(r"[ \t]+|>|[-+*]|\d{1,9}[.)]")
+
+
+def _item_opener(line: str, depth: int) -> str:
+    """``line`` up to its ``depth``-th list marker, from 0, earlier markers blanked."""
+    # Whitespace stays verbatim: a tab blanked to one space moves every column after it.
+    out: list[str] = []
+    markers = 0
+    pos = 0
+    while (part := _PREFIX_PART.match(line, pos)) is not None:
+        text = part.group(0)
+        if text[0] in " \t>":
+            out.append(text)
+        elif markers == depth:
+            return "".join(out) + text
+        else:
+            out.append(" " * len(text))
+            markers += 1
+        pos = part.end()
+    return ""
+
+
 def _flush_section(
     *,
     path: Path,
@@ -68,6 +165,7 @@ def _flush_section(
     has_content: bool,
     seq: int,
     section_start_line: int,
+    containers: _Containers,
 ) -> Chunk | None:
     if not has_content:
         return None
@@ -86,7 +184,7 @@ def _flush_section(
         inode_changed=times.inode_changed,
         kind="md",
         body=body,
-        body_struct=blocks.copy(),
+        body_struct=containers.tag(blocks, section_start_line),
         body_md=body_md,
         heading_path=heading_path,
         title=heading_stack[0] if heading_stack else "",
@@ -163,6 +261,118 @@ def _table_piece(
     return Block(kind="table", text=text, span=(run[0][0][0], run[-1][0][1]), head=head)
 
 
+def _code_blocks(
+    tokens: list[Any],
+    i: int,
+    section_start_line: int,
+    source_lines: list[str],
+    containers: _Containers,
+) -> list[Block]:
+    """The code at ``tokens[i]``: past the budget, runs of lines under a fence's opener."""
+    tok = tokens[i]
+    code = tok.content.strip()
+    if not code:
+        return []
+    span = _span(tokens, i, section_start_line)
+    fence = tok.type == "fence"
+    if len(code) <= MAX_CHUNK_CHARS or span is None:
+        return [Block(kind="code", text=code, span=span)]
+    if fence and not _reparses([source_lines[tok.map[0]]], containers.at(tok.map[0]), "fence"):
+        return [Block(kind="code", text=code, span=span)]
+    first = span[0] + fence
+    head = (span[0], first) if fence else None
+    lines = tok.content.splitlines()
+    return [
+        Block(
+            kind="code",
+            text="\n".join(lines[start:end]).strip(),
+            # The last piece runs to the token's end, closing fence included.
+            span=(first + start, first + end if end < len(lines) else span[1]),
+            head=head,
+        )
+        for start, end in _line_runs(lines, lambda _: True)
+    ]
+
+
+def _paragraph_blocks(
+    tokens: list[Any],
+    i: int,
+    section_start_line: int,
+    source_lines: list[str],
+    containers: _Containers,
+) -> list[Block]:
+    """The paragraph whose inline is ``tokens[i]``: past the budget, runs of its lines."""
+    text = tokens[i].content.strip()
+    if not text:
+        return []
+    span = _span(tokens, i, section_start_line)
+    if len(text) <= MAX_CHUNK_CHARS or span is None:
+        return [Block(kind="p", text=text, span=span)]
+    top = span[0] + section_start_line
+    chain = containers.at(top)
+
+    def can_cut(k: int) -> bool:
+        # A lazy line, or one reading as a list or heading alone, would leave the paragraph.
+        # The line alone first: the window costs 30 times as much, and adds only refusals.
+        line = source_lines[top + k]
+        return _reparses([line], chain, "paragraph_open") and _reparses(
+            _construct_window(source_lines, top + k), chain, "paragraph_open"
+        )
+
+    lines = tokens[i].content.splitlines()
+    return [
+        Block(
+            kind="p",
+            text="\n".join(lines[start:end]).strip(),
+            span=(span[0] + start, span[0] + end),
+        )
+        for start, end in _line_runs(lines, can_cut)
+    ]
+
+
+# A link reference label holds at most 999 characters; its destination and title
+# take up to two lines after it.
+_LABEL_LIMIT = 999
+
+
+def _construct_window(source_lines: list[str], start: int) -> list[str]:
+    """``source_lines`` from ``start``, enough to hold any reference definition there."""
+    end, size = start, 0
+    while end < len(source_lines) and size <= _LABEL_LIMIT:
+        size += len(source_lines[end]) + 1
+        end += 1
+    return source_lines[start : end + 2]
+
+
+def _line_runs(lines: list[str], can_cut: Callable[[int], bool]) -> list[tuple[int, int]]:
+    """``(start, end)`` runs of ``lines`` under the budget, cut only where ``can_cut``."""
+    cuts = [0]
+    size = 0
+    for k, line in enumerate(lines):
+        if k > cuts[-1] and size + len(line) + 1 > MAX_CHUNK_CHARS and can_cut(k):
+            cuts.append(k)
+            size = 0
+        size += len(line) + 1
+    return list(zip(cuts, [*cuts[1:], len(lines)], strict=True))
+
+
+def _reparses(lines: list[str], chain: tuple[Container, ...], leaf: str) -> bool:
+    """Whether a piece starting on ``lines[0]`` reopens there as a ``leaf`` inside ``chain``."""
+    # The item markers are all a continuation replays (see fnd.extract._bound); the
+    # lines after the first catch a construct spanning the cut, such as a reference.
+    openers = [c.opener for c in chain if c.kind == "item"]
+    open_kinds: list[str] = []
+    for tok in _md.parse("\n".join([*openers, *lines])):
+        if tok.type in _CONTAINERS:
+            open_kinds.append(_CONTAINERS[tok.type])
+        elif tok.nesting == -1 and tok.type.replace("_close", "_open") in _CONTAINERS:
+            open_kinds.pop()
+        elif tok.type in _LEAVES:
+            starts_here = tok.map is not None and tok.map[0] == len(openers)
+            return tok.type == leaf and starts_here and open_kinds == [c.kind for c in chain]
+    return False
+
+
 def _section_source(source_lines: list[str], start_line: int, end_line: int) -> str:
     """Slice the raw source for a heading section.
 
@@ -224,6 +434,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     times = read_file_times(path)
     tokens = _md.parse(source)
     source_lines = source.splitlines()
+    containers = _Containers(tokens, source_lines)
     total_lines = len(source_lines)
 
     heading_stack: list[str] = []  # current ancestor headings, indexed by level (1..6)
@@ -256,6 +467,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
                 has_content=section_has_content,
                 seq=seq,
                 section_start_line=section_start_line,
+                containers=containers,
             )
             if chunk is not None:
                 yield chunk
@@ -302,10 +514,10 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             continue
 
         if tok.type == "inline":
-            text = tok.content.strip()
-            if text:
-                blocks.append(Block(kind="p", text=text, span=_span(tokens, i, section_start_line)))
-                body_parts.append(text)
+            paragraph = _paragraph_blocks(tokens, i, section_start_line, source_lines, containers)
+            if paragraph:
+                blocks.extend(paragraph)
+                body_parts.extend(b.text for b in paragraph)
                 section_has_content = True
             i += 1
             continue
@@ -315,12 +527,9 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         # F_BODY via the inline branch above. Index it so code-only matches
         # are findable, and emit a Block so snippets can surface the line.
         if tok.type in ("fence", "code_block"):
-            code = tok.content.strip()
-            if code:
-                blocks.append(
-                    Block(kind="code", text=code, span=_span(tokens, i, section_start_line))
-                )
-                body_parts.append(code)
+            code_blocks = _code_blocks(tokens, i, section_start_line, source_lines, containers)
+            blocks.extend(code_blocks)
+            body_parts.extend(b.text for b in code_blocks)
             section_has_content = True
             i += 1
             continue
@@ -345,6 +554,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         has_content=section_has_content,
         seq=seq,
         section_start_line=section_start_line,
+        containers=containers,
     )
     if chunk is not None:
         yield chunk
