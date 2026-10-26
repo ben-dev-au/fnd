@@ -135,6 +135,12 @@ def test_a_forked_lock_pins_the_lowest_patch_of_its_one_minor() -> None:
     assert check_runtime_pins.pinned("onnxruntime>=1.31,<1.33", lock) == "onnxruntime~=1.32.1"
 
 
+def test_a_four_part_release_pins_its_first_three() -> None:
+    assert (
+        check_runtime_pins.pinned("onnxruntime>=1.31", _forked("1.32.1.4")) == "onnxruntime~=1.32.1"
+    )
+
+
 def test_a_forked_lock_across_minors_refuses() -> None:
     with pytest.raises(SystemExit, match="several minors"):
         check_runtime_pins.pinned("onnxruntime>=1.31,<1.34", _forked("1.32.1", "1.33.0"))

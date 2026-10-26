@@ -15,7 +15,7 @@ from pathlib import Path
 PIN = re.compile(r"^[A-Za-z0-9._-]+(\[[A-Za-z0-9,._-]+\])?~=\d+\.\d+\.\d+$")
 NAME = re.compile(r"^([A-Za-z0-9._-]+)(\[[A-Za-z0-9,._-]+\])?")
 # A final release (post-releases included): `~=X.Y.Z` excludes a locked pre-release.
-RELEASE = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?(?:\.post\d+)?$")
+RELEASE = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+)(?:\.\d+)*)?(?:\.post\d+)?$")
 
 # `dev` never reaches a user install; these groups and every extra do.
 USER_FACING_GROUPS = ("pdf-structure", "semantic")
