@@ -71,10 +71,10 @@ Every entry needs:
 Optional `notes`: short freeform description, not shown to users today.
 
 User TOML never reaches a shell: `argv` is passed as a list, and `url` as a
-single argument to the OS opener. The one exception is Windows, which runs a
-`.cmd` or `.bat` program through cmd.exe; fnd refuses to start one when its
-command line holds a character cmd.exe would act on (`& % ^ | < > ! "`), and
-says so. The `_pct` variables percent-encode every
+single argument to the OS opener. The one exception is Windows, which runs
+`cmd` itself, or a `.cmd` or `.bat` program, through cmd.exe; fnd refuses to
+start one when its command line holds a character cmd.exe would act on
+(`& % ^ | < > ! "`), and says so. The `_pct` variables percent-encode every
 byte outside `A-Za-z0-9._~-`. In a `url`, every variable is encoded that way,
 so `{heading}` and `{heading_pct}` are the same there: text holding `&` or `#`
 cannot add a parameter. `{path}` keeps its `/` in a URL (`vscode://file{path}`),
@@ -120,16 +120,14 @@ argv         = ["xreader", "--page-label={page}", "{path}"]
 
 ### Default PDF viewer (Windows)
 
-Open-only (no page locator). `cmd /c start "" {path}` hands the file to whatever
-app Windows has registered for PDFs, which may be Acrobat, Edge, SumatraPDF, or
-something else, so the entry is named for what it does, not a specific app. For a
+Open-only (no page locator). The built-in System Default (`system`) hands the
+file to whatever app Windows has registered for PDFs, which may be Acrobat, Edge,
+SumatraPDF, or something else, without a shell, so it needs no entry. For a
 page-jump-capable viewer, install SumatraPDF (a built-in; see the table above).
 
 ```toml
-[apps.default_pdf]
-display_name = "Default PDF viewer"
-handles      = ["pdf"]
-argv         = ["cmd", "/c", "start", "", "{path}"]
+[app_defaults]
+pdf = "system"
 ```
 
 To target a specific app, point `argv` at its executable, e.g.

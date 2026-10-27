@@ -245,6 +245,42 @@ def test_an_app_launch_refuses_a_batch_file_a_file_name_could_drive(
     assert started == []
 
 
+@pytest.mark.parametrize(
+    "program", ["cmd", "CMD", "cmd.exe", "Cmd.EXE", "C:\\Windows\\System32\\cmd.exe"]
+)
+@pytest.mark.parametrize("name", ["x&calc&y.pdf", "x%PATH%y.pdf", "x^&calc.pdf", "x!v!y.pdf"])
+def test_cmd_itself_is_refused_an_argument_it_would_act_on(program: str, name: str) -> None:
+    assert not WindowsLauncher().safe_to_run([program, "/c", "start", "", f"C:\\notes\\{name}"])
+
+
+@pytest.mark.parametrize("path", ["C:\\notes\\a.pdf", "C:\\My Notes\\a (1).pdf"])
+def test_cmd_itself_with_a_plain_path_runs(path: str) -> None:
+    assert WindowsLauncher().safe_to_run(["cmd", "/c", "start", "", path])
+
+
+def test_a_program_merely_named_like_cmd_is_not_refused() -> None:
+    assert WindowsLauncher().safe_to_run(["C:\\Tools\\cmdtool.exe", "C:\\notes\\x&y.pdf"])
+
+
+def test_a_user_app_through_cmd_refuses_a_file_name_that_could_drive_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `cmd /c start "" {path}` app must not hand `x&calc&y.pdf` to cmd.exe."""
+    from fnd import launcher
+    from fnd.apps import OpenRequest, load_user_apps
+
+    started: list[list[str]] = []
+    monkeypatch.setattr(launcher, "get_launcher", lambda: WindowsLauncher())
+    monkeypatch.setattr(launcher, "_run", lambda argv: started.append(argv) or 0)
+    argv = ["cmd", "/c", "start", "", "{path}"]
+    app = load_user_apps({"p": {"display_name": "P", "handles": ["pdf"], "argv": argv}})["p"]
+    refused = OpenRequest(path=Path("C:\\notes\\x&calc&y.pdf"), kind="pdf")
+    assert app.handler(refused) == launcher.LAUNCH_REFUSED
+    assert started == []
+    assert app.handler(OpenRequest(path=Path("C:\\notes\\a.pdf"), kind="pdf")) == 0
+    assert started == [["cmd", "/c", "start", "", str(Path("C:\\notes\\a.pdf"))]]
+
+
 @pytest.mark.parametrize("refused", [True, False])
 def test_the_editor_message_names_the_real_reason(refused: bool) -> None:
     from fnd import launcher

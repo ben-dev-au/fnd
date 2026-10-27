@@ -39,13 +39,13 @@ StartFile = Callable[[str], None]
 # action handler must never have to catch an exception from an open/reveal.
 LAUNCH_FAILED = 127
 
-# Not started, deliberately: a batch file would hand its command line to cmd.exe.
+# Not started, deliberately: cmd.exe, or a batch file, would act on its command line.
 # Outside every exit status a process can return (0 to 255, a negative signal,
 # a large positive Windows code), so a program's own 126 is never read as this.
 LAUNCH_REFUSED = -256
 REFUSED_REASON = (
-    "it is a batch file (.cmd or .bat), and its command line holds a character "
-    'cmd.exe would act on: & % ^ | < > ! "'
+    "it runs through cmd.exe (cmd itself, or a batch file: .cmd or .bat), and its "
+    'command line holds a character cmd.exe would act on: & % ^ | < > ! "'
 )
 
 
@@ -257,9 +257,15 @@ class WindowsLauncher:
         return bool(argv) and PureWindowsPath(argv[0]).is_absolute()
 
     def safe_to_run(self, argv: list[str]) -> bool:
-        """A batch file runs through cmd.exe, which acts on these anywhere in its
+        """cmd.exe, run directly or for a batch file, acts on these anywhere in its
         command line, the program's own path included."""
-        if not argv or PureWindowsPath(argv[0]).suffix.lower() not in (".cmd", ".bat"):
+        if not argv:
+            return True
+        program = PureWindowsPath(argv[0])
+        if (
+            program.suffix.lower() not in (".cmd", ".bat")
+            and program.name.lower() not in _CMD_NAMES
+        ):
             return True
         return not any(set(arg) & _CMD_SPECIAL for arg in argv)
 
@@ -295,7 +301,7 @@ def reveal(path: Path | str) -> None:
 
 def run(argv: list[str]) -> int:
     """Run an app's own command line: blocking, output discarded, never raising,
-    and never a batch file handed text its shell would act on."""
+    and never cmd.exe or a batch file handed text cmd.exe would act on."""
     if not get_launcher().safe_to_run(argv):
         return LAUNCH_REFUSED
     return _run(argv)
@@ -309,8 +315,9 @@ def capture(argv: list[str], *, timeout: float) -> int:
         return LAUNCH_FAILED
 
 
-# What cmd.exe interprets in a batch file's arguments, quoted or not.
+# What cmd.exe interprets in a batch file's arguments, or its own, quoted or not.
 _CMD_SPECIAL = frozenset('&|<>^%!"')
+_CMD_NAMES = frozenset({"cmd", "cmd.exe"})
 
 
 def editor_argv(path: Path) -> list[str]:

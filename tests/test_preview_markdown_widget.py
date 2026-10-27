@@ -537,3 +537,76 @@ async def test_preview_first_match_block_resolves_to_matched_paragraph(
         first_match = md.first_match_block  # type: ignore[attr-defined]
         assert first_match is not None
         assert "templates" in first_match._content.plain
+
+
+def _link_app(markdown: str):
+    """An app holding one FNDMarkdown that records ``open_url`` and toasts instead of acting."""
+    from textual.app import App, ComposeResult
+
+    class _App(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.opened: list[str] = []
+            self.notices: list[tuple[str, str]] = []
+
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(markdown)
+
+        def open_url(self, url: str, *, new_tab: bool = True) -> None:
+            self.opened.append(url)
+
+        def notify(self, message: str, *, title: str = "", **_: object) -> None:
+            self.notices.append((message, title))
+
+    return _App()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "href", ["https://example.com/a?b=1", "HTTP://example.com", "mailto:someone@example.com"]
+)
+async def test_link_click_opens_web_and_mail_links(
+    href: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clicked http, https or mailto link reaches the app's URL opener unchanged."""
+    monkeypatch.setattr("webbrowser.open", lambda *a, **k: pytest.fail("real opener reached"))
+    app = _link_app(f"[go]({href})\n")
+    async with app.run_test() as pilot:
+        md = app.query_one(FNDMarkdown)
+        await md.build_done.wait()
+        await pilot.click(FNDMarkdownParagraph, offset=(0, 0))
+        await pilot.pause()
+        assert app.opened == [href]
+        assert app.notices == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("href", "shown"),
+    [
+        ("smb://host/s", "smb://host/s"),
+        ("C:/x.exe", "C:/x.exe"),
+        ("%66ile:///etc/passwd", "file:///etc/passwd"),
+        ("%2566ile:///etc/passwd", "%66ile:///etc/passwd"),
+        ("vscode://x", "vscode://x"),
+        ("search-ms:x", "search-ms:x"),
+        ("notes/other.md", "notes/other.md"),
+        ("#section", "#section"),
+    ],
+)
+async def test_link_click_refuses_non_web_targets(
+    href: str, shown: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any other target, decoded or not, never reaches the opener and is named in a notice."""
+    monkeypatch.setattr("webbrowser.open", lambda *a, **k: pytest.fail("real opener reached"))
+    app = _link_app(f"[go]({href})\n")
+    async with app.run_test() as pilot:
+        md = app.query_one(FNDMarkdown)
+        await md.build_done.wait()
+        await pilot.click(FNDMarkdownParagraph, offset=(0, 0))
+        await pilot.pause()
+        assert app.opened == []
+        assert len(app.notices) == 1
+        message, title = app.notices[0]
+        assert title == "Link not opened"
+        assert message.endswith(shown)
