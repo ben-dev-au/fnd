@@ -129,19 +129,25 @@ def _parse_block(lines: list[str]) -> dict[str, object]:
     return out
 
 
-def _parse_scalar(text: str) -> object:
+def _parse_scalar(text: str, depth: int = 0) -> object:
     """Coerce one bare value into an int/float/date/bool/None/str/list."""
     s = text.strip()
     if not s:
         return ""
     # Inline list: [a, b, c]
     if s.startswith("["):
+        from fnd.extract._limits import LIMIT_FRONTMATTER_LIST_DEPTH
+
         if not s.endswith("]"):
             raise FrontmatterParseError("inline list missing closing ]")
+        if depth >= LIMIT_FRONTMATTER_LIST_DEPTH:
+            raise FrontmatterParseError(
+                f"inline list nested deeper than {LIMIT_FRONTMATTER_LIST_DEPTH} levels"
+            )
         inner = s[1:-1].strip()
         if not inner:
             return []
-        return [_parse_scalar(item) for item in _split_csv(inner)]
+        return [_parse_scalar(item, depth + 1) for item in _split_csv(inner)]
     # Quoted strings.
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         return s[1:-1]
@@ -155,7 +161,12 @@ def _parse_scalar(text: str) -> object:
         return None
     # ISO date.
     if _ISO_DATE.match(s):
-        return dt.date.fromisoformat(s)
+        # An impossible date (2024-02-30, 0000-01-01) stays a string; its ValueError is
+        # outside the FrontmatterParseError contract and would abort the indexing run.
+        try:
+            return dt.date.fromisoformat(s)
+        except ValueError:
+            return s
     # Number.
     try:
         if "." in s:

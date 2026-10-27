@@ -34,6 +34,41 @@ def test_frontmatter_normal_size_still_parses() -> None:
     assert out["title"] == "hello"
 
 
+def _nested_list_doc(depth: int) -> str:
+    return "---\ntags: " + "[" * depth + "]" * depth + "\n---\n"
+
+
+def test_frontmatter_deep_inline_list_rejected_not_recursion_error() -> None:
+    """A 2 KB line of brackets raises the parse error, not RecursionError."""
+    with pytest.raises(FrontmatterParseError, match="nested deeper"):
+        read_frontmatter_from_text(_nested_list_doc(1000))
+
+
+def test_frontmatter_inline_list_depth_limit_boundary() -> None:
+    """Nesting up to the limit parses; one level more is refused."""
+    from fnd.extract._limits import LIMIT_FRONTMATTER_LIST_DEPTH
+
+    expected: list[object] = []
+    for _ in range(LIMIT_FRONTMATTER_LIST_DEPTH - 1):
+        expected = [expected]
+    assert read_frontmatter_from_text(_nested_list_doc(LIMIT_FRONTMATTER_LIST_DEPTH)) == {
+        "tags": expected
+    }
+    with pytest.raises(FrontmatterParseError, match="nested deeper"):
+        read_frontmatter_from_text(_nested_list_doc(LIMIT_FRONTMATTER_LIST_DEPTH + 1))
+
+
+def test_frontmatter_shallow_nested_inline_lists_parse() -> None:
+    """Shallow nested inline lists parse to nested Python lists."""
+    doc = "---\na: [[x]]\nb: [[x], [y]]\nc: [p, [q]]\nd: [[[]]]\n---\n"
+    assert read_frontmatter_from_text(doc) == {
+        "a": [["x"]],
+        "b": [["x"], ["y"]],
+        "c": ["p", ["q"]],
+        "d": [[[]]],
+    }
+
+
 def test_frontmatter_no_fence_returns_none() -> None:
     assert read_frontmatter_from_text("just a body\n") is None
 

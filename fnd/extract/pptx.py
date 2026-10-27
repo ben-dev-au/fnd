@@ -23,6 +23,10 @@ from fnd.extract._ooxml import reject_if_zip_bomb
 from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import read_file_times
 
+# OOXML caps a:pPr/@lvl at 8, but python-pptx validates only on write,
+# so a crafted deck can carry any int as a paragraph level.
+_MAX_PARAGRAPH_LEVEL = 8
+
 
 def _shape_text(shape: BaseShape) -> str:
     if not shape.has_text_frame:
@@ -100,7 +104,7 @@ def _shape_md_lines(shape: BaseShape) -> list[str]:
         if not rendered.strip():
             continue
         if is_bullet_list:
-            indent = "  " * max(p.level, 0)
+            indent = "  " * min(max(p.level, 0), _MAX_PARAGRAPH_LEVEL)
             lines.append(f"{indent}- {rendered}")
         else:
             lines.append(rendered)

@@ -8,10 +8,16 @@ so we wrap dates in a small typed envelope::
     encode({"due": date(2026, 6, 1)}) →
         b'{"due": {"__type__": "date", "value": "2026-06-01"}}'
 
-The decoder restores them via a JSON ``object_hook``. The DSL evaluator
-needs ``dt.date`` instances on both sides for ordered comparisons (the
-:func:`fnd.filter_dsl._orderable` helper rejects str-vs-date), so the
-round-trip is load-bearing, not just cosmetic.
+The DSL evaluator needs ``dt.date`` instances on both sides for ordered
+comparisons (the :func:`fnd.filter_dsl._orderable` helper rejects
+str-vs-date), so the round-trip is load-bearing, not just cosmetic.
+
+Frontmatter values are only scalars, dates and lists, so the only dicts in
+a blob are the top-level mapping and envelopes. The decoder never reads the
+top-level mapping as an envelope, since its keys are the note's own (a
+``__type__`` key included), and restores only a dict shaped exactly as
+:func:`_default` writes it. Lists are walked with an explicit stack, so
+nesting depth costs no Python recursion.
 """
 
 from __future__ import annotations
@@ -35,7 +41,13 @@ def decode(blob: bytes) -> dict[str, Any]:
     empty dict (the no-frontmatter case for non-md chunks)."""
     if not blob:
         return {}
-    return json.loads(blob.decode("utf-8"), object_hook=_object_hook)
+    nested: list[list[Any]] = []
+    fm = {key: _restore(value, nested) for key, value in json.loads(blob.decode("utf-8")).items()}
+    while nested:
+        items = nested.pop()
+        for i, value in enumerate(items):
+            items[i] = _restore(value, nested)
+    return fm
 
 
 def _default(o: object) -> object:
@@ -44,8 +56,21 @@ def _default(o: object) -> object:
     raise TypeError(f"unsupported type for meta_blob: {type(o).__name__}")
 
 
-def _object_hook(d: dict[str, Any]) -> object:
-    t = d.get(_TYPE_KEY)
-    if t == "date":
-        return dt.date.fromisoformat(d["value"])
+def _restore(value: object, nested: list[list[Any]]) -> object:
+    """``value`` with an envelope turned back into its date; a list is queued on ``nested``."""
+    if isinstance(value, list):
+        nested.append(value)
+    elif isinstance(value, dict):
+        return _envelope_date(value)
+    return value
+
+
+def _envelope_date(d: dict[str, Any]) -> object:
+    """The date ``d`` holds if it is exactly a :func:`_default` envelope, else ``d`` unchanged."""
+    value = d.get("value")
+    if d.keys() == {_TYPE_KEY, "value"} and d[_TYPE_KEY] == "date" and isinstance(value, str):
+        try:
+            return dt.date.fromisoformat(value)
+        except ValueError:
+            pass
     return d

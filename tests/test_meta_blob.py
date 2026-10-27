@@ -48,6 +48,50 @@ def test_date_inside_list_roundtrip() -> None:
     assert all(isinstance(d, dt.date) for d in out["deadlines"])
 
 
+@pytest.mark.parametrize(
+    "fm",
+    [
+        {"__type__": "date"},
+        {"__type__": "date", "value": "notadate"},
+        {"__type__": "date", "value": "2020-01-01"},
+        {"__type__": "date", "value": dt.date(2020, 1, 1)},
+        {"__type__": "date", "value": [dt.date(2020, 1, 1)]},
+    ],
+)
+def test_frontmatter_type_key_roundtrips_as_a_key(fm: dict[str, object]) -> None:
+    """A note's own ``__type__`` key is data, never a date envelope."""
+    assert decode(encode(fm)) == fm
+
+
+def test_decode_reads_blobs_already_in_the_index() -> None:
+    """Blobs as the encoder writes them decode to the same dates."""
+    blob = (
+        b'{"due": {"__type__": "date", "value": "2026-06-01"}, '
+        b'"deadlines": [{"__type__": "date", "value": "2026-07-01"}], '
+        b'"nested": [["x", {"__type__": "date", "value": "2026-08-01"}]], '
+        b'"old": {"__type__": "date", "value": "0999-01-01"}}'
+    )
+    fm = {
+        "due": dt.date(2026, 6, 1),
+        "deadlines": [dt.date(2026, 7, 1)],
+        "nested": [["x", dt.date(2026, 8, 1)]],
+        "old": dt.date(999, 1, 1),
+    }
+    assert encode(fm) == blob
+    assert decode(blob) == fm
+
+
+def test_decode_deep_list_nesting_needs_no_recursion() -> None:
+    """List nesting far past the recursion limit decodes as the JSON scanner parses it."""
+    depth = 2000
+    envelope = '{"__type__": "date", "value": "2026-06-01"}'
+    blob = ('{"deep": ' + "[" * depth + envelope + "]" * depth + "}").encode()
+    expected: object = dt.date(2026, 6, 1)
+    for _ in range(depth):
+        expected = [expected]
+    assert decode(blob) == {"deep": expected}
+
+
 def test_decode_empty_bytes_returns_empty_dict() -> None:
     """Non-md chunks store empty bytes; decode must map this to ``{}`` so
     callers don't need to special-case the empty-file path."""
