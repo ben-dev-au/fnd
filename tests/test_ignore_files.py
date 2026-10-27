@@ -7,8 +7,10 @@ global excludes and ``.git/info/exclude``; without that, a machine with a
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -194,6 +196,87 @@ def test_unreadable_ignore_file_degrades_to_no_rules(tmp_path: Path) -> None:
     assert load_ignore_file(tmp_path, ".gitignore") is None
 
 
+def test_symlinked_ignore_file_is_skipped_as_git_does(tmp_path: Path) -> None:
+    env = _init_repo(tmp_path)
+    (tmp_path / "rules.txt").write_text("*.md\n", encoding="utf-8")
+    try:
+        (tmp_path / ".gitignore").symlink_to(tmp_path / "rules.txt")
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    _make(tmp_path, "a.md")
+    assert _ours_ignores(tmp_path, "a.md") is _git_ignores(tmp_path, env, "a.md") is False
+
+
+def test_symlinked_fndignore_is_followed(tmp_path: Path) -> None:
+    (tmp_path / "rules.txt").write_text("*.md\n", encoding="utf-8")
+    try:
+        (tmp_path / ".fndignore").symlink_to(tmp_path / "rules.txt")
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    loaded = load_ignore_file(tmp_path, ".fndignore")
+    assert loaded is not None
+    assert loaded.match(tmp_path / "a.md", is_dir=False) is not None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX device and FIFO files")
+@pytest.mark.parametrize("name", [".gitignore", ".fndignore"])
+@pytest.mark.parametrize("kind", ["zero-symlink", "fifo", "directory"])
+def test_non_regular_ignore_file_yields_no_rules_without_reading(
+    tmp_path: Path, name: str, kind: str
+) -> None:
+    """Run apart, so a regression fails on the timeout instead of hanging the suite."""
+    target = tmp_path / name
+    if kind == "zero-symlink":
+        target.symlink_to("/dev/zero")
+    elif kind == "fifo":
+        os.mkfifo(target)
+    else:
+        target.mkdir()
+    code = (
+        "import sys; from pathlib import Path; from fnd.ignore_files import load_ignore_file;"
+        "print(load_ignore_file(Path(sys.argv[1]), sys.argv[2]))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path), name],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    assert done.stdout.strip() == "None"
+
+
+@pytest.mark.skipif(not Path("/dev/fd").is_dir(), reason="needs /dev/fd to count descriptors")
+def test_refused_ignore_file_leaves_no_descriptor_open(tmp_path: Path) -> None:
+    """Counted in a fresh process, where no other thread opens descriptors."""
+    (tmp_path / ".gitignore").mkdir()
+    (tmp_path / ".fndignore").symlink_to("/dev/zero")
+    code = (
+        "import os, sys; from pathlib import Path; from fnd.ignore_files import load_ignore_file;"
+        "d = Path(sys.argv[1]); before = len(os.listdir('/dev/fd'));"
+        "[load_ignore_file(d, n) for _ in range(50) for n in ('.gitignore', '.fndignore')];"
+        "print(len(os.listdir('/dev/fd')) - before)"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    assert done.stdout.strip() == "0"
+
+
+def test_regular_ignore_file_is_read_whole_up_to_the_cap(tmp_path: Path) -> None:
+    padding = "# pad\n" * ((1 << 20) // 6 - 10)
+    (tmp_path / ".fndignore").write_text(padding + "*.md\n", encoding="utf-8")
+    loaded = load_ignore_file(tmp_path, ".fndignore")
+    assert loaded is not None
+    assert loaded.match(tmp_path / "a.md", is_dir=False) is not None
+
+
 def test_blank_and_comment_only_file_yields_no_patterns() -> None:
     assert parse_patterns("\n# just a comment\n   \n") == ()
 
@@ -260,6 +343,53 @@ class TestPathologicalPatterns:
         for p in patterns:
             p.regex.match(victim)
         assert time.perf_counter() - start < 1.0, f"{pattern[:24]!r} backtracks"
+
+    @pytest.mark.parametrize(
+        ("pattern", "victim"),
+        [
+            ("/" + "**/a/" * 10 + "z", "/".join(["a"] * 60)),
+            ("**/*/" * 20 + "zz", "a/" * 40 + "x.md"),
+        ],
+        ids=["repeated-literal", "star-segments"],
+    )
+    def test_several_globstars_do_not_backtrack_together(self, pattern: str, victim: str) -> None:
+        """Run apart, so a regression fails on the timeout instead of hanging the suite."""
+        code = (
+            "from fnd.ignore_files import parse_patterns;"
+            f"print([bool(p.regex.match({victim!r})) for p in parse_patterns({pattern!r})])"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+        )
+        assert done.stdout.strip() == "[False]"
+
+    @pytest.mark.parametrize(
+        ("pattern", "rel"),
+        [
+            ("**/a/**/b.md", "a/b.md"),
+            ("**/a/**/b.md", "x/a/y/z/b.md"),
+            ("**/a/**/b.md", "x/b.md"),
+            ("a/**/b/**/c.md", "a/b/c.md"),
+            ("a/**/b/**/c.md", "a/x/b/y/c.md"),
+            ("a/**/b/**/c.md", "a/c.md"),
+            ("**/*/**/*.md", "x.md"),
+            ("**/*/**/*.md", "d/x.md"),
+            ("**/a/**/b/**", "a/b/c.md"),
+            ("**/a/**/b/**", "a/c/b.md"),
+        ],
+    )
+    def test_several_globstars_still_agree_with_git(
+        self, tmp_path: Path, pattern: str, rel: str
+    ) -> None:
+        env = _init_repo(tmp_path)
+        (tmp_path / ".gitignore").write_text(pattern + "\n", encoding="utf-8")
+        _make(tmp_path, rel)
+        assert _ours_ignores(tmp_path, rel) == _git_ignores(tmp_path, env, rel)
 
     @pytest.mark.parametrize(
         "line", ["/", "!", "!!", "\\", "   ", "#", "\\#literal", "a\\ ", "[!a-z].md", "[]].md"]

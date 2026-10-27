@@ -37,10 +37,13 @@ REVEAL_STYLE = "#565f89"
 # Cheap gate: most blocks contain none of these and skip every regex below.
 _CANDIDATES = frozenset("=[!#%^")
 
-_MARK = re.compile(r"==(?!\s)(.+?)(?<!\s)==")
+# In _MARK, _EMBED and _WIKILINK an unclosed opener takes the trailing branch (group 1 None),
+# consuming the span the first branch scanned: no opener inside it can close, and rescanning
+# from each one is quadratic.
+_MARK = re.compile(r"==(?!\s)(?:(.+?)(?<!\s)==|.*)")
 _CHECKBOX = re.compile(r"^\[([ xX])\]\s")
-_EMBED = re.compile(r"!\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]")
-_WIKILINK = re.compile(r"(?<!!)\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]")
+_EMBED = re.compile(r"!\[\[(?:([^\]|]+?)(?:\|([^\]]*))?\]\]|[^\]|]+(?:\|[^\]]*)?)")
+_WIKILINK = re.compile(r"(?<!!)\[\[(?:([^\]|]+?)(?:\|([^\]]*))?\]\]|[^\]|]+(?:\|[^\]]*)?)")
 # ``#`` must start a word and be followed by a letter, so the heading marker
 # prefix (``## ``) and ``C#`` are both excluded.
 _TAG = re.compile(r"(?:(?<=\s)|^)#[A-Za-z][\w/-]*")
@@ -111,7 +114,7 @@ def collect_edits(
         taken.update(range(m.start(), m.end()))
 
     for m in _MARK.finditer(plain):
-        if not free(m.start(), m.end()):
+        if m.group(1) is None or not free(m.start(), m.end()):
             continue
         inner = m.group(1)
         edits.append(
@@ -120,7 +123,7 @@ def collect_edits(
         taken.update(range(m.start(), m.end()))
 
     for m in _EMBED.finditer(plain):
-        if not free(m.start(), m.end()):
+        if m.group(1) is None or not free(m.start(), m.end()):
             continue
         name = (m.group(2) or m.group(1)).strip()
         shown = f"▣ {name}"
@@ -128,7 +131,7 @@ def collect_edits(
         taken.update(range(m.start(), m.end()))
 
     for m in _WIKILINK.finditer(plain):
-        if not free(m.start(), m.end()):
+        if m.group(1) is None or not free(m.start(), m.end()):
             continue
         target, alias = m.group(1).strip(), (m.group(2) or "").strip()
         styles: tuple[tuple[int, int, str], ...]

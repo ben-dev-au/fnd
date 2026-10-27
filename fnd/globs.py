@@ -12,6 +12,8 @@ matches, rather than aborting the scan that used it.
 
 Each segment compiles so the engine has a single path to try; see
 :func:`_translate_segment` for why, and for the one place that would be unsound.
+A pattern with several unbounded ``**`` runs is matched a component at a time
+instead; see :class:`_ComponentMatcher`.
 """
 
 from __future__ import annotations
@@ -20,10 +22,11 @@ import functools
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 from fnd.text_canon import canonical
 
-__all__ = ["GlobSet", "PathGlob", "config_regex", "names_hidden", "translate"]
+__all__ = ["CompiledGlob", "GlobSet", "PathGlob", "config_regex", "names_hidden", "translate"]
 
 
 def names_hidden(pattern: str) -> bool:
@@ -130,11 +133,65 @@ def _collapse(segments: list[str]) -> list[str]:
     return out
 
 
-def translate(pattern: str, *, anchored: bool, fold_case: bool = False) -> re.Pattern[str]:
+@dataclass(frozen=True, slots=True)
+class _ComponentMatcher:
+    """A glob with several unbounded runs, matched component by component.
+
+    As one regex, ten ``**`` try about C(60, 10) splits of a 60-deep path; here
+    each segment meets each component once, answering as the regex would.
+    """
+
+    inner: tuple[re.Pattern[str] | None, ...]
+    """Every segment but the last; ``None`` is a ``**`` spanning directories."""
+    final: re.Pattern[str] | None
+    """``None`` for a trailing ``/**``."""
+    anchored: bool
+
+    def match(self, text: str) -> Literal[True] | None:
+        """``None`` on a miss, as :meth:`re.Pattern.match` returns."""
+        parts = text.split("/")
+        last = len(parts) - 1
+        at = [0]  # ascending component indices the next segment may start at
+        if not self.anchored:
+            at = []
+            for start, part in enumerate(parts):
+                at.append(start)
+                if "\n" in part:
+                    break
+        for segment in self.inner:
+            if segment is None:
+                starts = set(at)
+                spread: list[int] = []
+                for k in range(at[0], last + 1):
+                    if k in starts or (spread and spread[-1] == k - 1 and parts[k - 1]):
+                        spread.append(k)
+                at = spread
+            else:
+                at = [k + 1 for k in at if k < last and segment.fullmatch(parts[k])]
+            if not at:
+                return None
+        if self.final is None:
+            matched = "\n" not in "/".join(parts[at[-1] :])
+        else:
+            matched = at[-1] == last and self.final.fullmatch(parts[last]) is not None
+        return True if matched else None
+
+
+CompiledGlob = re.Pattern[str] | _ComponentMatcher
+
+
+def translate(pattern: str, *, anchored: bool, fold_case: bool = False) -> CompiledGlob:
     """Compile one glob. ``anchored`` fixes it to the root; otherwise it may
     start at any directory, which is git's rule for a slashless pattern.
     The pattern is canonical, so match it against :func:`canonical` text."""
     segments = _collapse(canonical(pattern).split("/"))
+    # One unbounded run backtracks over the path's depth alone; two multiply.
+    if segments[:-1].count("**") + (0 if anchored else 1) > 1:
+        compiled = [
+            None if s == "**" else re.compile(_translate_segment(s, fold_case=fold_case))
+            for s in segments
+        ]
+        return _ComponentMatcher(tuple(compiled[:-1]), compiled[-1], anchored)
     parts: list[str] = []
     for index, segment in enumerate(segments):
         last = index == len(segments) - 1
@@ -155,7 +212,7 @@ def translate(pattern: str, *, anchored: bool, fold_case: bool = False) -> re.Pa
 
 
 @functools.lru_cache(maxsize=2048)
-def config_regex(pattern: str) -> re.Pattern[str] | None:
+def config_regex(pattern: str) -> CompiledGlob | None:
     try:
         return translate(pattern, anchored=True)
     except re.error:
