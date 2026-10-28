@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import os
 import signal
 import subprocess
@@ -222,3 +223,32 @@ def test_the_worker_ignores_job_control_and_ctrl_c():
         os.kill(proc.pid, signal.SIGCONT)
         proc.kill()
         proc.wait()
+
+
+def test_the_worker_refuses_oversized_art_before_serialising_it():
+    """The reply carries a span per character, so a cap applied only on receipt is too late."""
+    r = MermaidRenderer()
+    assert _prepared(r, FLOW) is not None
+    proc = r._worker._proc
+    assert proc is not None
+    request = json.dumps({"source": "flowchart TD\n  A[Other] --> B[End]", "max_chars": 50})
+    reply = m._exchange(proc, request + "\n", m.RENDER_TIMEOUT_S)
+    assert reply == {"art": None}
+
+
+def test_a_long_single_line_source_falls_back_without_rendering(monkeypatch: pytest.MonkeyPatch):
+    r = MermaidRenderer()
+    monkeypatch.setattr(r._worker, "render", lambda key: pytest.fail("oversized source rendered"))
+    long_label = "flowchart TD\n  A[" + "x" * m.MAX_SOURCE_CHARS + "] --> B"
+    assert r.is_prepared(long_label)
+    assert _prepared(r, long_label) is None
+
+
+def test_a_prepare_from_before_a_cancel_renders_nothing(monkeypatch: pytest.MonkeyPatch):
+    """A build that began before a quit's cancel cannot restart the worker."""
+    r = MermaidRenderer()
+    started = r.epoch
+    r.cancel_pending()
+    monkeypatch.setattr(r._worker, "render", lambda key: pytest.fail("rendered after cancel"))
+    asyncio.run(r.prepare([FLOW], epoch=started))
+    assert not r.is_prepared(FLOW)

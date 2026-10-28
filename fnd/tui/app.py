@@ -834,7 +834,8 @@ sidebar panels stop showing a stale ``current selection`` band
             self._preview.stop_background_work()
         from fnd.tui.widgets.markdown import cancel_pending_diagrams
 
-        cancel_pending_diagrams()
+        with contextlib.suppress(Exception):
+            cancel_pending_diagrams()
         from fnd.tui.extras_install_progress import stop_for_quit
 
         with contextlib.suppress(asyncio.CancelledError, Exception):

@@ -108,7 +108,7 @@ def _render(request: dict[str, object]) -> dict[str, object]:
         )
     except Exception:
         return {"art": None}
-    if not out.plain.strip():
+    if not out.plain.strip() or len(out.plain) > int(str(request.get("max_chars", 0))):
         return {"art": None}
     spans = [[s.start, s.end, str(s.style)] for s in out.spans]
     return {"art": {"plain": out.plain, "style": str(out.style), "spans": spans}}

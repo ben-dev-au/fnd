@@ -47,6 +47,8 @@ PREPARE_BUDGET_S: Final = 5.0
 #: 2,000 sequence lines draw 1.1 M characters and stall it 3 s.
 MAX_SOURCE_LINES: Final = 200
 MAX_ART_CHARS: Final = 200_000
+#: A one-line label is not bounded by the line cap; 200 lines of 200 characters is.
+MAX_SOURCE_CHARS: Final = 40_000
 #: Covers the interpreter start and termaid's import, measured near 70 ms warm.
 WORKER_START_TIMEOUT_S: Final = 15.0
 WORKER_MEMORY_LIMIT: Final = 512 * 1024 * 1024
@@ -69,7 +71,11 @@ class _Worker:
         if proc is None:
             return None
         source, theme, use_ascii = key
-        request = json.dumps({"source": source, "theme": theme, "use_ascii": use_ascii})
+        # The worker refuses oversized art before serialising it: a reply carries a
+        # span per character, so it would dwarf the art itself.
+        request = json.dumps(
+            {"source": source, "theme": theme, "use_ascii": use_ascii, "max_chars": MAX_ART_CHARS}
+        )
         reply = _exchange(proc, request + "\n", RENDER_TIMEOUT_S)
         if reply is None:
             self.stop()
@@ -189,10 +195,27 @@ class MermaidRenderer:
         with self._lock:
             return (source, theme, use_ascii) in self._results
 
+    @property
+    def epoch(self) -> int:
+        """Bumped by :meth:`cancel_pending`; a build takes it before any await."""
+        return self._epoch
+
     async def prepare(
-        self, sources: Iterable[str], theme: str = "default", use_ascii: bool = False
+        self,
+        sources: Iterable[str],
+        theme: str = "default",
+        use_ascii: bool = False,
+        *,
+        epoch: int | None = None,
     ) -> None:
-        """Render every unprepared source in the worker; a failure caches ``None``."""
+        """Render every unprepared source in the worker; a failure caches ``None``.
+
+        A build that began before a :meth:`cancel_pending` passes its ``epoch`` and
+        renders nothing, so a quit during its parse cannot restart the worker.
+        """
+        epoch = self._epoch if epoch is None else epoch
+        if epoch != self._epoch:
+            return
         keys = [
             (s, theme, use_ascii)
             for s in dict.fromkeys(sources)
@@ -200,7 +223,7 @@ class MermaidRenderer:
         ]
         if keys:
             loop = asyncio.get_running_loop()
-            job = loop.run_in_executor(self._executor, self._render_all, keys, self._epoch)
+            job = loop.run_in_executor(self._executor, self._render_all, keys, epoch)
             # Shielded: a cancelled preview build still leaves the result cached.
             await asyncio.shield(job)
 
@@ -226,7 +249,12 @@ class MermaidRenderer:
 
 
 def _renderable(source: str) -> bool:
-    return _AVAILABLE and bool(source.strip()) and source.count("\n") < MAX_SOURCE_LINES
+    return (
+        _AVAILABLE
+        and bool(source.strip())
+        and len(source) <= MAX_SOURCE_CHARS
+        and source.count("\n") < MAX_SOURCE_LINES
+    )
 
 
 def in_rgb(art: Text, theme: TerminalTheme) -> Text:

@@ -1121,7 +1121,8 @@ class FNDMarkdown(Markdown):
         gen = self._build_gen
         # Without the marks: a mark below a fence left open would render as its code.
         if self.render_mermaid and "mermaid" in body.lower():
-            aw = AwaitComplete(self._prepare_diagrams_then_update(body, gen))
+            epoch = _MERMAID_RENDERER.epoch
+            aw = AwaitComplete(self._prepare_diagrams_then_update(body, gen, epoch))
         else:
             aw = super().update(body)
         aw._future.add_done_callback(  # type: ignore[attr-defined]
@@ -1129,10 +1130,10 @@ class FNDMarkdown(Markdown):
         )
         return aw
 
-    async def _prepare_diagrams_then_update(self, body: str, gen: int) -> None:
+    async def _prepare_diagrams_then_update(self, body: str, gen: int, epoch: int) -> None:
         """Render this chunk's mermaid fences in the worker, then build its blocks."""
         sources = await asyncio.to_thread(self._mermaid_sources, body)
-        await _MERMAID_RENDERER.prepare(sources)
+        await _MERMAID_RENDERER.prepare(sources, epoch=epoch)
         if self._build_gen == gen:
             self.diagrams_pending = not all(map(_MERMAID_RENDERER.is_prepared, sources))
             await super().update(body)

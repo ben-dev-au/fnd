@@ -21,6 +21,12 @@ from fnd.tui.widgets.markdown import _MERMAID_RENDERER, FNDMarkdown, FNDMarkdown
 FLOW = "```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"
 
 
+@pytest.fixture(autouse=True)
+def _fresh_render_cache() -> None:
+    """The renderer is module-wide: an earlier test's cached diagram would skip a render."""
+    _MERMAID_RENDERER._results.clear()
+
+
 class _Host(App[None]):
     def __init__(self, md: FNDMarkdown) -> None:
         self.md = md
