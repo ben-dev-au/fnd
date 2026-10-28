@@ -106,14 +106,15 @@ async def test_panel_collapse_writes_to_disk(
         ctree.cursor_line = 0
         await safe_pause(pilot)
         await safe_press(pilot, "left")
+        cpane = app.query_one("#collections_pane")
         await wait_until(
             pilot,
-            lambda: "collapsed" in ctree.classes,
+            lambda: "collapsed" in cpane.classes,
             timeout=30.0,
-            message="ctree never gained 'collapsed' class",
+            message="the collections pane never gained 'collapsed' class",
         )
-        assert "collections_panel_tree" in app._scope.collapsed_panels
-        assert "collections_panel_tree" in isolated_ui_state.read_text()
+        assert "collections_pane" in app._scope.collapsed_panels
+        assert "collections_pane" in isolated_ui_state.read_text()
 
 
 @pytest.mark.asyncio
@@ -134,8 +135,8 @@ async def test_saved_collapse_state_is_restored_at_startup(
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
         ftree = app.query_one("#filters_panel_tree", Tree)
-        assert "collapsed" in ctree.classes
-        # Filters collapse lives on the #filters_pane container now.
+        # Both collapses live on the pane containers now.
+        assert "collapsed" in app.query_one("#collections_pane").classes
         assert "collapsed" in app.query_one("#filters_pane").classes
         for n in ctree.root.children:
             if isinstance(n.data, dict) and n.data.get("name") == "alpha":
@@ -246,8 +247,8 @@ async def test_collapse_state_survives_collection_cli_flag(
     app = FNDApp(index_dir=built_index, config=cfg, collection="default")
     async with app.run_test() as pilot:
         await settle(pilot)
-        ctree = app.query_one("#collections_panel_tree", Tree)
-        # Filters collapse now lives on the #filters_pane container.
+        cpane = app.query_one("#collections_pane")
+        # Both collapses now live on the pane containers.
         fpane = app.query_one("#filters_pane")
         # Scope override took effect.
         assert app._scope.collections == ["default"]
@@ -259,7 +260,7 @@ async def test_collapse_state_survives_collection_cli_flag(
         await wait_until(
             pilot,
             lambda: (
-                "collapsed" in ctree.classes
+                "collapsed" in cpane.classes
                 and "collapsed" in fpane.classes
                 and "alpha" in app._scope.expanded_collections
                 and "kinds" in app._scope.expanded_filter_branches
@@ -267,5 +268,5 @@ async def test_collapse_state_survives_collection_cli_flag(
             timeout=30.0,
             message="saved sidebar state not fully restored",
         )
-        # The old filters_panel_tree id migrates to the container.
-        assert app._scope.collapsed_panels == {"collections_panel_tree", "filters_pane"}
+        # The old bare-tree ids migrate to their containers.
+        assert app._scope.collapsed_panels == {"collections_pane", "filters_pane"}

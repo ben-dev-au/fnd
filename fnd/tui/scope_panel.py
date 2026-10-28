@@ -30,6 +30,7 @@ from fnd.tui.results_labels import (
 )
 from fnd.tui.ui_text import set_border_title
 from fnd.tui.widgets.clear_bar import clear_label
+from fnd.tui.widgets.pane_search import opened_by_search, prune
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -53,6 +54,10 @@ _FILTER_CREATED: tuple[str, ...] = ("today", "week", "month", "year")
 _TAG_SOURCE_LABELS: dict[str, str] = {"frontmatter": "Frontmatter", "os": "File tags"}
 # Width of Textual's branch expand arrow, so leaf markers line up with it.
 _LEAF_MARKER_PAD = "  "
+_PANE_OF_TREE: dict[str, str] = {
+    "collections_panel_tree": "collections_pane",
+    "filters_panel_tree": "filters_pane",
+}
 
 
 class _FullScope:
@@ -262,12 +267,16 @@ class ScopeController:
         from fnd.state import load as _load_state
 
         saved = _load_state()
-        # The filters tree is now wrapped in the #filters_pane container, which
-        # carries the collapse state the bare tree used to. Migrate any persisted
-        # old id so a user who had filters collapsed keeps it collapsed.
-        self.collapsed_panels: set[str] = {
-            "filters_pane" if p == "filters_panel_tree" else p for p in saved.collapsed_panels
-        }
+        # Both scope trees now sit in a pane container that carries the collapse
+        # state the bare tree used to; a persisted old id maps to its pane.
+        self.collapsed_panels: set[str] = {_PANE_OF_TREE.get(p, p) for p in saved.collapsed_panels}
+        # Per tree, the row the cursor was last on: a search rebuild can leave
+        # the tree with no cursor, and clearing it must land back there.
+        self._cursor_anchors: dict[str, tuple[str, ...]] = {}
+        self._tag_catalogue: dict[str, list[Any]] | None = None
+        # Per tree, the branches the user opened (True) or closed while a
+        # search is showing; they outrank the persisted state until it clears.
+        self._folds_in_search: dict[str, dict[str, bool]] = {}
         self.expanded_collections: set[str] = set(saved.expanded_collections)
         self._legend_marks: dict[str, Mark] = {}
         # What the Filters title says without its collapse marker, so the
@@ -616,8 +625,7 @@ class ScopeController:
         # Drop persisted expand entries for collections that no longer
         # exist so the saved set stays bounded over time.
         self.expanded_collections &= set(names)
-        tree.show_root = False
-        tree.clear()
+        keep, line = self._clear_tree(tree)
         budget = self._branch_budget(tree)
         marks = self.collection_marks
         self._legend_marks = marks.marks
@@ -625,8 +633,8 @@ class ScopeController:
             col = cfg.collections[name] if cfg else None
             node = tree.root.add(
                 self._collection_row(name, col, marks, budget),
-                data={"kind": "collection", "name": name},
-                expand=name in self.expanded_collections,
+                data={"kind": "collection", "name": name, "text": name},
+                expand=self._is_open("collections_panel_tree", name),
             )
             if col:
                 for i, s in enumerate(col.sources):
@@ -640,9 +648,12 @@ class ScopeController:
                             "kind": "source",
                             "collection": name,
                             "source_id": source_id,
+                            "text": short,
                         },
                     )
-        set_border_title(tree, self._panel_title(names))
+        prune(tree)
+        self._restore_cursor(tree, keep, line)
+        self._set_collections_title(self._panel_title(names))
         self._app._results.relabel_rows(marks_only=True)
         # The collections list changed length: reflow the sidebar heights.
         self._app._reflow_sidebar()
@@ -777,8 +788,11 @@ class ScopeController:
         else:
             self.filter_kinds.extend(m for m in members if m not in active)
 
-    def refresh_filters_panel(self) -> None:
+    def refresh_filters_panel(self, *, requery_tags: bool = True) -> None:
         """Repopulate the Filters panel.
+
+        ``requery_tags=False`` reuses the last tag catalogue, for a rebuild
+        that changes only which rows show.
 
         Two top-level branches: ``File type`` (multi-select) and
         ``Date`` (radio). Each value row carries enough data on its
@@ -792,8 +806,9 @@ class ScopeController:
         # Branch expand state lives in ``expanded_filter_branches`` and
         # is persisted across runs. Re-sync it from the live tree before
         # clearing so a NodeExpanded that came in between refreshes isn't
-        # lost. (Pruning to known branches happens in __init__.)
-        for branch in tree.root.children:
+        # lost. (Pruning to known branches happens in __init__.) A searched tree
+        # shows branches the search opened, which are not the user's to keep.
+        for branch in tree.root.children if not getattr(tree, "shown_query", "") else ():
             data = branch.data if isinstance(branch.data, dict) else {}
             cat = data.get("category")
             if isinstance(cat, str) and cat in ("kinds", "date", "created"):
@@ -805,9 +820,7 @@ class ScopeController:
         # top. Remember which row was selected so a toggle leaves the cursor
         # on the tag the user just pressed rather than throwing them back to
         # the first branch.
-        keep = self._row_key(tree.cursor_node.data) if tree.cursor_node is not None else None
-        tree.show_root = False
-        tree.clear()
+        keep, line = self._clear_tree(tree)
         budget = self._branch_budget(tree)
 
         # Prune the file-type filter to kinds actually present in scope, like
@@ -816,8 +829,8 @@ class ScopeController:
         active_kinds = set(self.filter_kinds)
         kind_node = tree.root.add(
             self._filetype_summary_label(budget),
-            data={"kind": "filter_category", "category": "kinds"},
-            expand="kinds" in self.expanded_filter_branches,
+            data={"kind": "filter_category", "category": "kinds", "text": "File type"},
+            expand=self._is_open("filters_panel_tree", "kinds"),
         )
         # Nested category → type, tri-state like the Collections tree: a
         # category row toggles all its member kinds; each kind toggles
@@ -829,8 +842,13 @@ class ScopeController:
                 continue
             cat_node = kind_node.add(
                 self._state_row(self._kind_category_marker(cat.id), f"  {cat.label}"),
-                data={"kind": "kind_category", "category": "kinds", "value": cat.id},
-                expand=f"kinds:{cat.id}" in self.expanded_filter_branches,
+                data={
+                    "kind": "kind_category",
+                    "category": "kinds",
+                    "value": cat.id,
+                    "text": cat.label,
+                },
+                expand=self._is_open("filters_panel_tree", f"kinds:{cat.id}"),
             )
             for k in members:
                 marker = "●" if k in active_kinds else "○"
@@ -838,39 +856,44 @@ class ScopeController:
                     # Pad so the kind marker indents past the category's arrow
                     # (matching the Tags leaves), instead of aligning with it.
                     self._state_row(f"{_LEAF_MARKER_PAD * 2}{marker}", f"  {KIND_BY_ID[k].label}"),
-                    data={"kind": "filter_value", "category": "kinds", "value": k},
+                    data={
+                        "kind": "filter_value",
+                        "category": "kinds",
+                        "value": k,
+                        "text": KIND_BY_ID[k].label,
+                    },
                 )
 
         date_summary = self.filter_date or "any"
         date_node = tree.root.add(
             _styled_parent_label(_branch_row("Modified", date_summary, date_summary, budget)),
-            data={"kind": "filter_category", "category": "date"},
-            expand="date" in self.expanded_filter_branches,
+            data={"kind": "filter_category", "category": "date", "text": "Modified"},
+            expand=self._is_open("filters_panel_tree", "date"),
         )
         for d in _FILTER_DATES:
             marker = "●" if d == self.filter_date else "○"
             date_node.add_leaf(
                 self._state_row(marker, f"  {d}"),
-                data={"kind": "filter_value", "category": "date", "value": d},
+                data={"kind": "filter_value", "category": "date", "value": d, "text": d},
             )
 
         created_summary = self.filter_created or "any"
         created_node = tree.root.add(
             _styled_parent_label(_branch_row("Created", created_summary, created_summary, budget)),
-            data={"kind": "filter_category", "category": "created"},
-            expand="created" in self.expanded_filter_branches,
+            data={"kind": "filter_category", "category": "created", "text": "Created"},
+            expand=self._is_open("filters_panel_tree", "created"),
         )
         for c in _FILTER_CREATED:
             marker = "●" if c == self.filter_created else "○"
             created_node.add_leaf(
                 self._state_row(marker, f"  {c}"),
-                data={"kind": "filter_value", "category": "created", "value": c},
+                data={"kind": "filter_value", "category": "created", "value": c, "text": c},
             )
 
-        self._render_tags_branch(tree)
+        self._render_tags_branch(tree, requery_tags)
 
-        if keep is not None:
-            self._restore_cursor(tree, keep)
+        prune(tree)
+        self._restore_cursor(tree, keep, line)
         self._update_filters_chrome()
 
     def _update_filters_chrome(self) -> None:
@@ -1071,10 +1094,9 @@ class ScopeController:
         )
 
     def _update_clear_bar(self) -> None:
-        """Show/hide the pinned clear bar docked at the bottom of the filters
-        container, so it floats in view whatever the tag list's scroll. Content
-        carries the X hint. The bar is a real widget (clickable); X clears from
-        anywhere too."""
+        """Show/hide the clear bar above the filters tree, in view whatever the
+        tag list's scroll. Content carries the X hint. The bar is a real widget
+        (clickable); X clears from anywhere too."""
         from textual.widgets import Static
 
         try:
@@ -1256,8 +1278,8 @@ class ScopeController:
             if is_namespace:
                 branch = parent.add(
                     _styled_parent_label(f"{node.label}  ({node.files})"),
-                    data={"kind": "filter_category", "category": key},
-                    expand=key in self.expanded_filter_branches,
+                    data={"kind": "filter_category", "category": key, "text": node.label},
+                    expand=self._is_open("filters_panel_tree", key),
                 )
                 self._add_tag_nodes(branch, source, node.children, depth + 1, namespaces)
                 continue
@@ -1268,12 +1290,13 @@ class ScopeController:
                 "category": "tags",
                 "source": source,
                 "value": node.value,
+                "text": node.label,
             }
             if node.children:
                 branch = parent.add(
                     self._state_row(marker, f"  {node.label}  ({node.files})"),
                     data=data,
-                    expand=key in self.expanded_filter_branches,
+                    expand=self._is_open("filters_panel_tree", key),
                 )
                 self._add_tag_nodes(branch, source, node.children, depth + 1, namespaces)
             else:
@@ -1315,10 +1338,12 @@ class ScopeController:
             out.extend((source, value) for value in sorted(selected - live))
         return out
 
-    def _render_tags_branch(self, tree: Tree[dict[str, object]]) -> None:
+    def _render_tags_branch(self, tree: Tree[dict[str, object]], requery: bool = True) -> None:
         from fnd.tag_catalogue import build_tag_tree
 
-        catalogue = self.tag_catalogue_for_scope()
+        if requery or self._tag_catalogue is None:
+            self._tag_catalogue = self.tag_catalogue_for_scope()
+        catalogue = self._tag_catalogue
         namespaces = self._frontmatter_namespaces()
         n_selected = len(self._distinct_tag_values(self.tag_include)) + len(
             self._distinct_tag_values(self.tag_exclude)
@@ -1344,8 +1369,8 @@ class ScopeController:
         )
         tags_node = tree.root.add(
             _styled_parent_label(_branch_row("Tags", summary, compact, self._branch_budget(tree))),
-            data={"kind": "filter_category", "category": "tags"},
-            expand="tags" in self.expanded_filter_branches,
+            data={"kind": "filter_category", "category": "tags", "text": "Tags"},
+            expand=self._is_open("filters_panel_tree", "tags"),
         )
         if not n_available:
             return
@@ -1358,10 +1383,11 @@ class ScopeController:
         for source, counts in catalogue.items():
             if not counts:
                 continue
+            label = _TAG_SOURCE_LABELS.get(source, source)
             branch = tags_node.add(
-                _styled_parent_label(f"{_TAG_SOURCE_LABELS.get(source, source)}"),
-                data={"kind": "filter_category", "category": f"tags:{source}"},
-                expand=f"tags:{source}" in self.expanded_filter_branches,
+                _styled_parent_label(label),
+                data={"kind": "filter_category", "category": f"tags:{source}", "text": label},
+                expand=self._is_open("filters_panel_tree", f"tags:{source}"),
             )
             self._add_tag_nodes(branch, source, build_tag_tree(counts), 0, namespaces)
         self._add_ghost_tag_branch(tags_node, ghosts)
@@ -1390,6 +1416,7 @@ class ScopeController:
                     "category": "tags",
                     "source": source,
                     "value": value,
+                    "text": value,
                 },
             )
 
@@ -1407,36 +1434,82 @@ class ScopeController:
 
     @staticmethod
     def _row_key(data: object) -> tuple[str, ...] | None:
-        """Identity of a filters row that survives a rebuild.
+        """Identity of a scope or filters row that survives a rebuild.
 
         Node objects are discarded by ``tree.clear()``, so the cursor is
         restored by matching this key against the freshly-built rows.
         """
         if not isinstance(data, dict):
             return None
-        return (
-            str(data.get("kind") or ""),
-            str(data.get("category") or ""),
-            str(data.get("source") or ""),
-            str(data.get("value") or ""),
-        )
+        return tuple(f"{k}={v}" for k, v in sorted(data.items()))
 
-    def _restore_cursor(self, tree: Tree[dict[str, object]], keep: tuple[str, ...]) -> None:
-        """Put the cursor back on the row identified by ``keep``, if it still
-        exists. A tag can legitimately vanish (its last file left the result
-        set), in which case the cursor stays where the rebuild left it."""
-        for line, tree_line in enumerate(tree._tree_lines):
-            if self._row_key(tree_line.node.data) == keep:
-                tree.cursor_line = line
-                # Setting cursor_line alone doesn't re-scroll, so when the clear
-                # bar appears above it (shrinking the tree by a row) the restored
-                # cursor can sit one row out of view. Scroll it back: DEFERRED
-                # to after the refresh, because the bar's show/hide resizes the
-                # tree on the next layout pass, after this runs; scrolling now
-                # would target the pre-resize height and still clip the row.
-                with contextlib.suppress(Exception):
-                    self._app.call_after_refresh(tree.scroll_to_line, line, animate=False)
-                return
+    def _clear_tree(self, tree: Tree[Any]) -> tuple[tuple[str, ...] | None, int]:
+        """Empty ``tree`` for a rebuild; returns the row to restore and the cursor's old line.
+
+        The row is the cursor's, else the one it was last on. ``Tree.clear``
+        keeps the old cursor node, and the next build moves the cursor to that
+        dead node's line, so the cursor is reset here.
+        """
+        line = tree.cursor_line
+        node = tree.cursor_node if line >= 0 else None
+        key = self._row_key(node.data) if node is not None else None
+        if key is not None:
+            self._cursor_anchors[str(tree.id)] = key
+        tree.show_root = False
+        tree.clear()
+        tree.cursor_line = -1
+        return self._cursor_anchors.get(str(tree.id)), line
+
+    def search_pane(self, tree_id: str, query: str) -> None:
+        """Show only ``query``'s rows in a scope pane (see fnd.tui.widgets.pane_search)."""
+        try:
+            tree: Any = self._app.query_one(f"#{tree_id}", Tree)
+        except Exception:
+            return
+        tree.search_query = query
+        if not query.strip():
+            self._folds_in_search.pop(tree_id, None)
+        if tree_id == "collections_panel_tree":
+            self.refresh_collections_panel()
+        else:
+            self.refresh_filters_panel(requery_tags=False)
+
+    def _restore_cursor(
+        self, tree: Tree[dict[str, object]], keep: tuple[str, ...] | None, fallback: int
+    ) -> None:
+        """Put the cursor back on the row identified by ``keep``, or on its
+        nearest showing ancestor when a fold hides it. A tag can legitimately
+        vanish (its last file left the result set): the cursor then keeps its
+        old line, except in a searched tree, where a stray cursor would be
+        taken for the user's row on the next rebuild."""
+        line = self._showing_line(tree, keep) if keep is not None else -1
+        if line < 0:
+            if not getattr(tree, "shown_query", ""):
+                tree.cursor_line = fallback
+            return
+        tree.cursor_line = line
+        # Setting cursor_line alone doesn't re-scroll, so when the clear
+        # bar appears above it (shrinking the tree by a row) the restored
+        # cursor can sit one row out of view. Scroll it back: DEFERRED
+        # to after the refresh, because the bar's show/hide resizes the
+        # tree on the next layout pass, after this runs; scrolling now
+        # would target the pre-resize height and still clip the row.
+        with contextlib.suppress(Exception):
+            self._app.call_after_refresh(tree.scroll_to_line, line, animate=False)
+
+    def _showing_line(self, tree: Tree[dict[str, object]], keep: tuple[str, ...]) -> int:
+        # The live tree only: ``Tree.clear`` leaves dead nodes in ``_tree_nodes``.
+        showing = {id(row.node): line for line, row in enumerate(tree._tree_lines)}
+        pending: list[Any] = list(tree.root.children)
+        while pending:
+            node = pending.pop()
+            if self._row_key(node.data) == keep:
+                cur: Any = node
+                while cur is not None and id(cur) not in showing:
+                    cur = cur.parent
+                return showing.get(id(cur), -1)
+            pending.extend(node.children)
+        return -1
 
     def on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Consume the batch-toggle deferral however this handler exits.
@@ -1666,36 +1739,56 @@ class ScopeController:
         title = f"Collections · {n_full}/{len(names)} active"
         if total and active:
             title += f", {active}/{total} sources"
-        return self.collapsed_marker("collections_panel_tree") + title
+        return self.collapsed_marker("collections_pane") + title
 
     def _refresh_collections_panel_title(self) -> None:
         """Recompute the panel's border-title after a toggle without the
         cursor-resetting tree rebuild."""
-        try:
-            tree = self._app.query_one("#collections_panel_tree", Tree)
-        except Exception:
-            return
         cfg = self._app._config
         names = sorted(cfg.collections.keys()) if cfg else []
-        set_border_title(tree, self._panel_title(names))
+        self._set_collections_title(self._panel_title(names))
+
+    def _set_collections_title(self, title: str) -> None:
+        with contextlib.suppress(Exception):
+            set_border_title(self._app.query_one("#collections_pane"), title)
+
+    def _record_fold(
+        self,
+        ev: Tree.NodeExpanded[Any] | Tree.NodeCollapsed[Any],
+        key: str,
+        persisted: set[str],
+    ) -> None:
+        """Keep a branch the user opened or closed: persisted, or during a
+        search only until it clears. A branch the search opened is not theirs."""
+        if not key or opened_by_search(ev.node):
+            return
+        opened = isinstance(ev, Tree.NodeExpanded)
+        tree = ev.node.tree
+        if getattr(tree, "shown_query", ""):
+            self._folds_in_search.setdefault(str(tree.id), {})[key] = opened
+            return
+        if opened != (key in persisted):
+            (persisted.add if opened else persisted.discard)(key)
+            self.persist()
+
+    def _is_open(self, tree_id: str, key: str) -> bool:
+        persisted = (
+            self.expanded_collections
+            if tree_id == "collections_panel_tree"
+            else self.expanded_filter_branches
+        )
+        during = self._folds_in_search.get(tree_id, {})
+        return during.get(key, key in persisted)
+
+    def _collection_fold_key(self, ev: Tree.NodeExpanded[Any] | Tree.NodeCollapsed[Any]) -> str:
+        data = ev.node.data if isinstance(ev.node.data, dict) else {}
+        return str(data.get("name") or "") if data.get("kind") == "collection" else ""
 
     def on_collection_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
-        data = ev.node.data if isinstance(ev.node.data, dict) else {}
-        if data.get("kind") != "collection":
-            return
-        name = str(data.get("name") or "")
-        if name and name not in self.expanded_collections:
-            self.expanded_collections.add(name)
-            self.persist()
+        self._record_fold(ev, self._collection_fold_key(ev), self.expanded_collections)
 
     def on_collection_branch_collapsed(self, ev: Tree.NodeCollapsed[dict[str, object]]) -> None:
-        data = ev.node.data if isinstance(ev.node.data, dict) else {}
-        if data.get("kind") != "collection":
-            return
-        name = str(data.get("name") or "")
-        if name and name in self.expanded_collections:
-            self.expanded_collections.discard(name)
-            self.persist()
+        self._record_fold(ev, self._collection_fold_key(ev), self.expanded_collections)
 
     def _branch_key(self, data: dict[str, object]) -> str:
         """Expand-state key for a filters-pane branch, or "" if it has none.
@@ -1716,23 +1809,14 @@ class ScopeController:
     def on_filter_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
         data = ev.node.data if isinstance(ev.node.data, dict) else {}
         cat = self._branch_key(data)
-        if not cat:
-            return
         known = (
             cat in ("kinds", "date", "created")
             or cat == "tags"
             or cat.startswith("tags:")
             or cat.startswith("kinds:")
         )
-        if known and cat not in self.expanded_filter_branches:
-            self.expanded_filter_branches.add(cat)
-            self.persist()
+        self._record_fold(ev, cat if known else "", self.expanded_filter_branches)
 
     def on_filter_branch_collapsed(self, ev: Tree.NodeCollapsed[dict[str, object]]) -> None:
         data = ev.node.data if isinstance(ev.node.data, dict) else {}
-        cat = self._branch_key(data)
-        if not cat:
-            return
-        if cat in self.expanded_filter_branches:
-            self.expanded_filter_branches.discard(cat)
-            self.persist()
+        self._record_fold(ev, self._branch_key(data), self.expanded_filter_branches)

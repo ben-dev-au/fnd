@@ -290,6 +290,7 @@ def walk_leaves(
 # a glyph users recognise on the keyboard.
 _KEY_PRETTY: dict[str, str] = {
     "slash": "/",
+    "underscore": "_",
     "question_mark": "?",
     "colon": ":",
     "space": "Space",

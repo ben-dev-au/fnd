@@ -19,6 +19,7 @@ from textual import events
 from textual.widget import Widget
 
 from fnd.tui.ui_text import PlainStatic
+from fnd.tui.widgets.pane_search import focus_pane_search
 
 #: Both panes mount their bar under this id; a screen holds at most one.
 CLEAR_BAR_ID = "clear_filters_bar"
@@ -87,10 +88,12 @@ class ClearFiltersBar(PlainStatic):
         elif event.key == "down":
             event.stop()
             self._focus_tree()
-        # `up` is deliberately NOT handled: the tree below sends Up here when
-        # its cursor is on the top row, so answering Up by focusing the tree
-        # again bounced between the two forever. This row is the top of the
-        # pane; Up from it has nowhere to go.
+        elif event.key == "up":
+            # Never back to the tree: it sends Up here from its top row, and
+            # answering with the tree bounced focus between the two forever.
+            with contextlib.suppress(Exception):
+                if focus_pane_search(self.screen.query_one(f"#{self._focus_id}")):
+                    event.stop()
 
     def _clear(self) -> None:
         if self._on_clear is not None:

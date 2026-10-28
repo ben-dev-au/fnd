@@ -216,6 +216,7 @@ Run `fnd` with no arguments:
 | `X`                     | Clear every active filter (file type, dates, tags); the collection scope stays.                                                                                          |
 | `Ctrl+Enter` / `⌥Enter` | In Collections or Filters, toggle a row without re-running the query, to change several at once.                                                                         |
 | `u`                     | In Collections, update the highlighted collection's index (`↻` marks one that needs it).                                                                                 |
+| `Ctrl+/`                | In Collections or Filters, search the pane: type to show only matching rows, `Esc` clears. `↑` from the top row gets there too.                                          |
 | `Ctrl+Y`                | Copy the query and active filters as a runnable `fnd` command.                                                                                                           |
 | `q` / `Ctrl+C`          | Quit. `Esc` backs out of any overlay or nested screen.                                                                                                                   |
 
