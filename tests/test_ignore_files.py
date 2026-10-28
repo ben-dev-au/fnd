@@ -269,6 +269,14 @@ def test_refused_ignore_file_leaves_no_descriptor_open(tmp_path: Path) -> None:
     assert done.stdout.strip() == "0"
 
 
+def test_ignore_file_is_read_as_bytes_past_a_ctrl_z(tmp_path: Path) -> None:
+    """A Windows text-mode descriptor would stop at 0x1A and lose the later rules."""
+    (tmp_path / ".fndignore").write_bytes(b"# note \x1a\r\n*.md\r\n")
+    loaded = load_ignore_file(tmp_path, ".fndignore")
+    assert loaded is not None
+    assert loaded.match(tmp_path / "a.md", is_dir=False) is not None
+
+
 def test_regular_ignore_file_is_read_whole_up_to_the_cap(tmp_path: Path) -> None:
     padding = b"# pad\n" * ((1 << 20) // 6 - 10)
     (tmp_path / ".fndignore").write_bytes(padding + b"*.md\n")

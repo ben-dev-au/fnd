@@ -194,7 +194,9 @@ def _read_regular_file(path: Path, *, follow: bool) -> bytes:
     nofollow = 0 if follow else getattr(os, "O_NOFOLLOW", 0)
     if not follow and not nofollow and path.is_symlink():
         raise OSError(f"symlinked ignore file: {path}")
-    fd = os.open(path, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0))
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+    # Without O_BINARY a Windows descriptor is text mode: it stops at 0x1A.
+    fd = os.open(path, flags | getattr(os, "O_BINARY", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise OSError(f"not a regular file: {path}")
