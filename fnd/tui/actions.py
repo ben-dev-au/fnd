@@ -287,6 +287,16 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="focus_pane_search",
+        description="Search the focused Collections or Filters panel: type to "
+        "show only the rows that match. Older terminals send Ctrl+/ as Ctrl+_.",
+        default_key="ctrl+slash,ctrl+underscore",
+        command="pane-search",
+        footer_label="Find",
+        contexts=("collections", "filters"),
+        show_in_footer=False,
+    ),
+    Action(
         id="copy_query_command",
         description="Copy the current query and active filters to the clipboard "
         "as a runnable `fnd` command, so the search can be saved and re-run.",

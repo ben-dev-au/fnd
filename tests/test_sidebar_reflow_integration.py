@@ -75,7 +75,7 @@ async def test_reflow_runs_and_fills_the_column(cfg: Config, idx: Path) -> None:
         panes = [
             app.query_one("#results_pane"),
             app.query_one("#outline_pane"),
-            app.query_one("#collections_panel_tree"),
+            app.query_one("#collections_pane"),
             app.query_one("#filters_pane"),
         ]
         assert sum(p.region.height for p in panes) == column.content_region.height

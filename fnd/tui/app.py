@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rich.text import Text
 
     from fnd.query import FileGroup, Hit
@@ -88,6 +90,7 @@ from fnd.tui.ui_text import (
 )
 from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.outline_tree import OutlineTree
+from fnd.tui.widgets.pane_search import PaneSearch, focus_pane_search
 from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
 )
@@ -136,6 +139,16 @@ def _action_priority(action_id: str) -> bool:
 
 #: Marks the join where hints were dropped, rather than the end of the bar.
 _ELISION = ("…", "")
+
+#: The scope panes' search field ids, each its own focus context.
+_SEARCH_CONTEXTS: frozenset[str] = frozenset({"collections_search", "filters_search"})
+_PANE_SEARCH_HINTS: tuple[tuple[str, str], ...] = (
+    ("↓/Enter", "Rows"),
+    ("←", "Collapse"),
+    ("Esc", "Results"),
+)
+#: The search field atop each scope pane.
+_SEARCH_ROWS = 1
 
 
 def _hint_clusters(
@@ -391,12 +404,18 @@ class FNDApp(PlainToastApp):
     /* height is driven at runtime by the dynamic allocator (_reflow_sidebar /
        sidebar_layout.py); the `auto` here is only the pre-reflow default. No
        max-height cap: the allocator, not CSS, decides each panel's share. */
-    #collections_panel_tree {
+    #collections_pane {
         width: 100%; height: auto;
         border: round $primary 50%;
         overflow-x: hidden;
     }
-    #collections_panel_tree.-focused { border: round $accent; }
+    #collections_pane.-focused { border: round $accent; }
+    #collections_panel_tree { width: 100%; height: 1fr; border: none; overflow-x: hidden; }
+    .pane-search {
+        height: 1; padding: 0 1; border: none;
+        background: transparent; color: $text;
+    }
+    .pane-search:focus { border: none; color: $accent; }
     /* Sized from the column, not its content (see sidebar_layout), so moving
        between files never resizes its neighbours. overflow-x hidden, or the
        tree takes Left/Right as horizontal scrolls. */
@@ -416,12 +435,13 @@ class FNDApp(PlainToastApp):
        auto grows to full content height and is merely clipped, stranding the
        cursor off-screen. */
     #filters_panel_tree { width: 100%; height: 1fr; border: none; overflow-x: hidden; }
-    /* Docked at the top so it floats above the scrolling tree, always in view
-       while a filter is active; hidden otherwise. */
+    /* Above the tree, which scrolls inside its own 1fr, so the bar stays in
+       view while a filter is active; hidden otherwise. Not docked: two top
+       docks overlap, and the pane's search field sits above it. */
     #filters_pane #clear_filters_bar {
         /* visibility (not display) so the row is always reserved: the bar
            appearing on the first active filter must not shove the tree down. */
-        dock: top; height: 1; padding: 0 1; visibility: hidden;
+        height: 1; padding: 0 1; visibility: hidden;
         color: $primary 50%;
     }
     #filters_pane #clear_filters_bar:hover { color: $accent; text-style: bold; }
@@ -468,7 +488,7 @@ class FNDApp(PlainToastApp):
         scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 0;
     }
-    #collections_panel_tree.collapsed,
+    #collections_pane.collapsed,
     #outline_pane.collapsed,
     #filters_pane.collapsed {
         height: 2;
@@ -720,12 +740,15 @@ sidebar panels stop showing a stale ``current selection`` band
                 # whole collection in/out of scope). Filters tree uses
                 # the skip-expanded-parent subclass so File-type /
                 # Modified headers behave the same as file rows.
-                yield ScopeTree("Collections", id="collections_panel_tree")
-                # The filters tree lives inside a bordered container so a clear
-                # affordance can dock at the top and stay in view whatever the
-                # tag list's scroll. The container wears the border / title /
-                # collapse state the bare tree used to.
+                # Both scope trees live inside a bordered container so their
+                # search field (and the filters' clear affordance) sit above the
+                # tree and stay in view whatever its scroll. The container
+                # wears the border / title / collapse state.
+                with Vertical(id="collections_pane"):
+                    yield PaneSearch(tree_id="collections_panel_tree", id="collections_search")
+                    yield ScopeTree("Collections", id="collections_panel_tree")
                 with Vertical(id="filters_pane"):
+                    yield PaneSearch(tree_id="filters_panel_tree", id="filters_search")
                     yield ClearFiltersBar("", id="clear_filters_bar")
                     yield ResultsTree("Filters", id="filters_panel_tree")
             # Right column: preview pane only. The progress strip lives
@@ -1222,6 +1245,8 @@ sidebar panels stop showing a stale ``current selection`` band
                 return "results"
             if wid == "outline_pane":
                 return "outline"
+            if wid in _SEARCH_CONTEXTS:
+                return wid
             if wid == "collections_panel_tree":
                 return "collections"
             if wid in ("filters_panel_tree", "clear_filters_bar"):
@@ -1261,6 +1286,7 @@ sidebar panels stop showing a stale ``current selection`` band
         "filters": (
             ("Enter", "Toggle"),
             ("←/→", "Collapse/Expand"),
+            ("^/", "Find"),
             ("Esc", "Results"),
         ),
         "outline": (
@@ -1271,8 +1297,11 @@ sidebar panels stop showing a stale ``current selection`` band
         "collections": (
             ("Enter", "Toggle"),
             ("←/→", "Collapse/Expand"),
+            ("^/", "Find"),
             ("Esc", "Results"),
         ),
+        "collections_search": _PANE_SEARCH_HINTS,
+        "filters_search": _PANE_SEARCH_HINTS,
     }
 
     def _refresh_footer_hints(self) -> None:
@@ -1298,6 +1327,9 @@ sidebar panels stop showing a stale ``current selection`` band
         contextual = (
             overlay_hint if overlay_hint is not None else self._FOOTER_CONTEXTUAL.get(ctx, ())
         )
+        # Esc clears a search with text in it, and only an empty one leaves.
+        if ctx in _SEARCH_CONTEXTS and isinstance(self.focused, Input) and self.focused.value:
+            contextual = tuple(("Esc", "Clear") if k == "Esc" else (k, v) for k, v in contextual)
         # Reading view focuses the preview, so the per-pane table would hide
         # the toggle key: surface the exit hint while it's active.
         if self._reading_mode and overlay_hint is None:
@@ -1326,7 +1358,7 @@ sidebar panels stop showing a stale ``current selection`` band
         # Every anchor reaches a focused text box as a character, so naming
         # them while the query bar (the app's opening focus) has focus
         # advertises four dead keys.
-        from textual.widgets import Input, TextArea
+        from textual.widgets import TextArea
 
         with contextlib.suppress(Exception):
             anchors = () if isinstance(self.focused, Input | TextArea) else self._FOOTER_ANCHORS
@@ -1337,8 +1369,10 @@ sidebar panels stop showing a stale ``current selection`` band
     _FOCUS_BORDER_PANES: ClassVar[dict[str, str]] = {
         "results": "#results_pane",
         "outline": "#outline_pane",
-        "collections": "#collections_panel_tree",
+        "collections": "#collections_pane",
         "filters": "#filters_pane",
+        "collections_search": "#collections_pane",
+        "filters_search": "#filters_pane",
         "preview": "#preview_pane",
     }
 
@@ -1611,6 +1645,18 @@ sidebar panels stop showing a stale ``current selection`` band
     def action_toggle_focus(self) -> None:
         self.action_focus_next()
 
+    def action_focus_next(self) -> None:
+        self._step_focus_past_search(self.screen.focus_next)
+
+    def action_focus_previous(self) -> None:
+        self._step_focus_past_search(self.screen.focus_previous)
+
+    def _step_focus_past_search(self, step: Callable[[], Widget | None]) -> None:
+        """Tab lands on a pane's rows; Up and Ctrl+/ are the way into its search field."""
+        for _ in range(len(_SEARCH_CONTEXTS) + 1):
+            if not isinstance(step(), PaneSearch):
+                return
+
     def _refuse_if_missing(self, path: Path) -> bool:
         """Say so when the file behind a row is not there any more.
 
@@ -1865,12 +1911,13 @@ sidebar panels stop showing a stale ``current selection`` band
         return None
 
     def _panel_frame(self, tree: Tree[Any]) -> Widget:
-        """The bordered / collapsible widget for ``tree``. The filters tree is
-        wrapped in ``#filters_pane`` (which carries the border, title and
-        collapse state); every other tree is its own frame."""
-        if tree.id == "filters_panel_tree":
-            with contextlib.suppress(NoMatches):
-                return self.query_one("#filters_pane", Vertical)
+        """The bordered / collapsible widget for ``tree``. The scope trees are
+        wrapped in a pane (which carries the border, title and collapse state);
+        every other tree is its own frame."""
+        if tree.id in ("collections_panel_tree", "filters_panel_tree") and isinstance(
+            tree.parent, Vertical
+        ):
+            return tree.parent
         return tree
 
     def _reflow_sidebar(self, *, immediate: bool = False) -> None:
@@ -1911,6 +1958,7 @@ sidebar panels stop showing a stale ``current selection`` band
             column = self.query_one("#results_column", Vertical)
             results = self.query_one("#results_pane", Tree)
             outline = self.query_one("#outline_pane", Tree)
+            collections_pane = self.query_one("#collections_pane", Vertical)
             collections = self.query_one("#collections_panel_tree", Tree)
             filters_pane = self.query_one("#filters_pane", Vertical)
             filters_tree = self.query_one("#filters_panel_tree", Tree)
@@ -1921,9 +1969,9 @@ sidebar panels stop showing a stale ``current selection`` band
         if avail <= 0:
             return  # not laid out yet; a later trigger will reflow
         bar_rows = 1 if clear_bar.display else 0
-        # demand = visible content rows + chrome (borders, and the docked clear
-        # bar for the filters pane). virtual_size tracks the tree's expanded
-        # rows, so it shrinks/grows as sections fold.
+        # demand = visible content rows + chrome (borders, the search field,
+        # and the filters' clear bar). virtual_size tracks the tree's
+        # expanded rows, so it shrinks/grows as sections fold.
         specs: list[tuple[Widget, Panel]] = [
             (
                 results,
@@ -1945,11 +1993,11 @@ sidebar panels stop showing a stale ``current selection`` band
                 ),
             ),
             (
-                collections,
+                collections_pane,
                 Panel(
-                    "collections_panel_tree",
-                    int(collections.virtual_size.height) + 2,
-                    "collapsed" in collections.classes,
+                    "collections_pane",
+                    int(collections.virtual_size.height) + 2 + _SEARCH_ROWS,
+                    "collapsed" in collections_pane.classes,
                     2,
                 ),
             ),
@@ -1957,7 +2005,7 @@ sidebar panels stop showing a stale ``current selection`` band
                 filters_pane,
                 Panel(
                     "filters_pane",
-                    int(filters_tree.virtual_size.height) + 2 + bar_rows,
+                    int(filters_tree.virtual_size.height) + 2 + _SEARCH_ROWS + bar_rows,
                     "collapsed" in filters_pane.classes,
                     2,
                 ),
@@ -2203,16 +2251,36 @@ sidebar panels stop showing a stale ``current selection`` band
         self._refresh_panel_titles()
         return True
 
-    @on(events.Click, "#filters_pane")
-    def _on_filters_pane_click(self, event: events.Click) -> None:
-        """Click-to-reopen for the filters pane. Its tree is wrapped in
-        #filters_pane, so at header height the tree has zero height and never
-        sees the click (unlike results/collections, whose collapse class sits on
-        the tree itself). Catch it on the container and reopen the frame."""
-        filters_tree = self.query_one("#filters_panel_tree", Tree)
-        if self._reopen_panel_frame(filters_tree):
+    @on(events.Click, "#collections_pane, #filters_pane")
+    def _on_scope_pane_click(self, event: events.Click) -> None:
+        """Click-to-reopen for a scope pane. Its tree is wrapped in the pane,
+        so at header height the tree has zero height and never sees the click.
+        Catch it on the container and reopen the frame."""
+        pane = event.control
+        tree = pane.query_one(Tree) if pane is not None else None
+        if tree is not None and self._reopen_panel_frame(tree):
             event.stop()
-            filters_tree.focus()
+            tree.focus()
+
+    @on(Input.Changed, ".pane-search")
+    def _on_pane_search_changed(self, ev: Input.Changed) -> None:
+        if isinstance(ev.input, PaneSearch):
+            self._scope.search_pane(ev.input.tree_id, ev.value)
+        self._refresh_footer_hints()
+
+    @on(PaneSearch.CollapseRequested)
+    def _on_pane_search_collapse(self, ev: PaneSearch.CollapseRequested) -> None:
+        tree = self.query_one(f"#{ev.search.tree_id}", Tree)
+        tree.focus()
+        self._collapse_panel_frame(self._panel_frame(tree))
+
+    def action_focus_pane_search(self) -> None:
+        """Ctrl+/ in a scope pane: its search field, reopening a folded pane first."""
+        tree = self._focused_tree()
+        if tree is None or tree.id not in ("collections_panel_tree", "filters_panel_tree"):
+            return
+        self._reopen_panel_frame(tree)
+        focus_pane_search(tree)
 
     @property
     def _effective_match_spec(self) -> MatchSpec:
@@ -2411,7 +2479,14 @@ sidebar panels stop showing a stale ``current selection`` band
 
         # Step 2: cascade focus toward the results pane.
         ctx = self._focus_context()
-        if ctx in ("query", "preview", "outline", "filters", "collections"):
+        if ctx in (
+            "query",
+            "preview",
+            "outline",
+            "filters",
+            "collections",
+            *_SEARCH_CONTEXTS,
+        ):
             import contextlib
 
             with contextlib.suppress(Exception):
@@ -2482,9 +2557,9 @@ sidebar panels stop showing a stale ``current selection`` band
                 return "Results pane"
             if wid == "outline_pane":
                 return "Outline panel"
-            if wid in ("filters_panel", "filters_panel_tree"):
+            if wid in ("filters_panel", "filters_pane"):
                 return "Filters panel"
-            if wid in ("collections_panel", "collections_panel_tree"):
+            if wid in ("collections_panel", "collections_pane"):
                 return "Collections panel"
             if wid == "query_bar":
                 return "Query input"

@@ -17,12 +17,19 @@ from fnd.tui.ui_text import PlainTree
 from fnd.tui.widgets.arrow_expansion import HomeToFirstRow
 from fnd.tui.widgets.clear_bar import focus_clear_bar
 from fnd.tui.widgets.mark_label import CollectionMarkLabel
+from fnd.tui.widgets.pane_search import SearchHighlightLabel, focus_pane_search
 from fnd.tui.widgets.state_marker import StateMarkerLabel
 
 __all__ = ["ResultsTree"]
 
 
-class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTree[dict[str, Any]]):
+class ResultsTree(
+    SearchHighlightLabel,
+    HomeToFirstRow,
+    CollectionMarkLabel,
+    StateMarkerLabel,
+    PlainTree[dict[str, Any]],
+):
     """Results tree where expanded parents (file rows) are literally
     unselectable.
 
@@ -170,10 +177,11 @@ class ResultsTree(HomeToFirstRow, CollectionMarkLabel, StateMarkerLabel, PlainTr
 
     def action_cursor_up(self) -> None:
         self._set_scan(False)
-        # In the filters pane, Up from the top row focuses the docked clear bar
-        # above the tree (when shown), so the bar is keyboard-reachable like any
-        # row. Everywhere else this is a normal cursor move.
-        if self.id == "filters_panel_tree" and int(self.cursor_line) <= 0 and focus_clear_bar(self):
+        # Up from the top row climbs to whatever sits above the tree in its
+        # pane: the filters' clear bar when shown, then the pane's search field.
+        if int(self.cursor_line) <= 0 and (
+            (self.id == "filters_panel_tree" and focus_clear_bar(self)) or focus_pane_search(self)
+        ):
             return
         super().action_cursor_up()
 

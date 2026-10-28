@@ -118,7 +118,7 @@ async def test_active_collection_marked_in_label(
 async def test_panel_header_shows_active_count(
     cfg_two_collections: Config, two_collection_index: Path, saved_empty_scope: Path
 ) -> None:
-    """The X/Y active count lives in the tree's ``border_title`` (matches
+    """The X/Y active count lives in the pane's ``border_title`` (matches
     the results pane's styling). Originally this was a separate Static
     above the tree: moved into the border title to make both panels
     look identical."""
@@ -126,11 +126,12 @@ async def test_panel_header_shows_active_count(
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)
-        title = str(tree.border_title or "")
+        pane = app.query_one("#collections_pane")
+        title = str(pane.border_title or "")
         assert "0/2" in title, title
         tree.focus()
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        title = str(tree.border_title or "")
+        title = str(pane.border_title or "")
         assert "1/2" in title, title

@@ -338,6 +338,41 @@ async def test_toggling_a_tag_keeps_cursor_and_focus(cfg: Config, tagged_index: 
 
 
 @pytest.mark.asyncio
+async def test_cursor_follows_a_nested_tag_into_the_missing_branch(
+    cfg: Config, tagged_index: Path
+) -> None:
+    """A selected tag the search narrows away keeps the cursor on its ghost row."""
+    app = FNDApp(index_dir=tagged_index, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "saffron")
+        app._scope.tag_include = {"frontmatter": {"project/alpha"}}
+        app._scope.refresh_filters_panel()
+        await pilot.pause()
+
+        tree = app.query_one("#filters_panel_tree", Tree)
+        tags = _branch(tree, "Tags")
+        tags.expand()
+        fm = _descend(tags, "Frontmatter")
+        fm.expand()
+        project = _descend(fm, "project")
+        project.expand()
+        await pilot.pause()
+        alpha = _descend(project, "alpha")
+        tree.cursor_line = next(i for i, ln in enumerate(tree._tree_lines) if ln.node is alpha)
+        await pilot.pause()
+
+        # Only risotto.md holds "stock", so project/alpha leaves the catalogue.
+        await run_search(pilot, app, "stock")
+        await pilot.pause()
+        node = tree.cursor_node
+        assert node is not None
+        assert node.data is not None
+        assert node.data.get("value") == "project/alpha", f"cursor moved to {node.label!r}"
+        assert "project/alpha" in str(node.label), "not the ghost row"
+
+
+@pytest.mark.asyncio
 async def test_tags_are_scoped_to_the_active_query(cfg: Config, tagged_index: Path) -> None:
     """Counts describe what the user is looking at, not the whole collection."""
     app = FNDApp(index_dir=tagged_index, config=cfg)

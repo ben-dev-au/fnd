@@ -119,7 +119,7 @@ async def test_left_at_collapsed_root_collapses_panel(
         # → panel collapses.
         await pilot.press("left")
         await pilot.pause()
-        assert "collapsed" in tree.classes
+        assert "collapsed" in app.query_one("#collections_pane").classes
 
 
 @pytest.mark.asyncio
@@ -131,9 +131,10 @@ async def test_right_re_expands_collapsed_panel(
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)
-        tree.add_class("collapsed")  # pre-seed the collapsed state
+        pane = app.query_one("#collections_pane")
+        pane.add_class("collapsed")  # pre-seed the collapsed state
         tree.focus()
         await pilot.pause()
         await pilot.press("right")
         await pilot.pause()
-        assert "collapsed" not in tree.classes
+        assert "collapsed" not in pane.classes

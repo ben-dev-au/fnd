@@ -225,8 +225,7 @@ async def test_bar_is_keyboard_selectable_from_the_tree_top(cfg: Config, idx: Pa
 
 @pytest.mark.asyncio
 async def test_up_does_not_focus_bar_when_hidden(cfg: Config, idx: Path) -> None:
-    """No active filter -> no bar -> Up at the top row is an ordinary no-op,
-    focus stays on the tree."""
+    """No active filter -> no bar -> Up at the top row passes it for the search field."""
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -236,4 +235,4 @@ async def test_up_does_not_focus_bar_when_hidden(cfg: Config, idx: Path) -> None
         await pilot.pause()
         await pilot.press("up")
         await pilot.pause()
-        assert app.focused is tree
+        assert app.focused is app.query_one("#filters_search")

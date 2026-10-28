@@ -46,8 +46,7 @@ async def _collapse(
 ) -> tuple[str, str]:
     """Collapse that panel to its header, returning its title before and after."""
     tree = app.query_one(f"#{tree_id}", Tree)
-    # The filters tree is wrapped in `#filters_pane`, which carries the border
-    # and the title; the collections tree is its own frame.
+    # Each scope tree is wrapped in a pane, which carries the border and the title.
     titled = app.query_one(f"#{frame_id}")
     await wait_until(
         pilot,
@@ -98,9 +97,7 @@ async def test_a_collapsed_collections_panel_marks_its_title(
         index_dir=tmp_index_dir, config=indexed, collection="notes", initial_query="saffron"
     )
     async with app.run_test(size=(100, 30)) as pilot:
-        before, after = await _collapse(
-            pilot, app, "collections_panel_tree", "collections_panel_tree"
-        )
+        before, after = await _collapse(pilot, app, "collections_panel_tree", "collections_pane")
 
     assert after != before, "a collapsed panel looked exactly like an open one"
     assert "▶" in after, after
@@ -129,19 +126,17 @@ async def test_reopening_takes_the_mark_off(indexed: Config, tmp_index_dir: Path
         index_dir=tmp_index_dir, config=indexed, collection="notes", initial_query="saffron"
     )
     async with app.run_test(size=(100, 30)) as pilot:
-        _, collapsed = await _collapse(
-            pilot, app, "collections_panel_tree", "collections_panel_tree"
-        )
+        _, collapsed = await _collapse(pilot, app, "collections_panel_tree", "collections_pane")
         assert "▶" in collapsed, collapsed
 
-        tree = app.query_one("#collections_panel_tree", Tree)
+        pane = app.query_one("#collections_pane")
         app.action_tree_smart_expand()
         await wait_until(
             pilot,
-            lambda: "collapsed" not in tree.classes,
+            lambda: "collapsed" not in pane.classes,
             timeout=10.0,
             message="the panel never reopened",
         )
-        after = str(tree.border_title or "")
+        after = str(pane.border_title or "")
 
     assert "▶" not in after, after

@@ -10,11 +10,14 @@ from textual.binding import Binding, BindingType
 from fnd.tui.ui_text import PlainTree
 from fnd.tui.widgets.arrow_expansion import HomeToFirstRow
 from fnd.tui.widgets.mark_label import CollectionMarkLabel
+from fnd.tui.widgets.pane_search import SearchHighlightLabel, focus_pane_search
 
 __all__ = ["ScopeTree"]
 
 
-class ScopeTree(HomeToFirstRow, CollectionMarkLabel, PlainTree[dict[str, Any]]):
+class ScopeTree(
+    SearchHighlightLabel, HomeToFirstRow, CollectionMarkLabel, PlainTree[dict[str, Any]]
+):
     """A ``Tree`` whose highlighted row survives a change of viewport.
 
     Every search re-lays the sidebar out (results arriving and leaving change
@@ -27,6 +30,11 @@ class ScopeTree(HomeToFirstRow, CollectionMarkLabel, PlainTree[dict[str, Any]]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("home", "cursor_first", "First row", show=False),
     ]
+
+    def action_cursor_up(self) -> None:
+        if int(self.cursor_line) <= 0 and focus_pane_search(self):
+            return
+        super().action_cursor_up()
 
     def on_resize(self, _event: events.Resize) -> None:
         if self.cursor_line >= 0:

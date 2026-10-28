@@ -389,13 +389,13 @@ async def test_panel_title_source_count_agrees_with_markers(
     app = FNDApp(index_dir=built_index, collection="TWO", config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
-        ctree = app.query_one("#collections_panel_tree", Tree)
+        cpane = app.query_one("#collections_pane")
         # Full rebuild computes the title alongside the ● row markers.
         app._scope.refresh_collections_panel()
-        title_rebuild = str(ctree.border_title)
+        title_rebuild = str(cpane.border_title)
         # Toggle-path refresh must produce the same title for the same state.
         app._scope._refresh_collections_panel_title()
-        title_toggle = str(ctree.border_title)
+        title_toggle = str(cpane.border_title)
         assert title_toggle == title_rebuild, (
             f"title disagreement: rebuild={title_rebuild!r} toggle={title_toggle!r}"
         )
