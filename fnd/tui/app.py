@@ -2286,7 +2286,8 @@ sidebar panels stop showing a stale ``current selection`` band
             self._scope.snapshot(self._search.current_query)
         ).serialize()
         if result.is_empty:
-            self.notify("Nothing to copy: type a query or set a filter first.", severity="warning")
+            reason = "; ".join(result.caveats) or "type a query or set a filter first"
+            self.notify(f"Nothing to copy: {reason}.", severity="warning")
             return
         try:
             copy_text(result.command)

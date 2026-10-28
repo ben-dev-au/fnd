@@ -282,6 +282,16 @@ def _apply_inline_code_highlights(block: MarkdownBlock) -> None:
         block.set_content(content.add_spans(syntax_spans))
 
 
+class _RawHrefMixin:
+    """Posts a clicked link as written: ``LinkClicked`` percent-decodes it, so a
+    query's ``%26`` would reach the opener as ``&``."""
+
+    async def action_link(self, href: str) -> None:
+        message = Markdown.LinkClicked(self._markdown, href)  # type: ignore[attr-defined]
+        message.href = href
+        self.post_message(message)  # type: ignore[attr-defined]
+
+
 class _HighlightingBlockMixin:
     """Drop-in mixin for the MarkdownBlock subclasses that should apply
     search-term highlights after the base build. Avoids repeating the
@@ -328,38 +338,40 @@ class _CalloutTitleMixin:
         self.set_content(Content.assemble(prefix, self._content))  # type: ignore[attr-defined]
 
 
-class FNDMarkdownH1(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH1):
+class FNDMarkdownH1(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH1):
     pass
 
 
-class FNDMarkdownH2(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH2):
+class FNDMarkdownH2(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH2):
     pass
 
 
-class FNDMarkdownH3(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH3):
+class FNDMarkdownH3(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH3):
     pass
 
 
-class FNDMarkdownH4(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH4):
+class FNDMarkdownH4(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH4):
     pass
 
 
-class FNDMarkdownH5(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH5):
+class FNDMarkdownH5(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH5):
     pass
 
 
-class FNDMarkdownH6(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH6):
+class FNDMarkdownH6(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH6):
     pass
 
 
-class FNDMarkdownParagraph(_HighlightingBlockMixin, _CalloutTitleMixin, MarkdownParagraph):
+class FNDMarkdownParagraph(
+    _RawHrefMixin, _HighlightingBlockMixin, _CalloutTitleMixin, MarkdownParagraph
+):
     def __init__(self, markdown: Markdown, token: Any, *args: Any, **kwargs: Any) -> None:
         super().__init__(markdown, token, *args, **kwargs)
         if "fnd_callout_title" in token.meta:
             self.add_class("callout-title")
 
 
-class FNDMarkdownBlockQuote(_HighlightingBlockMixin, MarkdownBlockQuote):
+class FNDMarkdownBlockQuote(_RawHrefMixin, _HighlightingBlockMixin, MarkdownBlockQuote):
     def __init__(self, markdown: Markdown, token: Any, *args: Any, **kwargs: Any) -> None:
         super().__init__(markdown, token, *args, **kwargs)
         key = token.meta.get("fnd_callout")
@@ -390,22 +402,24 @@ class FNDMarkdownOrderedList(MarkdownOrderedList):
         self._blocks.clear()
 
 
-class FNDMarkdownOrderedListItem(_HighlightingBlockMixin, MarkdownOrderedListItem):
+class FNDMarkdownOrderedListItem(_RawHrefMixin, _HighlightingBlockMixin, MarkdownOrderedListItem):
     pass
 
 
-class FNDMarkdownUnorderedListItem(_HighlightingBlockMixin, MarkdownUnorderedListItem):
+class FNDMarkdownUnorderedListItem(
+    _RawHrefMixin, _HighlightingBlockMixin, MarkdownUnorderedListItem
+):
     def __init__(self, markdown: Markdown, token: Any, bullet: str) -> None:
         super().__init__(markdown, token, bullet)
         if _continued(token):
             self.bullet = " " * len(bullet)
 
 
-class FNDMarkdownTH(_HighlightingBlockMixin, MarkdownTH):
+class FNDMarkdownTH(_RawHrefMixin, _HighlightingBlockMixin, MarkdownTH):
     pass
 
 
-class FNDMarkdownTD(_HighlightingBlockMixin, MarkdownTD):
+class FNDMarkdownTD(_RawHrefMixin, _HighlightingBlockMixin, MarkdownTD):
     pass
 
 

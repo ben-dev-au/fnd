@@ -13,9 +13,10 @@ from pathlib import Path
 import pytest
 from textual.widgets import Input
 
+from fnd import os_labels
 from fnd.config import Config, load
 from fnd.index import build_index
-from fnd.launch_command import LaunchCommandSerializer, LaunchScope, _flatten
+from fnd.launch_command import LaunchCommandSerializer, LaunchScope, SearchSnapshot, _flatten
 from fnd.tui import FNDApp
 
 
@@ -155,6 +156,29 @@ async def test_nothing_to_copy_skips_clipboard(
         app.action_copy_query_command()
         await pilot.pause()
         assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_copy_names_the_tags_left_out(
+    cfg: Config, home_index: Path, monkeypatch: pytest.MonkeyPatch, saved_empty_scope: Path
+) -> None:
+    """When every filter was a tag Windows left out, the notice says so."""
+    calls: list[str] = []
+    notices: list[str] = []
+    monkeypatch.setattr("fnd.tui.clipboard.copy_text", lambda text: calls.append(text))
+    monkeypatch.setattr(os_labels, "is_windows", lambda: True)
+    only_tag = SearchSnapshot(query="", tag_include={"frontmatter": frozenset({"a&b"})})
+    app = FNDApp(index_dir=home_index, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(app._scope, "snapshot", lambda _query: only_tag)
+        monkeypatch.setattr(app, "notify", lambda message, **_: notices.append(message))
+        app.action_copy_query_command()
+        await pilot.pause()
+        assert calls == []
+        assert notices == [
+            "Nothing to copy: 1 tag value(s) left out: a Windows shell would act on them."
+        ]
 
 
 @pytest.mark.asyncio

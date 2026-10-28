@@ -563,12 +563,18 @@ def _link_app(markdown: str):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "href", ["https://example.com/a?b=1", "HTTP://example.com", "mailto:someone@example.com"]
+    "href",
+    [
+        "https://example.com/a?b=1",
+        "HTTP://example.com",
+        "mailto:someone@example.com",
+        "https://example.com/?q=red%26blue&p=a%2Fb",
+    ],
 )
 async def test_link_click_opens_web_and_mail_links(
     href: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A clicked http, https or mailto link reaches the app's URL opener unchanged."""
+    """A clicked http, https or mailto link reaches the opener as written, still encoded."""
     monkeypatch.setattr("webbrowser.open", lambda *a, **k: pytest.fail("real opener reached"))
     app = _link_app(f"[go]({href})\n")
     async with app.run_test() as pilot:
@@ -586,8 +592,8 @@ async def test_link_click_opens_web_and_mail_links(
     [
         ("smb://host/s", "smb://host/s"),
         ("C:/x.exe", "C:/x.exe"),
-        ("%66ile:///etc/passwd", "file:///etc/passwd"),
-        ("%2566ile:///etc/passwd", "%66ile:///etc/passwd"),
+        ("%66ile:///etc/passwd", "%66ile:///etc/passwd"),
+        ("%2566ile:///etc/passwd", "%2566ile:///etc/passwd"),
         ("vscode://x", "vscode://x"),
         ("search-ms:x", "search-ms:x"),
         ("notes/other.md", "notes/other.md"),
