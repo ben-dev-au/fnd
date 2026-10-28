@@ -31,6 +31,7 @@ from textual.widgets._markdown import (
     MarkdownUnorderedListItem,
 )
 
+from fnd.display_text import fit
 from fnd.matching import MatchSpec, phrase_char_spans
 from fnd.render import (
     DIM_STYLES,
@@ -281,6 +282,16 @@ def _apply_inline_code_highlights(block: MarkdownBlock) -> None:
         block.set_content(content.add_spans(syntax_spans))
 
 
+class _RawHrefMixin:
+    """Posts a clicked link as written: ``LinkClicked`` percent-decodes it, so a
+    query's ``%26`` would reach the opener as ``&``."""
+
+    async def action_link(self, href: str) -> None:
+        message = Markdown.LinkClicked(self._markdown, href)  # type: ignore[attr-defined]
+        message.href = href
+        self.post_message(message)  # type: ignore[attr-defined]
+
+
 class _HighlightingBlockMixin:
     """Drop-in mixin for the MarkdownBlock subclasses that should apply
     search-term highlights after the base build. Avoids repeating the
@@ -327,38 +338,40 @@ class _CalloutTitleMixin:
         self.set_content(Content.assemble(prefix, self._content))  # type: ignore[attr-defined]
 
 
-class FNDMarkdownH1(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH1):
+class FNDMarkdownH1(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH1):
     pass
 
 
-class FNDMarkdownH2(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH2):
+class FNDMarkdownH2(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH2):
     pass
 
 
-class FNDMarkdownH3(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH3):
+class FNDMarkdownH3(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH3):
     pass
 
 
-class FNDMarkdownH4(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH4):
+class FNDMarkdownH4(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH4):
     pass
 
 
-class FNDMarkdownH5(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH5):
+class FNDMarkdownH5(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH5):
     pass
 
 
-class FNDMarkdownH6(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH6):
+class FNDMarkdownH6(_RawHrefMixin, _HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH6):
     pass
 
 
-class FNDMarkdownParagraph(_HighlightingBlockMixin, _CalloutTitleMixin, MarkdownParagraph):
+class FNDMarkdownParagraph(
+    _RawHrefMixin, _HighlightingBlockMixin, _CalloutTitleMixin, MarkdownParagraph
+):
     def __init__(self, markdown: Markdown, token: Any, *args: Any, **kwargs: Any) -> None:
         super().__init__(markdown, token, *args, **kwargs)
         if "fnd_callout_title" in token.meta:
             self.add_class("callout-title")
 
 
-class FNDMarkdownBlockQuote(_HighlightingBlockMixin, MarkdownBlockQuote):
+class FNDMarkdownBlockQuote(_RawHrefMixin, _HighlightingBlockMixin, MarkdownBlockQuote):
     def __init__(self, markdown: Markdown, token: Any, *args: Any, **kwargs: Any) -> None:
         super().__init__(markdown, token, *args, **kwargs)
         key = token.meta.get("fnd_callout")
@@ -389,22 +402,24 @@ class FNDMarkdownOrderedList(MarkdownOrderedList):
         self._blocks.clear()
 
 
-class FNDMarkdownOrderedListItem(_HighlightingBlockMixin, MarkdownOrderedListItem):
+class FNDMarkdownOrderedListItem(_RawHrefMixin, _HighlightingBlockMixin, MarkdownOrderedListItem):
     pass
 
 
-class FNDMarkdownUnorderedListItem(_HighlightingBlockMixin, MarkdownUnorderedListItem):
+class FNDMarkdownUnorderedListItem(
+    _RawHrefMixin, _HighlightingBlockMixin, MarkdownUnorderedListItem
+):
     def __init__(self, markdown: Markdown, token: Any, bullet: str) -> None:
         super().__init__(markdown, token, bullet)
         if _continued(token):
             self.bullet = " " * len(bullet)
 
 
-class FNDMarkdownTH(_HighlightingBlockMixin, MarkdownTH):
+class FNDMarkdownTH(_RawHrefMixin, _HighlightingBlockMixin, MarkdownTH):
     pass
 
 
-class FNDMarkdownTD(_HighlightingBlockMixin, MarkdownTD):
+class FNDMarkdownTD(_RawHrefMixin, _HighlightingBlockMixin, MarkdownTD):
     pass
 
 
@@ -896,6 +911,18 @@ def _find_first_match_coord_in_table(
     return matches[0] if matches else None
 
 
+# The opener behind ``App.open_url`` is ``os.startfile`` on Windows: any other
+# scheme, a drive path (``C:/x.exe``) or a relative path can start a local file,
+# a network share or a protocol handler.
+_OPENABLE_SCHEMES = frozenset({"http", "https", "mailto"})
+
+
+def _openable_link(href: str) -> bool:
+    """Whether ``href``, exactly as the opener receives it, is a web or mail address."""
+    scheme, sep, _ = href.partition(":")
+    return bool(sep) and scheme.lower() in _OPENABLE_SCHEMES
+
+
 class FNDMarkdown(Markdown):
     """Markdown widget with inline search-term highlighting.
 
@@ -1004,7 +1031,8 @@ class FNDMarkdown(Markdown):
     ) -> None:
         import asyncio as _asyncio
 
-        super().__init__(markdown=markdown, name=name, id=id, classes=classes)
+        # Links open only through ``on_markdown_link_clicked``'s scheme check.
+        super().__init__(markdown=markdown, name=name, id=id, classes=classes, open_links=False)
         self.match_spec: MatchSpec = match_spec or MatchSpec()
         # What a capture of this chunk needs to stand in for it under another
         # query: the source it was built from, its blocks' rendered text, and
@@ -1051,6 +1079,18 @@ class FNDMarkdown(Markdown):
         which is document order only until a table joins (it registers at mount).
         Order by painted row with :func:`~fnd.tui.preview.match_row.chunk_stop_rows`."""
         return self._match_blocks or self._dim_match_blocks
+
+    def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Open a web or mail link; refuse any other target with a notice naming it."""
+        if _openable_link(event.href):
+            self.app.open_url(event.href)
+            return
+        self.app.notify(
+            f"Only http, https and mailto links open: {fit(event.href, 80)}",
+            title="Link not opened",
+            severity="warning",
+            markup=False,
+        )
 
     def update(self, markdown):  # type: ignore[no-untyped-def, override]
         # Textual's dispatcher walks the MRO and invokes every class's

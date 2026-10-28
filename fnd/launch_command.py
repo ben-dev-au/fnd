@@ -16,8 +16,11 @@ objects keep the serialise ↔ relaunch paths provable inverses:
 from __future__ import annotations
 
 import shlex
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+
+from fnd import os_labels
 
 #: The words ``fnd`` takes as a subcommand or root flag rather than a query;
 #: ``tests/test_launch_command_serialize.py`` holds this to the Typer app.
@@ -25,6 +28,10 @@ SUBCOMMANDS = frozenset(
     {"version", "index", "tui", "search", "config", "collection", "extras", "cache"}
 )
 ROOT_FLAGS = frozenset({"--help", "-h", "--install-completion", "--show-completion"})
+
+#: What cmd.exe or PowerShell acts on even inside the single quotes shlex adds:
+#: cmd.exe gives ``'`` no meaning, and PowerShell also closes on U+2018 to U+201B.
+_WINDOWS_SHELL_CHARS = frozenset("'\"&|<>^%!()@\u2018\u2019\u201a\u201b\u2028\u2029")
 
 
 @dataclass(frozen=True)
@@ -135,6 +142,15 @@ class LaunchCommandSerializer:
     def _tag_args(self) -> list[str]:
         include = sorted(_flatten(self._s.tag_include))
         exclude = sorted(_flatten(self._s.tag_exclude))
+        if os_labels.is_windows():
+            # Tags come from documents; the caveat gives a count, never the value.
+            total = len(include) + len(exclude)
+            include = [v for v in include if _windows_shell_safe(v)]
+            exclude = [v for v in exclude if _windows_shell_safe(v)]
+            if left_out := total - len(include) - len(exclude):
+                self._caveats.append(
+                    f"{left_out} tag value(s) left out: a Windows shell would act on them"
+                )
         out: list[str] = []
         for value in include:
             out += ["--tag", value]
@@ -149,3 +165,7 @@ def _flatten(by_source: Mapping[str, frozenset[str]]) -> set[str]:
     """Union of tag values across every source (the CLI has no per-source
     tag flag, so provenance collapses to one set)."""
     return set[str]().union(*by_source.values())
+
+
+def _windows_shell_safe(value: str) -> bool:
+    return not any(c in _WINDOWS_SHELL_CHARS or unicodedata.category(c) == "Cc" for c in value)

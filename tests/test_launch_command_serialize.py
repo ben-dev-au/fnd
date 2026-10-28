@@ -5,8 +5,11 @@ Pure unit tests over ``SearchSnapshot``: no app, no index.
 
 from __future__ import annotations
 
+import shlex
+
 import pytest
 
+from fnd import os_labels
 from fnd.launch_command import LaunchCommandSerializer, SearchSnapshot
 
 
@@ -88,7 +91,8 @@ def test_tags_union_across_sources() -> None:
     )
 
 
-def test_special_characters_are_shell_quoted() -> None:
+def test_special_characters_are_shell_quoted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os_labels, "is_windows", lambda: False)
     cmd = _cmd(query="a & b", full_collections=("my home",), tag_include={"f": frozenset({"a'b"})})
     assert cmd == "fnd 'a & b' -c 'my home' --tag 'a'\"'\"'b'"
 
@@ -142,3 +146,60 @@ def test_the_reserved_words_are_the_cli_s() -> None:
     from fnd.launch_command import SUBCOMMANDS
 
     assert set(typer.main.get_group(cli.app).commands) == SUBCOMMANDS
+
+
+_SAFE_ON_WINDOWS = (
+    "देवनागरी",
+    "🦊",
+    "~draft",
+    "[wip]",
+    "$x",
+    "`x",
+    "a;b",
+    "2019\u20132020",
+    "\u201cq\u201d",
+    "\u201eq",
+)
+_UNSAFE_ON_WINDOWS = tuple("'\"&|<>^%!()@\u2018\u2019\u201a\u201b\u2028\u2029\x00\x1b")
+
+
+def _tag_snapshot(*values: str, match_all: bool = True) -> SearchSnapshot:
+    return SearchSnapshot(
+        query="q",
+        tag_include={"frontmatter": frozenset(f"t{v}" for v in values)},
+        tag_match_all=match_all,
+    )
+
+
+def test_windows_keeps_tags_inert_inside_single_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os_labels, "is_windows", lambda: True)
+    windows = LaunchCommandSerializer(_tag_snapshot(*_SAFE_ON_WINDOWS)).serialize()
+    monkeypatch.setattr(os_labels, "is_windows", lambda: False)
+    assert windows == LaunchCommandSerializer(_tag_snapshot(*_SAFE_ON_WINDOWS)).serialize()
+
+
+@pytest.mark.parametrize("char", _UNSAFE_ON_WINDOWS)
+def test_windows_leaves_out_a_tag_its_shell_would_act_on(
+    monkeypatch: pytest.MonkeyPatch, char: str
+) -> None:
+    """The caveat counts what was left out and never repeats the value."""
+    monkeypatch.setattr(os_labels, "is_windows", lambda: True)
+    result = LaunchCommandSerializer(_tag_snapshot(f"a{char}b", "ok")).serialize()
+    assert result.command == "fnd q --tag tok"
+    assert result.caveats == ["1 tag value(s) left out: a Windows shell would act on them"]
+
+
+def test_windows_drops_tag_match_when_every_include_is_left_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(os_labels, "is_windows", lambda: True)
+    result = LaunchCommandSerializer(_tag_snapshot("a&b", match_all=False)).serialize()
+    assert result.command == "fnd q"
+
+
+@pytest.mark.parametrize("char", _UNSAFE_ON_WINDOWS)
+def test_posix_output_is_unchanged(monkeypatch: pytest.MonkeyPatch, char: str) -> None:
+    monkeypatch.setattr(os_labels, "is_windows", lambda: False)
+    result = LaunchCommandSerializer(_tag_snapshot(f"a{char}b")).serialize()
+    assert result.command == shlex.join(["fnd", "q", "--tag", f"ta{char}b"])
+    assert result.caveats == []
