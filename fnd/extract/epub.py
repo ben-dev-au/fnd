@@ -101,17 +101,24 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             title=title,
             author=author,
         )
+        # A spine may not repeat an item (epubcheck OPF-034). Reading each manifest
+        # item, then each entry, once keeps the work within reject_if_zip_bomb's
+        # total, where a repeated itemref re-parsed one chapter without bound.
+        read: set[str] = set()
         for itemref in spine_el:
             if _lname(itemref.tag) != "itemref":
                 continue
-            href, media = href_by_id.get(itemref.get("idref", ""), ("", ""))
+            href, media = href_by_id.pop(itemref.get("idref", ""), ("", ""))
             if not href or media not in _XHTML_MEDIA:
                 continue
             entry = posixpath.normpath(posixpath.join(opf_dir, unquote(href)))
+            if entry in read:
+                continue
             try:
                 data = zf.read(entry)
             except KeyError:
                 continue
+            read.add(entry)
             if data.strip():
                 walk_html(parse(data), sec)
 
