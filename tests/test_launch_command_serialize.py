@@ -91,7 +91,8 @@ def test_tags_union_across_sources() -> None:
     )
 
 
-def test_special_characters_are_shell_quoted() -> None:
+def test_special_characters_are_shell_quoted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os_labels, "is_windows", lambda: False)
     cmd = _cmd(query="a & b", full_collections=("my home",), tag_include={"f": frozenset({"a'b"})})
     assert cmd == "fnd 'a & b' -c 'my home' --tag 'a'\"'\"'b'"
 
