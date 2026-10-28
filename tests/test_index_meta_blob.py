@@ -7,7 +7,10 @@ carry the field until Task 5; once Task 5 lands, this could simplify to
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
+
+import pytest
 
 from fnd.analysis import register
 from fnd.config import CollectionConfig, SourceConfig
@@ -49,6 +52,31 @@ def test_md_chunk_carries_frontmatter_in_meta_blob(tmp_path: Path, tmp_index_dir
     build_index_from_config(config=cc, collection="x", index_dir=tmp_index_dir)
     blob = _meta_blob_for_first_hit(tmp_index_dir, "body")
     assert decode(blob) == {"Project": "Website", "tags": ["project", "active"]}
+
+
+@pytest.mark.parametrize(
+    ("frontmatter", "expected"),
+    [
+        ("__type__: date", {"__type__": "date"}),
+        ("__type__: date\nvalue: notadate", {"__type__": "date", "value": "notadate"}),
+        ('__type__: date\nvalue: "2020-01-01"', {"__type__": "date", "value": "2020-01-01"}),
+        ("__type__: date\nvalue: 2020-01-01", {"__type__": "date", "value": dt.date(2020, 1, 1)}),
+        (
+            "__type__: date\nvalue: [2020-01-01]",
+            {"__type__": "date", "value": [dt.date(2020, 1, 1)]},
+        ),
+    ],
+)
+def test_frontmatter_type_key_indexes_as_a_key(
+    tmp_path: Path, tmp_index_dir: Path, frontmatter: str, expected: dict[str, object]
+) -> None:
+    """A note's own ``__type__`` key indexes and decodes as data, not a date envelope."""
+    notes = tmp_path / "notes"
+    _touch(notes / "a.md", f"---\n{frontmatter}\n---\n# A\nbody one\n")
+    cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
+    build_index_from_config(config=cc, collection="x", index_dir=tmp_index_dir)
+    blob = _meta_blob_for_first_hit(tmp_index_dir, "body")
+    assert decode(blob) == expected
 
 
 def test_non_md_chunk_meta_blob_is_empty(tmp_path: Path, tmp_index_dir: Path) -> None:

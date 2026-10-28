@@ -7,6 +7,9 @@ real ``extract()`` dispatch, so these also exercise the registry wiring.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -83,6 +86,43 @@ def test_notebook_cells(tmp_path: Path) -> None:
     code_chunk = chunks[1]
     assert code_chunk.body_md.startswith("```python")
     assert "2" in code_chunk.body  # captured stream output
+
+
+def _markdown_notebook(path: Path, source: str) -> Path:
+    path.write_text(
+        json.dumps({"cells": [{"cell_type": "markdown", "source": source}]}), encoding="utf-8"
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("line", "heading"),
+    [("## Results ##  ", "Results"), ("   ### Spaced   ###", "Spaced"), ("# a # b", "a # b")],
+)
+def test_notebook_heading_drops_the_closing_hash_run(
+    tmp_path: Path, line: str, heading: str
+) -> None:
+    """A closing `#` run and the whitespace around it are not part of the heading."""
+    nb = _markdown_notebook(tmp_path / "nb.ipynb", f"{line}\n{ANCHOR}")
+    assert _anchor_chunk(extract(nb)).heading_path == heading
+
+
+def test_notebook_heading_with_a_long_whitespace_run_finishes(tmp_path: Path) -> None:
+    """A heading line padded with whitespace is read in linear time, never backtracking."""
+    nb = _markdown_notebook(tmp_path / "nb.ipynb", "# a" + " " * 20_000 + "b")
+    code = (
+        "import sys; from pathlib import Path; from fnd.extract import extract;"
+        "print(len(next(extract(Path(sys.argv[1]))).heading_path))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code, str(nb)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    assert done.stdout.strip() == "20002"
 
 
 def test_notebook_invalid_json_raises(tmp_path: Path) -> None:

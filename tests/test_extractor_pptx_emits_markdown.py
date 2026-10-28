@@ -75,6 +75,22 @@ def test_bulleted_body_uses_list_indent_by_level(deck: Path) -> None:
     assert "    - deeper gamma" in md
 
 
+def test_out_of_range_level_indent_is_capped_at_ooxml_maximum(tmp_path: Path) -> None:
+    """A crafted a:pPr/@lvl beyond 8 indents as level 8, never by its raw value."""
+    prs = Presentation()
+    s = prs.slides.add_slide(prs.slide_layouts[5])
+    tf = s.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(3)).text_frame
+    tf.text = "outer alpha"
+    crafted = tf.add_paragraph()
+    crafted.text = "crafted delta"
+    crafted._pPr.set("lvl", "50")
+    out = tmp_path / "crafted.pptx"
+    prs.save(str(out))
+    md = next(iter(extract(out))).body_md
+    line = next(ln for ln in md.splitlines() if "crafted delta" in ln)
+    assert line == "  " * 8 + "- crafted delta", repr(line)
+
+
 def test_table_renders_as_gfm_pipe_table(deck: Path) -> None:
     md = list(extract(deck))[1].body_md
     assert "| Item | Score |" in md

@@ -13,6 +13,10 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.text.paragraph import Paragraph
 
 from fnd.extract.docx import extract
 
@@ -131,3 +135,31 @@ def test_heading_path_unchanged_with_subheadings(tmp_path: Path) -> None:
     chunks = list(extract(p))
     paths = [c.heading_path for c in chunks]
     assert paths == ["Top", "Top > Mid", "Top > Mid > Leaf"]
+
+
+def _attach_numpr(para: Paragraph, ilvl: str) -> None:
+    numpr = OxmlElement("w:numPr")
+    level = OxmlElement("w:ilvl")
+    level.set(qn("w:val"), ilvl)
+    num_id = OxmlElement("w:numId")
+    num_id.set(qn("w:val"), "1")
+    numpr.append(level)
+    numpr.append(num_id)
+    para._p.get_or_add_pPr().append(numpr)
+
+
+def test_list_depth_capped_at_ooxml_maximum(tmp_path: Path) -> None:
+    """A document-supplied list level indents no deeper than OOXML level 8."""
+    doc = Document()
+    _attach_numpr(doc.add_paragraph("shallow item"), "2")
+    _attach_numpr(doc.add_paragraph("deepest legit item"), "8")
+    _attach_numpr(doc.add_paragraph("crafted ilvl item"), "50")
+    doc.styles.add_style("List Bullet 51", WD_STYLE_TYPE.PARAGRAPH)
+    doc.add_paragraph("crafted style item", style="List Bullet 51")
+    p = tmp_path / "deep_list.docx"
+    doc.save(str(p))
+    lines = next(extract(p)).body_md.split("\n\n")
+    assert f"{'  ' * 2}- shallow item" in lines
+    assert f"{'  ' * 8}- deepest legit item" in lines
+    assert f"{'  ' * 8}- crafted ilvl item" in lines
+    assert f"{'  ' * 8}- crafted style item" in lines

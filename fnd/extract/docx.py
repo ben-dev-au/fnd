@@ -42,6 +42,10 @@ _HEADING_LEVELS: dict[str, int] = {
     "Title": 1,
 }
 
+# OOXML list levels (``w:ilvl``) span 0 to 8; a document-supplied level is a
+# repeat count for the indent, so an unclamped one sizes a multi-GB string.
+_MAX_LIST_DEPTH = 8
+
 
 def _heading_level(p: Paragraph) -> int:
     style = p.style
@@ -280,7 +284,7 @@ def _walk_docx_body(*, path: Path, parent_id: str, times: FileTimes, doc: Any) -
             line_md = _paragraph_md(item)
             if list_info is not None:
                 prefix, depth = list_info
-                indent = "  " * depth
+                indent = "  " * min(depth, _MAX_LIST_DEPTH)
                 md_lines.append(f"{indent}{prefix}{line_md}")
             else:
                 md_lines.append(line_md)

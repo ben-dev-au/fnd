@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 
 import pytest
 
 from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_text
+from fnd.index import read_file_metadata
+from fnd.meta_blob import decode as decode_meta_blob
 
 
 def test_no_frontmatter_returns_none() -> None:
@@ -45,6 +48,22 @@ def test_integer_and_float() -> None:
 def test_iso_date() -> None:
     out = read_frontmatter_from_text("---\ndue: 2026-06-01\n---\n")
     assert out == {"due": dt.date(2026, 6, 1)}
+
+
+@pytest.mark.parametrize("raw", ["2026-13-45", "2024-02-30", "0000-01-01"])
+def test_impossible_iso_date_stays_a_string(raw: str) -> None:
+    """An ISO-shaped value that is no real date parses as its string."""
+    out = read_frontmatter_from_text(f"---\ndue: {raw}\ntitle: Plan\n---\n")
+    assert out == {"due": raw, "title": "Plan"}
+
+
+def test_impossible_iso_date_does_not_stop_file_metadata(tmp_path: Path) -> None:
+    """A note with an impossible date still yields its metadata and frontmatter tags."""
+    note = tmp_path / "note.md"
+    note.write_text("---\ndate: 2026-13-45\ntags: [plan]\n---\nbody\n", encoding="utf-8")
+    blob, tags = read_file_metadata(note, tag_sources=("frontmatter",))
+    assert decode_meta_blob(blob) == {"date": "2026-13-45", "tags": ["plan"]}
+    assert tags == {"frontmatter": frozenset({"plan"})}
 
 
 def test_bool_and_null() -> None:

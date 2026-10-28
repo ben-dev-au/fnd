@@ -19,7 +19,9 @@ from fnd.extract.base import Block, Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import read_file_times
 from fnd.text_canon import decode
 
-_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+# The closing `#` run is stripped in `_first_heading`, not here: a lazy group ahead of
+# `\s*#*\s*$` backtracks cubically on a long whitespace run. All-`#` text reads as "#".
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+)")
 
 
 def _source(raw: Any) -> str:
@@ -39,7 +41,8 @@ def _first_heading(src: str) -> str:
     for line in src.splitlines():
         m = _HEADING.match(line)
         if m:
-            return m.group(1).strip()
+            text = m.group(1).strip()
+            return text.rstrip("#").rstrip() or text[:1]
     return ""
 
 

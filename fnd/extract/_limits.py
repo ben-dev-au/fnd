@@ -29,6 +29,9 @@ LIMIT_OOXML_ENTRY_RATIO: Final = 200  # uncompressed / compressed
 # authored frontmatter I've encountered.
 LIMIT_FRONTMATTER_TOTAL_BYTES: Final = 64 * 1024  # 64 KB
 LIMIT_FRONTMATTER_LINE_BYTES: Final = 4 * 1024  # 4 KB single line
+# Each nested inline list costs one parser frame; a 4 KB line can nest about
+# 2,000 deep, past Python's default recursion limit of 1000.
+LIMIT_FRONTMATTER_LIST_DEPTH: Final = 32
 
 # Query layer. Today the only consumer is the same user typing into the
 # TUI, but once we add Spotlight / URL-handler / --query-from-file the
