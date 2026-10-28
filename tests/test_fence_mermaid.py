@@ -9,11 +9,14 @@ registers the fence as the scroll anchor (no painted span on diagram art).
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.app import App, ComposeResult
 
 from fnd.matching import MatchSpec
-from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence
+from fnd.tui import mermaid_render
+from fnd.tui.widgets.markdown import _MERMAID_RENDERER, FNDMarkdown, FNDMarkdownFence
 
 FLOW = "```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"
 
@@ -100,3 +103,77 @@ async def test_match_inside_diagram_registers_anchor() -> None:
         await md.build_done.wait()
         fence = next(iter(md.query(FNDMarkdownFence)))
         assert md.first_match_block is fence
+
+
+@pytest.mark.asyncio
+async def test_a_runaway_diagram_leaves_the_app_responsive_and_shows_source() -> None:
+    """termaid never returns on this label; the loop keeps ticking, then source shows."""
+    ticks = 0
+
+    async def tick() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.05)
+            ticks += 1
+
+    ticker = asyncio.create_task(tick())
+    src = '```mermaid\nflowchart TD\n  A["`a*`"] --> B\n```'
+    md = FNDMarkdown(src, render_mermaid=True)
+    try:
+        async with _Host(md).run_test():
+            await md.build_done.wait()
+            fence = next(iter(md.query(FNDMarkdownFence)))
+            assert "flowchart" in fence._highlighted_code.plain
+            assert not fence.has_class("mermaid-diagram")
+    finally:
+        ticker.cancel()
+    # The build spans the time limit; a loop blocked by the render would not tick.
+    assert ticks > mermaid_render.RENDER_TIMEOUT_S / 0.05 / 2
+
+
+@pytest.mark.asyncio
+async def test_a_newer_update_wins_over_a_pending_diagram() -> None:
+    """A re-update while a diagram renders must not let the older body land."""
+    md = FNDMarkdown(FLOW, render_mermaid=True)
+    async with _Host(md).run_test() as pilot:
+        md.update('```mermaid\nflowchart TD\n  %% superseded\n  A["`a*`"] --> B\n```')
+        await md.update("plain *text* only")
+        await pilot.pause(0.05)
+        await md.build_done.wait()
+        superseded = '```mermaid\nflowchart TD\n  %% superseded\n  A["`a*`"] --> B\n```'
+        code = superseded.removeprefix("```mermaid\n").removesuffix("\n```")
+        while not _MERMAID_RENDERER.is_prepared(code):
+            await asyncio.sleep(0.05)
+        await pilot.pause()
+        assert not list(md.query(FNDMarkdownFence))
+
+
+@pytest.mark.asyncio
+async def test_a_shown_diagram_survives_eviction_and_restyle() -> None:
+    """A restyle after the render cache dropped the entry keeps the diagram."""
+    md = FNDMarkdown(FLOW, render_mermaid=True)
+    async with _Host(md).run_test() as pilot:
+        await md.build_done.wait()
+        _MERMAID_RENDERER._results.clear()
+        md.add_class("restyled")
+        await pilot.pause()
+        fence = next(iter(md.query(FNDMarkdownFence)))
+        assert "┌" in fence._highlighted_code.plain
+        assert fence.has_class("mermaid-diagram")
+
+
+@pytest.mark.asyncio
+async def test_a_section_cut_short_by_the_budget_is_never_captured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its leftover diagrams show as source for now; a capture would keep that for good."""
+    from fnd.tui.preview.frozen import freeze
+
+    monkeypatch.setattr(mermaid_render, "PREPARE_BUDGET_S", 0.05)
+    src = '```mermaid\nflowchart TD\n  %% budget\n  A["`a*`"] --> B\n```\n\n' + FLOW
+    md = FNDMarkdown(src, render_mermaid=True)
+    async with _Host(md).run_test() as pilot:
+        await md.build_done.wait()
+        await pilot.pause()
+        assert md.diagrams_pending
+        assert freeze(md, 0) is None

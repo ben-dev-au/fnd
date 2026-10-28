@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
+from markdown_it import MarkdownIt
 from textual import events
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.widgets import Markdown
@@ -426,6 +429,11 @@ class FNDMarkdownTD(_RawHrefMixin, _HighlightingBlockMixin, MarkdownTD):
 _MERMAID_RENDERER = MermaidRenderer()
 
 
+def cancel_pending_diagrams() -> None:
+    """Stop queued and running diagram renders, so a quit waits on neither."""
+    _MERMAID_RENDERER.cancel_pending()
+
+
 def _fence_language(token: Any) -> str:
     """First word of the fence info string, lowercased (the language)."""
     return (getattr(token, "info", "") or "").strip().split(" ", 1)[0].lower()
@@ -464,7 +472,8 @@ class FNDMarkdownFence(MarkdownFence):
         self._try_render_mermaid(token, code)
 
     def _try_render_mermaid(self, token: Any, code: str) -> bool:
-        self._mermaid_code: str | None = None
+        self._mermaid_art: Text | None = None
+        self._diagram_content: tuple[object, Content] | None = None
         if not getattr(self._markdown, "render_mermaid", False):
             return False
         if _fence_language(token) != "mermaid":
@@ -472,7 +481,9 @@ class FNDMarkdownFence(MarkdownFence):
         art = _MERMAID_RENDERER.render(code)
         if art is None:
             return False
-        self._mermaid_code = code
+        # Kept on the fence, not looked up again: a restyle after the cache
+        # evicted it would otherwise turn a shown diagram back into source.
+        self._mermaid_art = art
         self.add_class("mermaid-diagram")
         # The art lands on ``_highlighted_code`` before the chunk pass runs, so
         # matches overlay the *art*, not the fence source. The art is derived
@@ -486,31 +497,21 @@ class FNDMarkdownFence(MarkdownFence):
 
     def _set_diagram_content(self, art: Text) -> None:
         # termaid hands back a Rich ``Text``; the fence renders a Textual
-        # ``Content`` (``set_content``/``add_spans``), so convert across.
-        content = Content.from_rich_text(in_rgb(art, self.app.ansi_theme))
+        # ``Content``. Converted once per theme: restyles fire several times a mount.
+        theme = self.app.ansi_theme
+        if self._diagram_content is None or self._diagram_content[0] is not theme:
+            self._diagram_content = (theme, Content.from_rich_text(in_rgb(art, theme)))
+        content = self._diagram_content[1]
         self._highlighted_code = content
         self.set_content(content)
 
     def notify_style_update(self) -> None:
         # The base rebuilds ``_highlighted_code`` from scratch on a theme
-        # change, dropping our content: re-render the diagram if this is a
-        # mermaid fence, else re-apply the match overlay.
+        # change, dropping our content: put the diagram back, then the overlay.
         super().notify_style_update()
-        code = getattr(self, "_mermaid_code", None)
-        if code is not None:
-            art = _MERMAID_RENDERER.render(code)
-            if art is not None:
-                self._set_diagram_content(art)
-                self._reapply_cached_highlights()
-                return
-            # Re-render failed: this is no longer a diagram: drop the
-            # diagram-only styling (hscroll/no-wrap) before falling back. The
-            # cached spans were computed against the ART, so they address text
-            # that no longer exists; drop them rather than replay them onto the
-            # fence source at meaningless offsets.
-            self.remove_class("mermaid-diagram")
-            self._mermaid_code = None
-            self._fnd_match_spans = []
+        art = getattr(self, "_mermaid_art", None)
+        if art is not None:
+            self._set_diagram_content(art)
         self._reapply_cached_highlights()
 
     def _reapply_cached_highlights(self) -> None:
@@ -520,9 +521,7 @@ class FNDMarkdownFence(MarkdownFence):
         every theme change (and fires several times during the initial mount),
         dropping all spans. Recomputing here would use the fence's own text
         alone, undoing the chunk-wide proximity scope, so replay the cache
-        instead. The length check is a backstop against a stale cache; the one
-        case that actually invalidates it (a failed mermaid re-render) clears
-        the cache at source."""
+        instead. The length check is a backstop against a stale cache."""
         spans = getattr(self, "_fnd_match_spans", None)
         if not spans:
             return
@@ -1044,6 +1043,8 @@ class FNDMarkdown(Markdown):
         # Read by ``FNDMarkdownFence`` to decide whether a mermaid fence
         # renders as a diagram (default-on flag, off in tests unless set).
         self.render_mermaid: bool = render_mermaid
+        #: Diagrams left past the render budget show as source: never capture that.
+        self.diagrams_pending = False
         # ``_first_match_block`` holds the first FULL (qualifying) match block;
         # ``_first_dim_match_block`` the first block whose only matches are dimmed
         # proximity strays. ``first_match_block`` prefers the full slot so a
@@ -1115,14 +1116,36 @@ class FNDMarkdown(Markdown):
         self.set_class(below is not None, "-seam-below")
         self.block_plains = ()
         self.painted_match = False
+        self.diagrams_pending = False
         self._build_gen += 1
         gen = self._build_gen
         # Without the marks: a mark below a fence left open would render as its code.
-        aw = super().update(body)
+        if self.render_mermaid and "mermaid" in body.lower():
+            aw = AwaitComplete(self._prepare_diagrams_then_update(body, gen))
+        else:
+            aw = super().update(body)
         aw._future.add_done_callback(  # type: ignore[attr-defined]
             lambda _: self._finish_build() if self._build_gen == gen else None
         )
         return aw
+
+    async def _prepare_diagrams_then_update(self, body: str, gen: int) -> None:
+        """Render this chunk's mermaid fences in the worker, then build its blocks."""
+        sources = await asyncio.to_thread(self._mermaid_sources, body)
+        await _MERMAID_RENDERER.prepare(sources)
+        if self._build_gen == gen:
+            self.diagrams_pending = not all(map(_MERMAID_RENDERER.is_prepared, sources))
+            await super().update(body)
+
+    def _mermaid_sources(self, body: str) -> list[str]:
+        """Each mermaid fence's code exactly as ``_parse_markdown`` will hand it over."""
+        factory = self._parser_factory
+        tokens = (MarkdownIt("gfm-like") if factory is None else factory()).parse(body)
+        return [
+            t.content.rstrip()
+            for t in tokens
+            if t.type in ("fence", "code_block") and _fence_language(t) == "mermaid"
+        ]
 
     def _finish_build(self) -> None:
         try:
