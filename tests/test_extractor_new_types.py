@@ -176,7 +176,14 @@ def test_parse_xml_disables_entity_expansion() -> None:
 
 
 # ── epub ──────────────────────────────────────────────────────────────────
-def _build_epub(path: Path) -> None:
+_MANIFEST = (
+    '<item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+    '<item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>'
+)
+_SPINE = '<itemref idref="c1"/><itemref idref="c2"/>'
+
+
+def _build_epub(path: Path, *, manifest: str = _MANIFEST, spine: str = _SPINE) -> None:
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
         z.writestr(
@@ -191,9 +198,7 @@ def _build_epub(path: Path) -> None:
             '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
             'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
             "<dc:title>Test Book</dc:title><dc:creator>Jane Author</dc:creator></metadata>"
-            '<manifest><item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
-            '<item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/></manifest>'
-            '<spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>',
+            f"<manifest>{manifest}</manifest><spine>{spine}</spine></package>",
         )
         z.writestr(
             "OEBPS/ch1.xhtml",
@@ -217,6 +222,55 @@ def test_epub_spine_and_metadata(tmp_path: Path) -> None:
     assert chunks[0].author == "Jane Author"
     assert [c.chunk_seq for c in chunks] == [0, 1]  # continuous across the book
     assert _anchor_chunk(chunks).heading_path == "Chapter One"
+
+
+def test_epub_repeated_itemref_reads_the_chapter_once(tmp_path: Path) -> None:
+    """A spine naming one item thousands of times yields its chapter once."""
+    p = tmp_path / "repeat.epub"
+    _build_epub(p, spine='<itemref idref="c1"/>' * 5000 + '<itemref idref="c2"/>')
+    chunks = list(extract(p))
+    assert [c.heading_path for c in chunks] == ["Chapter One", "Chapter Two"]
+
+
+def test_epub_items_sharing_an_href_read_it_once(tmp_path: Path) -> None:
+    """Distinct manifest ids pointing at one entry cannot re-read it either."""
+    manifest = "".join(
+        f'<item id="d{i}" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+        for i in range(5000)
+    )
+    spine = "".join(f'<itemref idref="d{i}"/>' for i in range(5000))
+    p = tmp_path / "aliases.epub"
+    _build_epub(p, manifest=manifest + _MANIFEST, spine=spine + _SPINE)
+    chunks = list(extract(p))
+    assert [c.heading_path for c in chunks] == ["Chapter One", "Chapter Two"]
+
+
+def test_epub_repeated_itemref_resolves_its_href_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path work per manifest item, not per itemref: N repeats of a long href stay linear."""
+    from fnd.extract import epub
+
+    decoded: list[str] = []
+    real_unquote = epub.unquote
+    monkeypatch.setattr(epub, "unquote", lambda s: decoded.append(s) or real_unquote(s))
+    p = tmp_path / "repeat.epub"
+    _build_epub(p, spine='<itemref idref="c1"/>' * 1000 + '<itemref idref="c2"/>')
+    list(extract(p))
+    assert decoded == ["ch1.xhtml", "ch2.xhtml"]
+
+
+def test_epub_unresolved_itemrefs_do_not_hide_a_later_chapter(tmp_path: Path) -> None:
+    """Missing entries, unknown ids and non-XHTML items are skipped, not counted."""
+    manifest = (
+        '<item id="gone" href="missing.xhtml" media-type="application/xhtml+xml"/>'
+        '<item id="css" href="ch1.xhtml" media-type="text/css"/>' + _MANIFEST
+    )
+    spine = '<itemref idref="gone"/><itemref idref="nope"/><itemref idref="css"/>' + _SPINE
+    p = tmp_path / "gaps.epub"
+    _build_epub(p, manifest=manifest, spine=spine)
+    chunks = list(extract(p))
+    assert [c.heading_path for c in chunks] == ["Chapter One", "Chapter Two"]
 
 
 def test_epub_bad_zip_raises(tmp_path: Path) -> None:
