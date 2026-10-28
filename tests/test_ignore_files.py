@@ -270,8 +270,8 @@ def test_refused_ignore_file_leaves_no_descriptor_open(tmp_path: Path) -> None:
 
 
 def test_regular_ignore_file_is_read_whole_up_to_the_cap(tmp_path: Path) -> None:
-    padding = "# pad\n" * ((1 << 20) // 6 - 10)
-    (tmp_path / ".fndignore").write_text(padding + "*.md\n", encoding="utf-8")
+    padding = b"# pad\n" * ((1 << 20) // 6 - 10)
+    (tmp_path / ".fndignore").write_bytes(padding + b"*.md\n")
     loaded = load_ignore_file(tmp_path, ".fndignore")
     assert loaded is not None
     assert loaded.match(tmp_path / "a.md", is_dir=False) is not None
