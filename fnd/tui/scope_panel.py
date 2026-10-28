@@ -1437,11 +1437,13 @@ class ScopeController:
         """Identity of a scope or filters row that survives a rebuild.
 
         Node objects are discarded by ``tree.clear()``, so the cursor is
-        restored by matching this key against the freshly-built rows.
+        restored by matching this key against the freshly-built rows. The
+        display ``text`` is left out: one tag reads ``alpha`` in the catalogue
+        and ``project/alpha`` as a ghost.
         """
         if not isinstance(data, dict):
             return None
-        return tuple(f"{k}={v}" for k, v in sorted(data.items()))
+        return tuple(f"{k}={v}" for k, v in sorted(data.items()) if k != "text")
 
     def _clear_tree(self, tree: Tree[Any]) -> tuple[tuple[str, ...] | None, int]:
         """Empty ``tree`` for a rebuild; returns the row to restore and the cursor's old line.
