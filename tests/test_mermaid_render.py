@@ -76,6 +76,14 @@ def test_memory_cap_stops_a_runaway_render_before_the_time_limit(
     assert time.monotonic() - started < 30
 
 
+def test_a_large_parent_does_not_count_against_the_worker(monkeypatch: pytest.MonkeyPatch):
+    """Linux keeps ru_maxrss across a vfork and exec: the worker must not inherit fnd's."""
+    monkeypatch.setattr(m, "WORKER_MEMORY_LIMIT", 150 * 1024 * 1024)
+    ballast = b"\x01" * (300 * 1024 * 1024)
+    assert _prepared(MermaidRenderer(), FLOW) is not None
+    assert len(ballast)
+
+
 def test_a_failed_source_is_not_retried(monkeypatch: pytest.MonkeyPatch):
     r = MermaidRenderer()
     calls: list[str] = []

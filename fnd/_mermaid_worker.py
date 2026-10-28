@@ -4,7 +4,7 @@ Run by path under ``python -P`` (see :mod:`fnd.tui.mermaid_render`), so it impor
 termaid and the standard library only: never fnd, whose TUI import costs a second.
 termaid's layout can loop without end on a crafted diagram and grow memory at
 about 280 MB/s, so a watchdog thread exits the process past ``argv[1]`` bytes of
-peak resident memory, or once the parent is gone; the parent enforces the time limit.
+resident memory, or once the parent is gone; the parent enforces the time limit.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ if sys.platform == "win32":
         handle = _kernel32.OpenProcess(_SYNCHRONIZE, False, parent)
         me = _kernel32.GetCurrentProcess()
 
-        def peak() -> int:
+        def resident() -> int:
             counters = _MemoryCounters()
             counters.cb = ctypes.sizeof(counters)
             _kernel32.K32GetProcessMemoryInfo(me, ctypes.byref(counters), counters.cb)
@@ -69,25 +69,31 @@ if sys.platform == "win32":
         def parent_gone() -> bool:
             return not handle or _kernel32.WaitForSingleObject(handle, 0) == 0
 
-        return peak, parent_gone
+        return resident, parent_gone
 
 else:
     import resource
 
     def _probes(parent: int) -> tuple[Callable[[], int], Callable[[], bool]]:
-        scale = 1 if sys.platform == "darwin" else 1024  # ru_maxrss: bytes vs KiB
+        # Linux keeps ru_maxrss across exec, and a vfork spawn hands over fnd's own
+        # high-water mark, so read the current figure there; macOS resets it.
+        page = os.sysconf("SC_PAGE_SIZE")
 
-        def peak() -> int:
-            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+        def resident() -> int:
+            try:
+                with open("/proc/self/statm", "rb") as statm:
+                    return int(statm.read().split()[1]) * page
+            except OSError:
+                return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
-        return peak, lambda: os.getppid() != parent
+        return resident, lambda: os.getppid() != parent
 
 
 def _watchdog(limit: int, parent: int) -> None:
-    peak, parent_gone = _probes(parent)
+    resident, parent_gone = _probes(parent)
     while True:
         time.sleep(_POLL_S)
-        if peak() > limit or parent_gone():
+        if resident() > limit or parent_gone():
             os._exit(3)
 
 
