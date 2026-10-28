@@ -7,6 +7,10 @@ joined (`Track.Name`, "not found", a block boundary).
 
 from __future__ import annotations
 
+import random
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,7 +19,13 @@ from fnd.index import build_index
 from fnd.layered import search_layered
 from fnd.matching import MatchSpec
 from fnd.query import Searcher
-from fnd.render import match_word_spans, match_word_spans_multi, text_has_any_match
+from fnd.render import (
+    _HIDDEN_LINK_RE,
+    _hide_link,
+    match_word_spans,
+    match_word_spans_multi,
+    text_has_any_match,
+)
 from fnd.synonyms import load_default_synonyms
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 
@@ -122,6 +132,35 @@ def test_a_compound_only_in_a_link_destination_is_not_returned(index: Path) -> N
     paths = _paths(index, "viewmodel")
     assert not any(p.endswith("hidden") for p in paths)
     assert any(p.endswith("shown") for p in paths)
+
+
+def test_hidden_links_are_exactly_what_a_backtracking_pattern_hides() -> None:
+    """The linear link pattern rewrites any text the same as the plain greedy one."""
+    plain = re.compile(r"\]\([^)\n]*\)|^ {0,3}\[[^\]\n]+\]:.*$", re.M)
+    pieces = ("](", ")", "\n", "a", "[", "]", "(", "!", " ", ":", "]:")
+    rng = random.Random(7)
+    for _ in range(20_000):
+        text = "".join(rng.choices(pieces, k=rng.randrange(30)))
+        assert _HIDDEN_LINK_RE.sub(_hide_link, text) == plain.sub("]", text), repr(text)
+
+
+def test_a_line_of_unclosed_links_does_not_stall_the_search() -> None:
+    """A 1 MB line of ``](`` with no ``)`` is scanned in linear time, not quadratic."""
+    code = (
+        "from fnd.query import Hit; from fnd.render import keep_shown;"
+        "body = '## Notes\\n\\nA notable term.\\n\\n<!-- ' + '](' * 500_000 + ' -->';"
+        "hit = Hit(0.0, 'p', 'n.md', 'md', 0, 0, 'Notes', 'Notes', '', body_md=body);"
+        "print(len(keep_shown([hit], 'notable')))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    assert done.stdout.strip() == "1"
 
 
 def test_a_synonym_hit_paints_the_synonym_and_nothing_near_it(

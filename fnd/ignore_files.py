@@ -18,13 +18,15 @@ Two rules are load-bearing and easy to lose:
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from fnd.globs import translate
+from fnd.globs import CompiledGlob, translate
 from fnd.text_canon import canonical
 
 __all__ = [
@@ -47,7 +49,7 @@ _MAX_PATTERN_LEN: Final = 4096
 
 @dataclass(frozen=True, slots=True)
 class Pattern:
-    regex: re.Pattern[str]
+    regex: CompiledGlob
     negated: bool
     dir_only: bool
     source: str
@@ -183,11 +185,36 @@ class IgnoreFile:
         return IgnoreMatch(decided, self.path) if decided is not None else None
 
 
+def _read_regular_file(path: Path, *, follow: bool) -> bytes:
+    """Up to ``_MAX_BYTES`` of ``path``; a FIFO, device, or unfollowed symlink raises ``OSError``.
+
+    ``O_NONBLOCK`` keeps opening a FIFO from waiting on a writer; a regular file is
+    then read blocking.
+    """
+    nofollow = 0 if follow else getattr(os, "O_NOFOLLOW", 0)
+    if not follow and not nofollow and path.is_symlink():
+        raise OSError(f"symlinked ignore file: {path}")
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+    # Without O_BINARY a Windows descriptor is text mode: it stops at 0x1A.
+    fd = os.open(path, flags | getattr(os, "O_BINARY", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"not a regular file: {path}")
+        if hasattr(os, "O_NONBLOCK"):
+            os.set_blocking(fd, True)
+        with open(fd, "rb", closefd=False) as f:
+            return f.read(_MAX_BYTES)
+    finally:
+        os.close(fd)
+
+
 def load_ignore_file(directory: Path, name: str) -> IgnoreFile | None:
     """Read one ignore file, or ``None`` when absent or unreadable."""
     path = directory / name
     try:
-        raw = path.read_bytes()[:_MAX_BYTES]
+        # Git has not followed an in-tree symlinked .gitignore since 2.32; a symlinked
+        # .fndignore is a user's own shared rules, so it is followed.
+        raw = _read_regular_file(path, follow=name != ".gitignore")
     except OSError:
         return None
     # utf-8-sig, because git strips a BOM and PowerShell 5.1 and VS Code's

@@ -281,8 +281,13 @@ def _joined_runs(
 _JOINERS = frozenset({"-", "_", "."})
 
 #: Markdown the preview never shows: an inline link's destination and a
-#: reference definition line.
-_HIDDEN_LINK_RE = re.compile(r"\]\([^)\n]*\)|^ {0,3}\[[^\]\n]+\]:.*$", re.M)
+#: reference definition line. An unclosed ``](`` matches to its line end and is
+#: kept, so a line of repeated ``](`` is scanned once, not once per ``](``.
+_HIDDEN_LINK_RE = re.compile(r"\]\([^)\n]*+(?:\)|(?P<unclosed>))|^ {0,3}\[[^\]\n]+\]:.*$", re.M)
+
+
+def _hide_link(m: re.Match[str]) -> str:
+    return m[0] if m["unclosed"] is not None else "]"
 
 
 def keep_shown(hits: list[Hit], query: str) -> list[Hit]:
@@ -296,7 +301,7 @@ def keep_shown(hits: list[Hit], query: str) -> list[Hit]:
     out: list[Hit] = []
     for h in hits:
         visible = h.body_md or decoded_body(h)[0]
-        if text_has_any_match(_HIDDEN_LINK_RE.sub("]", visible), spec):
+        if text_has_any_match(_HIDDEN_LINK_RE.sub(_hide_link, visible), spec):
             out.append(h)
     return out
 

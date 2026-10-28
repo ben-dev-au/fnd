@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import itertools
+import json
+import random
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
 from textual.content import Content, Span
 
 from fnd.matching import MatchSpec
+from fnd.tui.widgets import md_inline
 from fnd.tui.widgets.content_edits import apply_edits
 from fnd.tui.widgets.md_inline import (
     MARK_STYLE,
@@ -198,3 +208,59 @@ def test_inline_formatting_inside_a_wikilink_survives() -> None:
         strong = [s for s in out.spans if str(s.style) == ".strong"]
         assert strong, (plain, out.spans)
         assert out.plain[strong[0].start : strong[0].end] == "b"
+
+
+_BACKTRACKING_PATTERNS = {
+    "_MARK": r"==(?!\s)(.+?)(?<!\s)==",
+    "_EMBED": r"!\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]",
+    "_WIKILINK": r"(?<!!)\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]",
+}
+
+
+def _marker_corpus() -> list[str]:
+    """Every string of up to five syntax characters, plus seeded runs of whole markers."""
+    alphabet = "=[]|! \na"
+    corpus = ["".join(t) for n in range(6) for t in itertools.product(alphabet, repeat=n)]
+    markers = ("==", "[[", "]]", "![[", "|", "=", "[", "]", "!", " ", "\n", "a")
+    rng = random.Random(0)
+    corpus += ["".join(rng.choices(markers, k=rng.randint(1, 24))) for _ in range(20_000)]
+    return corpus
+
+
+def test_unclosed_opener_branches_leave_every_edit_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The linear patterns yield exactly the backtracking patterns' edits."""
+    corpus = _marker_corpus()
+    linear = [collect_edits(s, protected=set(), spec=EMPTY, list_item=False) for s in corpus]
+    for name, source in _BACKTRACKING_PATTERNS.items():
+        monkeypatch.setattr(md_inline, name, re.compile(source))
+    for plain, edits in zip(corpus, linear, strict=True):
+        assert collect_edits(plain, protected=set(), spec=EMPTY, list_item=False) == edits, plain
+
+
+def test_unclosed_openers_on_a_table_sized_line_scan_in_linear_time() -> None:
+    """A MAX_TABLE_CHARS line of unclosed openers takes milliseconds, not seconds."""
+    code = (
+        "import json, time\n"
+        "from fnd.extract.base import MAX_TABLE_CHARS\n"
+        "from fnd.matching import MatchSpec\n"
+        "from fnd.tui.widgets.md_inline import collect_edits\n"
+        "took = {}\n"
+        "for unit in ('==x ', '![[', '![[a|', '[[', '[[a|'):\n"
+        "    line = (unit * MAX_TABLE_CHARS)[:MAX_TABLE_CHARS]\n"
+        "    started = time.perf_counter()\n"
+        "    collect_edits(line, protected=set(), spec=MatchSpec(), list_item=False)\n"
+        "    took[unit] = time.perf_counter() - started\n"
+        "print(json.dumps(took))\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    slow = {unit: took for unit, took in json.loads(done.stdout).items() if took > 0.5}
+    assert not slow
