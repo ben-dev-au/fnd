@@ -59,6 +59,8 @@ _SUBPROCESS_ALLOWED = {
     "extract/_docling_daemon.py",
     # The semantic embedding worker: a child process doing fnd's own work.
     "embed_job.py",
+    # The mermaid render worker: termaid can hang, so it runs where it can be killed.
+    "tui/mermaid_render.py",
 }
 
 

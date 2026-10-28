@@ -115,6 +115,8 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         ):
             return None
         node = node.parent if isinstance(node.parent, Widget) else None
+    if any(getattr(md, "diagrams_pending", False) for md in (chunk, *chunk.query("FNDMarkdown"))):
+        return None
     for dt in chunk.query(DataTable):
         # A table that holds rows but has NO geometry has not been laid out, and
         # capturing it yields the border with none of the contents: an empty

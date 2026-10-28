@@ -137,6 +137,8 @@ def test_the_pasted_path_rule_is_chosen_by_platform(
 # Files that branched on the platform before the seams existed; a new module
 # must route through paths, launcher, os_labels or apps instead.
 _PLATFORM_CHECKS_ALLOWED = {
+    # Runs apart from fnd, so no seam is importable: its memory probe is per-OS.
+    "_mermaid_worker.py",
     "apps.py",
     "cache.py",
     "cli.py",
