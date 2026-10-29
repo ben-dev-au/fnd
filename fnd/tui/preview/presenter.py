@@ -580,6 +580,12 @@ class PreviewPresenter:
         self._app._prefetch.prefetch_top_results(anchor_parent_id=parent_id)
         self.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
 
+    def release_settled_target(self) -> None:
+        """Let a deliberate re-select load the target that just settled; a load
+        still landing keeps coalescing. Flat and warm settles leave the latch set."""
+        if not self.pipeline_busy():
+            self.inflight_target = None
+
     def cancel_pending_load(self) -> None:
         if self.load_timer is not None:
             with contextlib.suppress(Exception):

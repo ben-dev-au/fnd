@@ -331,3 +331,65 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
         pane = app.query_one("#preview_pane")
         placeholders = [w for w in pane.children if getattr(w, "id", None) == "placeholder"]
         assert not placeholders, "placeholder still in pane after preview activated"
+
+
+@pytest.fixture
+def multi_txt_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """Three matching plain-text files: all flat-path prefetch targets."""
+    notes = tmp_path / "plain"
+    notes.mkdir()
+    for label in ("alpha", "beta", "gamma"):
+        lines = [f"Line {i} of {label}." for i in range(60)]
+        lines.append(f"flat-anchor mention in {label}.")
+        (notes / f"{label}.txt").write_text("\n".join(lines), encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="plain")
+    return tmp_index_dir
+
+
+def _prefetch_idle(app: FNDApp) -> bool:
+    from textual.worker import WorkerState
+
+    return not any(
+        w.group == "preview-prefetch" and w.state in (WorkerState.PENDING, WorkerState.RUNNING)
+        for w in app.workers
+    )
+
+
+@pytest.mark.asyncio
+async def test_prefetch_skips_flat_files_already_prebuilt(
+    multi_txt_index: Path, cfg_with_prefetch: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-anchored pass does not rebuild a flat bundle already prebuilt for this query."""
+    from fnd.tui.preview import prefetch as prefetch_module
+
+    builds: list[object] = []
+    real_build = prefetch_module.build_rendered_document
+
+    def _counting_build(fv: object, **kwargs: object) -> object:
+        builds.append(fv)
+        return real_build(fv, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(prefetch_module, "build_rendered_document", _counting_build)
+    app = FNDApp(index_dir=multi_txt_index, config=cfg_with_prefetch, collection="plain")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "flat-anchor")
+        sig = app._search.query_signature()
+        await wait_until(
+            pilot,
+            lambda: (
+                len(app._search.groups) == 3
+                and all(
+                    (g.parent_id, sig) in app._preview.prebuilt_cache for g in app._search.groups
+                )
+                and _prefetch_idle(app)
+            ),
+            timeout=30.0,
+            message="prefetch never prebuilt every flat result",
+        )
+        builds.clear()
+        app._prefetch.prefetch_top_results(anchor_parent_id=app._search.groups[1].parent_id)
+        await wait_until(
+            pilot, lambda: _prefetch_idle(app), timeout=30.0, message="prefetch never idled"
+        )
+        assert builds == [], f"rebuilt {len(builds)} already-prebuilt flat bundle(s)"

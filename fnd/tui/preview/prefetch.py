@@ -129,19 +129,19 @@ class PrefetchEngine:
             if g.parent_id in seen:
                 continue
             seen.add(g.parent_id)
-            # Filter by preview_cache (widget tree ready), not chunk_cache:
-            # a file whose chunks are cached but whose mount got drained
-            # by a prior cursor move must be re-queued. Also skip if it's
-            # the active preview: that one's owned by the user-side path.
+            # Not chunk_cache: a file whose mount a prior cursor move drained must be
+            # re-queued. A prebuilt flat bundle needs no mount (dispatch_flat_mount
+            # installs it directly), and the active preview belongs to the user path.
             in_preview = (
                 self._app._preview.preview_cache.get(g.parent_id, query_sig_for_filter) is not None
             )
+            is_prebuilt = (g.parent_id, query_sig_for_filter) in self._app._preview.prebuilt_cache
             is_active = (
                 self._app._preview.active is not None
                 and self._app._preview.active.parent_doc_id == g.parent_id
                 and self._app._preview.active.query_signature == query_sig_for_filter
             )
-            if in_preview or is_active:
+            if in_preview or is_prebuilt or is_active:
                 already_cached.append(g.parent_id[:8])
                 continue
             focus = g.hits[0].chunk_seq if g.hits else 0
@@ -501,7 +501,7 @@ class PrefetchEngine:
                 f"mounted_size={len(container.mounted_indices)} "
                 f"is_complete={container.is_complete}"
             )
-            if container.mounted_indices:
+            if container.mounted_indices and query_sig == self._app._search.query_signature():
                 evicted = self._app._preview.preview_cache.put(
                     container, protect=self._app._preview.active
                 )
@@ -509,11 +509,9 @@ class PrefetchEngine:
                     with contextlib.suppress(Exception):
                         old.remove()
             else:
-                # Loop bailed on user-mount-in-flight (or every mount raised)
-                # before any chunk landed. Caching the empty container would
-                # block the next prefetch attempt for this (parent_id, sig)
-                # via the already-cached short-circuit; instead, drop it so a
-                # later trigger (cursor move, second query) can retry cleanly.
+                # An empty container would block a retry via the already-cached
+                # short-circuit; a stale-signature one can never be served and would
+                # take an LRU slot from a live entry.
                 with contextlib.suppress(Exception):
                     container.remove()
 
