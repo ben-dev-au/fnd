@@ -104,6 +104,10 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
     prime(spec, (m.group(0) for m in tokens))
     if any(word_matches(m.group(0), spec) for m in tokens):
         return True
+    if spec.group_stopwords:
+        _, full = _proximity_tiers([m.group(0) for m in tokens], spec)
+        if any(index_token(tokens[i].group(0)) in spec.group_stopwords for i in full):
+            return True
     return bool(phrase_char_spans(text, spec) or _joined_runs([tokens], [set()], spec)[0])
 
 
@@ -209,6 +213,8 @@ def match_word_spans_multi(
     preview baker (the markdown widget, the flat/hybrid prototypes) and the
     export path routes through here, so the full-vs-dim treatment can never
     drift between rendering surfaces."""
+    from fnd.matching import match_color
+
     if spec.is_empty:
         return [[] for _ in segments]
     per_segment = [list(DOC_WORD_RE.finditer(s)) if s else [] for s in segments]
@@ -227,7 +233,10 @@ def match_word_spans_multi(
         for local, m in enumerate(tokens):
             ti = base + local
             dim = ti in members and ti not in full
-            for offset_start, offset_end, style in word_highlight_runs(m.group(0), spec, dim=dim):
+            word_runs = word_highlight_runs(m.group(0), spec, dim=dim)
+            if not word_runs and ti in full and index_token(m.group(0)) in spec.group_stopwords:
+                word_runs = [(0, len(m.group(0)), match_style(match_color(m.group(0), spec)))]
+            for offset_start, offset_end, style in word_runs:
                 runs.append((m.start() + offset_start, m.start() + offset_end, style))
                 hit.add(local)
         out.append(runs)
