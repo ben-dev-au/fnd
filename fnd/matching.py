@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from itertools import pairwise
@@ -205,6 +205,70 @@ def _mark_quoted_stopwords(query: str) -> str:
         return " "
 
     return _QUOTED_PHRASE.sub(mark, query.replace(_STOPWORD_MARK, " "))
+
+
+def _body_tokens(tokens: Iterable[str]) -> Iterator[tuple[int, str]]:
+    """``(index, cleaned)`` for each token that is a body term: not under ``NOT``,
+    ``-`` or a field group, and not an operator. ``cleaned`` keeps ``~N``/``^N``."""
+    negate_next = False
+    skip_depth = 0  # >0 while inside a skipped NOT-/-/field-scoped group
+    for index, tok in enumerate(tokens):
+        if skip_depth > 0:
+            skip_depth = max(0, skip_depth + tok.count("(") - tok.count(")"))
+            continue
+        if tok == "NOT":
+            negate_next = True
+            continue
+        if tok in _BOOL_KEYWORDS:
+            continue
+        head = tok.lstrip("(")  # `(-x)`: leading parens open an ordinary group
+        negated = negate_next or head.startswith("-")
+        opened = tok if negate_next else head
+        negate_next = False
+        cleaned = tok.lstrip("+-").strip("()'\"")
+        is_field = bool(_FIELD_QUALIFIER_RE.match(cleaned))
+        if opened.count("(") > opened.count(")") and (negated or is_field):
+            skip_depth = opened.count("(") - opened.count(")")
+            continue
+        if cleaned and cleaned != _QUOTE_MARK and not is_field and not negated:
+            yield index, cleaned
+
+
+#: Stands in for a quoted span :func:`_drop_excluded_quotes` removed: still an
+#: operand to a ``NOT`` before it, a term of nothing.
+_QUOTE_MARK = "\x01"
+_SLOP_SUFFIX = re.compile(r"~\d+")
+_QUOTE_MARK_INDEX = re.compile(rf"{_QUOTE_MARK}(\d+){_QUOTE_MARK}")
+
+
+def _drop_excluded_quotes(query: str) -> str:
+    """``query`` with each quoted phrase that ``NOT``, ``-`` or a field group keeps
+    out of the body replaced by :data:`_QUOTE_MARK`, its ``~N`` with it."""
+    spans: list[tuple[int, int]] = []
+    for span in literal_spans(query):
+        if span.kind == "phrase":
+            slop = _SLOP_SUFFIX.match(query, span.end)
+            spans.append((span.start, slop.end() if slop else span.end))
+    if not spans:
+        return query
+    marked, last = [], 0
+    for i, (start, end) in enumerate(spans):
+        marked.append(f"{query[last:start]}{_QUOTE_MARK}{i}{_QUOTE_MARK}")
+        last = end
+    marked.append(query[last:])
+    tokens = map_outside("".join(marked), lambda s: _NOT_GLUED.sub(r"\1 NOT ", s), kinds={"regex"})
+    kept = {
+        int(m.group(1))
+        for _, cleaned in _body_tokens(tokens.split())
+        for m in _QUOTE_MARK_INDEX.finditer(cleaned)
+    }
+    out, last = [], 0
+    for i, (start, end) in enumerate(spans):
+        out.append(query[last:start])
+        out.append(query[start:end] if i in kept else _QUOTE_MARK)
+        last = end
+    out.append(query[last:])
+    return "".join(out)
 
 
 #: The most edits automatic fuzzy matching allows, in search and highlighting
@@ -458,8 +522,9 @@ class MatchSpec:
         # Globs and regexes match folded index tokens, so fold their accents too.
         query = fold(query)
         expanded_query = map_outside(query, _expand_proximity_aliases, kinds={"regex"})
-        # A quoted field value (``title:"a b"``) filters; it is no body phrase.
-        expanded_query = _QUOTED_FIELD_VALUE.sub(" ", expanded_query)
+        # A quoted field value (``title:"a b"``) filters; it is no body phrase, but
+        # stays an operand so a ``NOT`` before it does not reach the next term.
+        expanded_query = _drop_excluded_quotes(_QUOTED_FIELD_VALUE.sub(_QUOTE_MARK, expanded_query))
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
         for pm in _PROX_PHRASE.finditer(expanded_query):
@@ -538,33 +603,8 @@ class MatchSpec:
         free_keys: set[str] = set()
         free_words: list[str] = []
         quoted_stopwords: list[str] = []
-        negate_next = False
-        skip_depth = 0  # >0 while inside a skipped NOT-/-/field-scoped group
-        for tok_index, tok in enumerate(loose_query.split()):
+        for tok_index, cleaned in _body_tokens(loose_query.split()):
             is_free = tok_index < free_token_count
-            if skip_depth > 0:  # inside a skipped group: track until it closes
-                skip_depth = max(0, skip_depth + tok.count("(") - tok.count(")"))
-                continue
-            if tok == "NOT":  # excludes the following token or group
-                negate_next = True
-                continue
-            if tok in _BOOL_KEYWORDS:  # AND / OR: structure, not a highlight term
-                continue
-            head = tok.lstrip("(")  # `(-x)`: leading parens open an ordinary group
-            negated = negate_next or head.startswith("-")
-            opened = tok if negate_next else head
-            negate_next = False
-            # Strip surrounding structure only; ``~N`` / ``^boost`` stay on the
-            # token so the explicit-fuzzy pass below can still read them.
-            cleaned = tok.lstrip("+-").strip("()'\"")
-            is_field = bool(_FIELD_QUALIFIER_RE.match(cleaned))
-            # An open ``NOT (…)`` / ``-(…)`` / ``field:(…)`` group, none of its
-            # contents are body highlight terms; skip until it closes.
-            if opened.count("(") > opened.count(")") and (negated or is_field):
-                skip_depth = opened.count("(") - opened.count(")")
-                continue
-            if not cleaned or is_field or negated:
-                continue
             # Classify against a modifier-free key so a boosted structured token
             # (``discoun*^2``, ``/crypt.*/^2``) is still recognised as wildcard/
             # regex; the plain term keeps ``~N`` for the fuzzy pass.

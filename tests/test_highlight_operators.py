@@ -192,6 +192,50 @@ def test_field_group_value_is_not_highlighted() -> None:
     assert not word_matches("purse", spec)
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        'crypto NOT "wallet purse"~4',
+        'crypto -"wallet purse"~4',
+        "crypto NOT {4}wallet purse",
+        "crypto -{4}wallet purse",
+        'crypto NOT (x "wallet purse"~4)',
+        "crypto -(x {3}wallet purse)",
+        'crypto title:(x "wallet purse"~4)',
+        'crypto NOT "wallet purse"',
+        'crypto -"wallet purse"',
+        'NOT "wallet" crypto',
+        '-"wallet" crypto',
+        'crypto NOT (x "wallet")',
+    ],
+)
+def test_an_excluded_quote_is_not_highlighted(query: str) -> None:
+    """A quoted phrase or proximity group under NOT, `-` or a field group highlights nothing."""
+    spec = MatchSpec.from_query(query)
+    assert word_matches("crypto", spec)
+    assert not word_matches("wallet", spec)
+    assert not word_matches("purse", spec)
+    assert spec.phrases == ()
+    assert spec.proximity_groups == ()
+
+
+@pytest.mark.parametrize(
+    "query", ['NOT title:"wallet purse" crypto', '"x y"1 NOT "wallet purse" crypto']
+)
+def test_an_excluded_quote_leaves_its_neighbours_alone(query: str) -> None:
+    spec = MatchSpec.from_query(query)
+    assert word_matches("crypto", spec)
+    assert not word_matches("wallet", spec)
+    assert ("wallet", "purs") not in spec.phrases
+
+
+def test_a_quote_beside_an_excluded_one_still_highlights() -> None:
+    spec = MatchSpec.from_query('NOT "wallet" "purse lid"~3 "cross entropy"')
+    assert not word_matches("wallet", spec)
+    assert spec.proximity_groups == ((("purs", "lid"), 3),)
+    assert spec.phrases == (("cross", "entropi"),)
+
+
 def test_regex_metacharacters_are_not_corrupted() -> None:
     """A `/regex/` is kept verbatim: lowercasing would flip `\\D`→`\\d` etc.
     and matched case-insensitively against the (lowercased) doc word."""
