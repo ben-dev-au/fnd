@@ -62,7 +62,8 @@ _HL_GLOB = re.compile(r"[*?]")
 # highlight terms or consume a colour slot.
 _BOOL_KEYWORDS = frozenset({"AND", "OR", "NOT"})
 # ``(NOT x)`` / ``NOT(x)``: split off the parens so ``NOT`` is a token of its own.
-_NOT_GLUED = re.compile(r"(?<!\w)(\(*)NOT(?=\(|\s|$)")
+# The search splits a token only at space and parens, so ``DO-NOT`` is left alone.
+_NOT_GLUED = re.compile(r"(?<![^\s()])(\(*)NOT(?=\(|\s|$)")
 # A field qualifier (``kind:pdf``, ``c:notes``, ``title:x``) is a filter, not a
 # body term; its value must not highlight or spend a colour slot.
 _FIELD_QUALIFIER_RE = re.compile(r"^[A-Za-z_]\w*:")
@@ -475,7 +476,11 @@ class MatchSpec:
         # their words re-supplied via ``prox_words`` below): identical handling
         # to a typed ``"a b"~N``, and the alias's ``{N}`` digits never leak into
         # term/colour parsing.
-        loose_query = _NOT_GLUED.sub(r"\1 NOT ", _mark_quoted_stopwords(expanded_query))
+        loose_query = map_outside(
+            _mark_quoted_stopwords(expanded_query),
+            lambda s: _NOT_GLUED.sub(r"\1 NOT ", s),
+            kinds={"regex"},
+        )
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
         # fold it back into the loose terms, otherwise it's stripped above and
         # never highlights, despite the search surfacing it. "Single word" means a
