@@ -241,11 +241,15 @@ class _Compiler:
 
     def _fuzzy(self, n: Fuzzy) -> Query:
         from fnd.matching import auto_fuzzy_distance
-        from fnd.query_resolvers import fuzzy_variants, term_or_query
+        from fnd.query_resolvers import fielded_or_query, fuzzy_variants, typed_fuzzy_words
 
         stem = index_token(n.term)
         dist = n.distance if n.distance is not None else auto_fuzzy_distance(stem)
-        q = term_or_query(self._schema, fuzzy_variants(self._s, stem, dist, front=True))
+        stems = fuzzy_variants(self._s, stem, dist, front=True)
+        words = typed_fuzzy_words(self._s, n.term, dist, stems)
+        q = fielded_or_query(
+            self._schema, [(F_BODY, s) for s in stems] + [(F_WORDS, w) for w in words]
+        )
         return q if q is not None else Query.empty_query()
 
     def _ranked_pattern(self, pattern: str, *, glob: bool) -> Query:
