@@ -61,6 +61,9 @@ _HL_GLOB = re.compile(r"[*?]")
 # Boolean operators are query structure, not content: they must never become
 # highlight terms or consume a colour slot.
 _BOOL_KEYWORDS = frozenset({"AND", "OR", "NOT"})
+# ``(NOT x)`` / ``NOT(x)``: split off the parens so ``NOT`` is a token of its own.
+# The search splits a token only at space and parens, so ``DO-NOT`` is left alone.
+_NOT_GLUED = re.compile(r"(?<![^\s()])(\(*)NOT(?=\(|\s|$)")
 # A field qualifier (``kind:pdf``, ``c:notes``, ``title:x``) is a filter, not a
 # body term; its value must not highlight or spend a colour slot.
 _FIELD_QUALIFIER_RE = re.compile(r"^[A-Za-z_]\w*:")
@@ -180,9 +183,28 @@ def _phrase_word_lists(query: str) -> list[list[str]]:
     return out
 
 
-def _strip_quoted_spans(query: str) -> str:
-    """Query with quoted-phrase contents removed: leaves only loose terms."""
-    return _QUOTED_PHRASE.sub(" ", query)
+#: Prefixes a quoted stopword left in place by :func:`_mark_quoted_stopwords`.
+_STOPWORD_MARK = "\x00"
+
+
+def _is_stopword_word(quoted: str) -> bool:
+    """Whether ``quoted`` is a single word that is a stopword (punctuation ignored)."""
+    words = DOC_WORD_RE.findall(quoted)
+    return len(words) == 1 and words[0].lower() in STOPWORDS
+
+
+def _mark_quoted_stopwords(query: str) -> str:
+    """``query`` minus quoted spans, except a quoted stopword stays in place as a marked stem.
+
+    As a bare term it would be dropped or read as the operator (`OR`); in place,
+    NOT, `-` and field groups still scope it."""
+
+    def mark(m: re.Match[str]) -> str:
+        if _is_stopword_word(m.group(1)):
+            return f"{_STOPWORD_MARK}{index_token(DOC_WORD_RE.findall(m.group(1))[0])} "
+        return " "
+
+    return _QUOTED_PHRASE.sub(mark, query.replace(_STOPWORD_MARK, " "))
 
 
 #: The most edits automatic fuzzy matching allows, in search and highlighting
@@ -375,6 +397,9 @@ class MatchSpec:
     # ``replication`` of ``{5}data replication OR replication``). Retrieval
     # matches those unconditionally, so they never dim. Empty without groups.
     unconstrained_terms: frozenset[str] = field(default_factory=frozenset)
+    # Group members that are stopwords: outside ``exact_stems`` (never a loose term),
+    # painted only inside a qualifying window (see fnd.render.match_word_spans_multi).
+    group_stopwords: frozenset[str] = field(default_factory=frozenset)
     # Stems typed with ``~N``, whose fuzzy may change the first letter (fuzzy_reaches).
     explicit_fuzzy: frozenset[str] = field(default_factory=frozenset)
     # The stems search matched for each wildcard word of a phrase or proximity group
@@ -429,7 +454,7 @@ class MatchSpec:
             members, group_words = _proximity_members(pm.group(1))
             if _is_proximity_group(pm):
                 proximity_groups.append((tuple(members), int(pm.group(2))))
-                prox_words.extend(group_words)
+                prox_words.extend(w.lower() if w in _BOOL_KEYWORDS else w for w in group_words)
 
         # Quoted phrases are matched as contiguous spans; their words are
         # kept out of the loose (document-wide) term set, so only the
@@ -451,7 +476,11 @@ class MatchSpec:
         # their words re-supplied via ``prox_words`` below): identical handling
         # to a typed ``"a b"~N``, and the alias's ``{N}`` digits never leak into
         # term/colour parsing.
-        loose_query = _strip_quoted_spans(expanded_query)
+        loose_query = map_outside(
+            _mark_quoted_stopwords(expanded_query),
+            lambda s: _NOT_GLUED.sub(r"\1 NOT ", s),
+            kinds={"regex"},
+        )
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
         # fold it back into the loose terms, otherwise it's stripped above and
         # never highlights, despite the search surfacing it. "Single word" means a
@@ -469,6 +498,7 @@ class MatchSpec:
             for m in _QUOTED_PHRASE.finditer(single_quoted_src)
             if (stripped := m.group(1).strip()) and len(DOC_WORD_RE.findall(stripped)) == 1
         ]
+        single_quoted = [w for w in single_quoted if not _is_stopword_word(w)]
         if single_quoted:
             loose_query = f"{loose_query} {' '.join(single_quoted)}".strip()
         # Fold proximity-group words into the loose run so they flow through the
@@ -491,9 +521,11 @@ class MatchSpec:
         wildcards: list[str] = []
         regexes: list[str] = []
         plain_tokens: list[str] = []
+        free_plain_tokens: list[str] = []
         ordered_tokens: list[tuple[str, str]] = []  # (kind, key) in query order
         free_keys: set[str] = set()
         free_words: list[str] = []
+        quoted_stopwords: list[str] = []
         negate_next = False
         skip_depth = 0  # >0 while inside a skipped NOT-/-/field-scoped group
         for tok_index, tok in enumerate(loose_query.split()):
@@ -506,7 +538,9 @@ class MatchSpec:
                 continue
             if tok in _BOOL_KEYWORDS:  # AND / OR: structure, not a highlight term
                 continue
-            negated = negate_next or tok.startswith("-")
+            head = tok.lstrip("(")  # `(-x)`: leading parens open an ordinary group
+            negated = negate_next or head.startswith("-")
+            opened = tok if negate_next else head
             negate_next = False
             # Strip surrounding structure only; ``~N`` / ``^boost`` stay on the
             # token so the explicit-fuzzy pass below can still read them.
@@ -514,8 +548,8 @@ class MatchSpec:
             is_field = bool(_FIELD_QUALIFIER_RE.match(cleaned))
             # An open ``NOT (…)`` / ``-(…)`` / ``field:(…)`` group, none of its
             # contents are body highlight terms; skip until it closes.
-            if tok.count("(") > tok.count(")") and (negated or is_field):
-                skip_depth = tok.count("(") - tok.count(")")
+            if opened.count("(") > opened.count(")") and (negated or is_field):
+                skip_depth = opened.count("(") - opened.count(")")
                 continue
             if not cleaned or is_field or negated:
                 continue
@@ -523,6 +557,9 @@ class MatchSpec:
             # (``discoun*^2``, ``/crypt.*/^2``) is still recognised as wildcard/
             # regex; the plain term keeps ``~N`` for the fuzzy pass.
             key = re.sub(r"(?:~\d*|\^[\d.]+)+$", "", cleaned)
+            if key.startswith(_STOPWORD_MARK):
+                quoted_stopwords.append(key[len(_STOPWORD_MARK) :])
+                continue
             rm = _HL_REGEX.match(key)
             if rm:
                 # Keep the pattern verbatim: lowercasing would corrupt syntax
@@ -537,9 +574,12 @@ class MatchSpec:
                     free_keys.add(key.lower())
             else:
                 plain_tokens.append(cleaned)
+                if is_free:
+                    free_plain_tokens.append(cleaned)
                 ordered_tokens.append(("plain", key))
                 if is_free:
                     free_words.extend(DOC_WORD_RE.findall(_MODIFIER_RE.sub(" ", key)))
+        phrases += tuple((s,) for s in dict.fromkeys(quoted_stopwords))
         loose_query = " ".join(plain_tokens)
         free_keys.update(index_token(w) for w in free_words)
         # Modifier-free view for plain terms / colour slots / synonyms; the raw
@@ -552,10 +592,13 @@ class MatchSpec:
         # bigram that pairs a stopword with a content word as an implicit
         # highlight phrase ("defence in", "in depth"); overlapping bigrams also
         # cover the full run. Stopword-only pairs are skipped so bare function
-        # words never light up.
+        # words never light up. Only the free run pairs: a proximity group's
+        # stopword paints through its window instead.
+        group_stopwords = frozenset(index_token(w) for w in prox_words if w.lower() in STOPWORDS)
         loose_words = _terms_from_query(bare_query, keep_stopwords=True)
+        free_run = _MODIFIER_RE.sub(" ", " ".join(free_plain_tokens))
         pair_phrases: list[tuple[str, ...]] = []
-        for a, b in pairwise(loose_words):
+        for a, b in pairwise(_terms_from_query(free_run, keep_stopwords=True)):
             a_stop, b_stop = a.lower() in STOPWORDS, b.lower() in STOPWORDS
             if (a_stop or b_stop) and not (a_stop and b_stop):
                 pair_phrases.append((index_token(a), index_token(b)))
@@ -613,14 +656,14 @@ class MatchSpec:
         # e.g. `"defence in depth" OR diverse` → phrase yellow, diverse cyan.
         # The sentinel never matches a word in ``match_color`` (it ignores the
         # "phrase" kind); it only occupies the index.
-        if multicolour and quoted_word_lists:
+        if multicolour and (quoted_word_lists or quoted_stopwords):
             order.append(("phrase", "", 0))
         for kind, key in ordered_tokens if multicolour else []:
             if kind == "plain":
                 for w in DOC_WORD_RE.findall(_MODIFIER_RE.sub(" ", key)):
-                    if w.lower() in STOPWORDS:
-                        continue
                     st = index_token(w)
+                    if w.lower() in STOPWORDS and st not in group_stopwords:
+                        continue
                     if ("term", st) in seen:
                         continue
                     seen.add(("term", st))
@@ -638,6 +681,7 @@ class MatchSpec:
             order=tuple(order),
             proximity_groups=tuple(proximity_groups),
             unconstrained_terms=frozenset(free_keys) if proximity_groups else frozenset(),
+            group_stopwords=group_stopwords,
             explicit_fuzzy=frozenset(explicit_pairs),
         )
 

@@ -156,6 +156,33 @@ def test_negated_group_terms_are_not_highlighted() -> None:
     assert word_matches("loss", s2)
 
 
+@pytest.mark.parametrize(
+    "query",
+    ["java (NOT wallet)", "java (-wallet)", "java NOT(wallet)", "java OR (NOT wallet)"],
+)
+def test_a_negation_glued_to_a_paren_is_not_highlighted(query: str) -> None:
+    """The search negates `(NOT x)` / `(-x)`, so the highlighter must too."""
+    spec = MatchSpec.from_query(query)
+    assert word_matches("java", spec)
+    assert not word_matches("wallet", spec)
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["java DO-NOT wallet", "java x-NOT wallet", "java C#.NOT wallet", "java +NOT wallet"],
+)
+def test_a_not_inside_a_word_negates_nothing(query: str) -> None:
+    """The search only splits a token at space and parens, so `DO-NOT` is one word."""
+    spec = MatchSpec.from_query(query)
+    assert word_matches("wallet", spec)
+
+
+def test_a_regex_starting_with_not_still_highlights() -> None:
+    spec = MatchSpec.from_query("/NOT(ice|ed)/ java")
+    assert word_matches("notice", spec)
+    assert word_matches("noted", spec)
+
+
 def test_field_group_value_is_not_highlighted() -> None:
     """A scoped field group (`title:(a OR b)`) is a filter; its values must not
     highlight in the body or consume a colour slot, even split across tokens."""

@@ -29,7 +29,22 @@ from fnd.render import (
 from fnd.synonyms import load_default_synonyms
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 
-QUERIES = ("nameof", "trackname", "customercount", "notfound", "viewmodel", "dropdown", "footer")
+QUERIES = (
+    "nameof",
+    "trackname",
+    "customercount",
+    "notfound",
+    "viewmodel",
+    "dropdown",
+    "footer",
+    'footer "OR"',
+    'footer "or,"',
+    'NOT "or"',
+    'footer (NOT "or")',
+    'heading_path:(choice "or")',
+    "{3} or the",
+    '{10}footer "OR"',
+)
 
 
 @pytest.fixture
@@ -47,6 +62,8 @@ def index(tmp_path: Path, tmp_index_dir: Path) -> Path:
         "shown": "Bind [view.model](https://x.io/docs) first.",
         "drop": "A drop-down picks one.",
         "folder": "Put it in a folder.",
+        "choice": "Pick red or blue.",
+        "pair": "Take this one or the other, and the footer is near here or there.",
     }
     body = "\n\n".join(f"## {name}\n\n{text}" for name, text in sections.items())
     (notes / "sheet.md").write_text(body, encoding="utf-8")
