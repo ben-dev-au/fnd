@@ -35,6 +35,7 @@ from fnd.tui.ui_text import PlainTree
 from fnd.tui.widgets.arrow_expansion import HomeToFirstRow
 from fnd.tui.widgets.clear_bar import focus_clear_bar
 from fnd.tui.widgets.state_marker import StateMarkerLabel
+from fnd.tui.widgets.tree_rows import line_of
 
 _FULL = "●"
 _PARTIAL = "◐"
@@ -670,7 +671,6 @@ class ToggleTree(HomeToFirstRow, StateMarkerLabel, PlainTree[dict[str, Any]]):
             self.post_message(self.NavigatedOut(self))
         else:
             # On a leaf: collapse toward the parent group, standard tree feel.
-            for line, tl in enumerate(self._tree_lines):
-                if tl.node is node.parent:
-                    self.cursor_line = line
-                    break
+            line = line_of(self, node.parent)
+            if line is not None:
+                self.cursor_line = line

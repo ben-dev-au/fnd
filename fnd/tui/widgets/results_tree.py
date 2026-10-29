@@ -221,15 +221,13 @@ class ResultsTree(
         # Walk in the move direction past any expanded parents.
         current = int(self.cursor_line)
         direction = 1 if clamped > current else (-1 if clamped < current else 1)
-        last = max(0, len(self._tree_lines) - 1)
+        last = max(0, self.last_line)
         target = clamped
         safety = 0
         while safety < 64:
-            try:
-                line = self._tree_lines[target]
-            except IndexError:
+            node = self.get_node_at_line(target)
+            if node is None:
                 return clamped
-            node = line.node
             if node is self.root:
                 return target
             if not (node.children and node.is_expanded):

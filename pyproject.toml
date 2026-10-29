@@ -40,6 +40,9 @@ dependencies = [
     # directly here because fnd/extract/{epub,web,odf}.py import it.
     "lxml~=6.1.2",
     "markdown-it-py~=4.2.0",
+    # fnd imports private Textual modules with no public route: the markdown
+    # blocks (`widgets._markdown`), `_compositor`, `_animator` and
+    # `widgets._option_list`; re-test the preview and sidebar on a minor bump.
     "textual~=8.2.8",
     "rich~=15.0.0",
     "typer~=0.27.3",

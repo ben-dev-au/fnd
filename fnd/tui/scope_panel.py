@@ -31,6 +31,7 @@ from fnd.tui.results_labels import (
 from fnd.tui.ui_text import set_border_title
 from fnd.tui.widgets.clear_bar import clear_label
 from fnd.tui.widgets.pane_search import opened_by_search, prune
+from fnd.tui.widgets.tree_rows import shown_rows
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -1501,7 +1502,7 @@ class ScopeController:
 
     def _showing_line(self, tree: Tree[dict[str, object]], keep: tuple[str, ...]) -> int:
         # The live tree only: ``Tree.clear`` leaves dead nodes in ``_tree_nodes``.
-        showing = {id(row.node): line for line, row in enumerate(tree._tree_lines)}
+        showing = {id(node): line for line, node in shown_rows(tree)}
         pending: list[Any] = list(tree.root.children)
         while pending:
             node = pending.pop()
