@@ -101,7 +101,16 @@ def test_quoted_stopword_with_punctuation_paints(query: str) -> None:
 
 @pytest.mark.parametrize(
     "query",
-    ['java NOT "or"', 'java -"or"', 'NOT "or"', 'NOT (java "or")', 'title:(java "or")'],
+    [
+        'java NOT "or"',
+        'java -"or"',
+        'NOT "or"',
+        'NOT (java "or")',
+        'title:(java "or")',
+        'java (NOT "or")',
+        'java (-"or")',
+        'java OR (NOT "or")',
+    ],
 )
 def test_negated_or_field_scoped_quoted_stopword_does_not_paint(query: str) -> None:
     spec = MatchSpec.from_query(query, auto_fuzzy=False)

@@ -61,6 +61,8 @@ _HL_GLOB = re.compile(r"[*?]")
 # Boolean operators are query structure, not content: they must never become
 # highlight terms or consume a colour slot.
 _BOOL_KEYWORDS = frozenset({"AND", "OR", "NOT"})
+# ``(NOT x)`` / ``NOT(x)``: split off the parens so ``NOT`` is a token of its own.
+_NOT_GLUED = re.compile(r"(?<!\w)(\(*)NOT(?=\(|\s|$)")
 # A field qualifier (``kind:pdf``, ``c:notes``, ``title:x``) is a filter, not a
 # body term; its value must not highlight or spend a colour slot.
 _FIELD_QUALIFIER_RE = re.compile(r"^[A-Za-z_]\w*:")
@@ -473,7 +475,7 @@ class MatchSpec:
         # their words re-supplied via ``prox_words`` below): identical handling
         # to a typed ``"a b"~N``, and the alias's ``{N}`` digits never leak into
         # term/colour parsing.
-        loose_query = _mark_quoted_stopwords(expanded_query)
+        loose_query = _NOT_GLUED.sub(r"\1 NOT ", _mark_quoted_stopwords(expanded_query))
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
         # fold it back into the loose terms, otherwise it's stripped above and
         # never highlights, despite the search surfacing it. "Single word" means a
@@ -531,7 +533,9 @@ class MatchSpec:
                 continue
             if tok in _BOOL_KEYWORDS:  # AND / OR: structure, not a highlight term
                 continue
-            negated = negate_next or tok.startswith("-")
+            head = tok.lstrip("(")  # `(-x)`: leading parens open an ordinary group
+            negated = negate_next or head.startswith("-")
+            opened = tok if negate_next else head
             negate_next = False
             # Strip surrounding structure only; ``~N`` / ``^boost`` stay on the
             # token so the explicit-fuzzy pass below can still read them.
@@ -539,8 +543,8 @@ class MatchSpec:
             is_field = bool(_FIELD_QUALIFIER_RE.match(cleaned))
             # An open ``NOT (…)`` / ``-(…)`` / ``field:(…)`` group, none of its
             # contents are body highlight terms; skip until it closes.
-            if tok.count("(") > tok.count(")") and (negated or is_field):
-                skip_depth = tok.count("(") - tok.count(")")
+            if opened.count("(") > opened.count(")") and (negated or is_field):
+                skip_depth = opened.count("(") - opened.count(")")
                 continue
             if not cleaned or is_field or negated:
                 continue

@@ -40,6 +40,7 @@ QUERIES = (
     'footer "OR"',
     'footer "or,"',
     'NOT "or"',
+    'footer (NOT "or")',
     'heading_path:(choice "or")',
     "{3} or the",
     '{10}footer "OR"',
