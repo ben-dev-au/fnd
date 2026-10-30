@@ -211,7 +211,9 @@ class WindowsLauncher:
         return self._start(url)
 
     def reveal(self, path: Path) -> None:
-        # explorer returns exit code 1 even on success; fire-and-forget.
+        # explorer exits 1 even on success; fire-and-forget. This split form
+        # selects the file on Windows 11 (spaces, commas, non-ASCII, UNC); the
+        # joined `/select,<path>` opens Documents once list2cmdline quotes it whole.
         self._spawn(["explorer", "/select,", str(path)])
 
     def _resolve(self, name: str) -> str | None:
