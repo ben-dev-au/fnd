@@ -218,14 +218,67 @@ def test_a_runaway_script_times_out_and_falls_back_to_static_text(
     assert time.monotonic() - started < 6
 
 
+def _page_md(tmp_path: Path, body: str) -> str:
+    p = tmp_path / "page.html"
+    p.write_text(f"<html><body><h1>Doc</h1>{body}</body></html>", encoding="utf-8")
+    return "\n\n".join(c.body_md for c in extract(p))
+
+
+_COMPUTED = (
+    "var NOTES = { intro: 'Every retry waits twice as long as the last.', "
+    "points: ['alpha', 'beta'].map(function (w) { return w + ' is one backoff step here'; }) };"
+)
+
+
+def test_a_later_render_helper_does_not_lose_the_pages_data(tmp_path: Path) -> None:
+    helper = "function draw() { var h = ['<p>', NOTES.intro, '</p>']; return h.join(''); }"
+    md = _page_md(tmp_path, f"<script>{_COMPUTED}{helper}</script>")
+    assert "alpha is one backoff step here" in md
+
+
+def test_data_written_to_window_is_kept(tmp_path: Path) -> None:
+    script = _COMPUTED.replace("var NOTES =", "window.NOTES =")
+    assert "alpha is one backoff step here" in _page_md(tmp_path, f"<script>{script}</script>")
+
+
+def test_a_page_that_reads_its_own_data_island_evaluates(tmp_path: Path) -> None:
+    island = '<script type="application/json" id="data">{"words": ["alpha", "beta"]}</script>'
+    script = (
+        "var RAW = JSON.parse(document.getElementById('data').textContent);"
+        "var NOTES = { intro: 'Every retry waits twice as long as the last.', "
+        "points: RAW.words.map(function (w) { return w + ' is one backoff step here'; }) };"
+    )
+    assert "beta is one backoff step here" in _page_md(
+        tmp_path, f"{island}<script>{script}</script>"
+    )
+
+
+def test_a_throw_after_the_data_is_built_keeps_the_data(tmp_path: Path) -> None:
+    later = "var LATER = { note: ['never reached by the script'] };"
+    md = _page_md(tmp_path, f"<script>{_COMPUTED} undefinedFunction(); {later}</script>")
+    assert "alpha is one backoff step here" in md
+
+
 def test_many_runaway_scripts_share_one_budget_per_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(_js_eval, "TIMEOUT_SECONDS", 1)
-    loop = "var FLOWS = {}; FLOWS.demo = { steps: [{ say: 'Narration.', views: [{ type: 'rows', items: [1].map(function () { while (true) {} }) }] }] };"
+    runs: list[float] = []
+    real = _js_eval._run
+
+    def counted(cmd: list[str], cwd: str, timeout: float) -> bytes:
+        runs.append(timeout)
+        return real(cmd, cwd, timeout)
+
+    monkeypatch.setattr(_js_eval, "_run", counted)
+    loop = (
+        "var FLOWS = {}; FLOWS.demo = { steps: [{ say: 'Static narration still indexes.', "
+        "views: [{ type: 'rows', items: [1].map(function () { while (true) {} }) }] }] };"
+    )
     scripts = "".join(f"<script>{loop}</script>" for _ in range(6))
     p = tmp_path / "page.html"
     p.write_text(f"<html><body><h1>Doc</h1>{scripts}</body></html>", encoding="utf-8")
     started = time.monotonic()
     list(extract(p))
+    assert runs, "the evaluator never started, so the budget was not exercised"
     assert time.monotonic() - started < 4

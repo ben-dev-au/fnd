@@ -130,3 +130,121 @@ def test_external_scripts_and_pages_without_script_data_are_unchanged(tmp_path: 
     )
     chunks = list(extract(p))
     assert [c.heading_path for c in chunks] == ["Doc"]
+
+
+def _md(chunks: list[Chunk]) -> str:
+    return "\n\n".join(c.body_md for c in chunks)
+
+
+def test_decimal_negative_and_exponent_numbers_are_data(tmp_path: Path) -> None:
+    script = "var R = [{ name: 'Profit', delta: -3.5, ratio: 0.125, big: 1e5 }, { name: 'Loss', delta: 2 }];"
+    md = _md(_chunks(tmp_path, script))
+    assert "| Profit | -3.5 | 0.125 | 100000.0 |" in md
+
+
+def test_decimals_in_a_json_island_are_data(tmp_path: Path) -> None:
+    p = tmp_path / "page.html"
+    p.write_text(
+        '<html><body><h1>Doc</h1><script type="application/json">'
+        '[{"city": "Harbour", "lat": -33.86}, {"city": "Quay", "lat": 12.5}]'
+        "</script></body></html>",
+        encoding="utf-8",
+    )
+    md = "\n\n".join(c.body_md for c in extract(p))
+    assert "| Harbour | -33.86 |" in md
+
+
+def test_a_commented_out_assignment_does_not_hide_the_data_after_it(tmp_path: Path) -> None:
+    script = (
+        "// cfg.old = [retired]\n"
+        "var DATA = { items: ['Retries wait longer every time.', 'Jitter spreads the retries.'] };"
+    )
+    assert "- Retries wait longer every time." in _md(_chunks(tmp_path, script))  # as data
+
+
+def test_an_assignment_inside_a_string_is_not_data(tmp_path: Path) -> None:
+    from fnd.extract._js_data import parse_assignments
+
+    found = parse_assignments("var s = 'a.b = [1]'; var DATA = { note: 'x' };")
+    assert [(a.base, a.name) for a in found] == [("", "DATA")]
+
+
+def test_a_bare_global_assignment_is_data(tmp_path: Path) -> None:
+    script = "DATA = { items: ['First point about the retries here.', 'Second point about jitter here.'] };"
+    md = _md(_chunks(tmp_path, script))
+    assert "- First point about the retries here." in md
+
+
+def test_an_empty_data_attribute_does_not_claim_the_loose_prose(tmp_path: Path) -> None:
+    p = tmp_path / "page.html"
+    p.write_text(
+        "<html><body><h1>Doc</h1><h2>Unrelated</h2><div data-v-7ba5bd90=''>Widget.</div>"
+        "<script>show('A loose sentence the page shows at runtime.');</script></body></html>",
+        encoding="utf-8",
+    )
+    under = {c.heading_path: c.body for c in extract(p)}
+    assert "A loose sentence" not in under["Doc > Unrelated"]
+    assert "A loose sentence" in under["Doc > Script text"]
+
+
+def test_a_json_island_is_placed_in_the_section_where_it_sits(tmp_path: Path) -> None:
+    island = '{"items": ["Opinion holder is who expresses it.", "Target is what it is about."]}'
+    p = tmp_path / "page.html"
+    p.write_text(
+        "<html><body><h1>Doc</h1>"
+        f'<h2>Parts</h2><div class="quiz"><script type="application/json">{island}</script></div>'
+        "<h2>Later</h2><p>Unrelated section text.</p></body></html>",
+        encoding="utf-8",
+    )
+    under = {c.heading_path: c.body for c in extract(p)}
+    assert "Opinion holder is who expresses it." in under["Doc > Parts"]
+    assert "Doc > Script text" not in under
+
+
+def test_a_large_island_gets_sections_below_the_one_it_sits_in(tmp_path: Path) -> None:
+    notes = ", ".join(
+        f'"Harbour note number {i} about the berths and the tides."' for i in range(80)
+    )
+    marks = notes.replace("Harbour note", "Pier marker")
+    island = f'{{"limits": [{notes}], "markers": [{marks}]}}'
+    p = tmp_path / "page.html"
+    p.write_text(
+        f'<html><body><h1>Doc</h1><h2>Data</h2><div><script type="application/json">{island}'
+        "</script></div></body></html>",
+        encoding="utf-8",
+    )
+    paths = [c.heading_path for c in extract(p)]
+    assert "Doc > Data > Limits" in paths
+    assert "Doc > Data > Markers" in paths
+
+
+def test_literals_inside_functions_that_do_not_run_at_load_are_marked_local() -> None:
+    from fnd.extract._js_data import parse_assignments
+
+    src = """
+    var TOP = [1];
+    if (ready) { var BLOCK = [2]; }
+    (function () { var IIFE = [3]; })();
+    (() => { var ARROW_IIFE = [4]; })();
+    !function () { var BANG = [5]; }();
+    function draw() { var DRAW = [6]; }
+    var cb = function () { var ASSIGNED = [7]; };
+    items.forEach(function (x) { var CALLBACK = [8]; });
+    items.map((x) => { var ARROW_CB = [9]; });
+    class View { render() { var METHOD = [10]; } }
+    (function () { function inner() { var NESTED = [11]; } })();
+    """
+    local = {a.name: a.local for a in parse_assignments(src) if a.name.isupper()}
+    assert local == {
+        **dict.fromkeys(("TOP", "BLOCK", "IIFE", "ARROW_IIFE", "BANG"), False),
+        **dict.fromkeys(("DRAW", "ASSIGNED", "CALLBACK", "ARROW_CB", "METHOD", "NESTED"), True),
+    }
+
+
+def test_a_lead_in_dropped_by_the_budget_does_not_take_earlier_content() -> None:
+    from fnd.extract._script_text import _Renderer  # pyright: ignore[reportPrivateUsage]
+
+    first = "A first paragraph that fits inside the budget."
+    renderer = _Renderer({}, chars=len(first))  # no room left for the "B" lead-in
+    renderer.render({"a": first, "b": ["Another sentence that will not fit at all."]})
+    assert [b.text for b in renderer.blocks] == [first]

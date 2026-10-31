@@ -1,7 +1,7 @@
 """Tolerant reader for the data literals in inline scripts (nothing is executed).
 
-``parse_assignments`` finds ``name = {...}`` / ``X.name = [...]`` literals and
-returns them as Python values. Anything that is not plain data (calls,
+``parse_assignments`` finds ``var name = {...}``, ``name = {...}`` and
+``X.name = [...]`` literals and returns them as Python values. Anything that is not plain data (calls,
 functions, member access) becomes ``OPAQUE`` and the parse carries on, so a
 page's computed cells never hide the literal data around them. Identifiers
 that name an earlier ``var``/``let``/``const`` literal resolve to its value.
@@ -21,16 +21,18 @@ _TOKEN = re.compile(
     (?P<skip>\s+|//[^\n]*|/\*(?:.*?\*/|.*))
   | (?P<str>"(?:[^"\\\n]|\\.)*(?:"|(?=\n)|\Z)|'(?:[^'\\\n]|\\.)*(?:'|(?=\n)|\Z))
   | (?P<tpl>`(?:[^`\\]|\\.)*(?:`|\Z))
+  | (?P<num>-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?![\w$]))
   | (?P<word>[\w$]+)
   | (?P<punct>[{}\[\](),:;])
   | (?P<other>.)
     """,
     re.S | re.X,
 )
-_ASSIGN = re.compile(r"(?:(?<![\w$])(\w+)\.(\w+)|\b(?:var|let|const)\s+(\w+))\s*=\s*[{\[]")
+_ASSIGN = re.compile(
+    r"(?:(?<![\w$])(\w+)\.(\w+)|\b(?:var|let|const)\s+(\w+)|(?<![\w$.])(\w+))\s*=\s*[{\[]"
+)
 # What one script may expand its shared references to: nodes plus one unit per 16 characters.
 _MAX_EXPANSION = 500_000
-_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 _ESCAPE = re.compile(r"\\(?:u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|(.))", re.S)
 _END = frozenset(",]});")
@@ -50,6 +52,7 @@ class Assignment(NamedTuple):
     start: int  # char offsets of the literal in the source
     end: int
     base: str = ""  # the object of ``base.name = ...``; empty for a var/let/const
+    local: bool = False  # inside a function body that does not run as the script loads
 
 
 class _Tok(NamedTuple):
@@ -168,14 +171,16 @@ class _Parser:
         elif t.kind == "tpl":
             self.i += 1
             v = OPAQUE if "${" in t.text else unescape(t.text[1:-1])
+        elif t.kind == "num":
+            self.i += 1
+            v = float(t.text) if any(c in t.text for c in ".eE") else int(t.text)
         elif t.kind == "punct" and t.text == "[":
             v = self._array(depth + 1)
         elif t.kind == "punct" and t.text == "{":
             v = self._object(depth + 1)
         elif t.kind == "word":
             self.i += 1
-            is_call = self._at("(") and not _NUMBER.fullmatch(t.text)
-            v = self._call(t.text, depth + 1) if is_call else self._word(t.text)
+            v = self._call(t.text, depth + 1) if self._at("(") else self._word(t.text)
         else:
             return self._skip_expr()
         nxt = self._peek()
@@ -188,8 +193,6 @@ class _Parser:
         return self._skip_expr()
 
     def _word(self, text: str) -> object:
-        if _NUMBER.fullmatch(text):
-            return float(text) if "." in text else int(text)
         if text in ("true", "false"):
             return text == "true"
         if text in ("null", "undefined"):
@@ -221,7 +224,7 @@ class _Parser:
             before = self.i
             key = unescape(t.text[1:-1]) if t.kind == "str" else t.text
             self.i += 1
-            if t.kind in ("word", "str") and self._at(":"):
+            if t.kind in ("word", "str", "num") and self._at(":"):
                 self.i += 1
                 obj[key] = self.value(depth)
             else:
@@ -247,22 +250,78 @@ def parse_assignments(src: str) -> list[Assignment]:
     """Literal values assigned in ``src``, in source order, outermost only."""
     toks = _tokens(src)
     starts = [t.start for t in toks]
+    local = _function_local(toks)
     env: dict[str, object] = {}
     expansion = _Expansion()
     found: list[Assignment] = []
     last_end = 0
     for m in _ASSIGN.finditer(src):
         literal_at = m.end() - 1
-        if literal_at < last_end:
-            continue
+        at = bisect_left(starts, literal_at)
+        if literal_at < last_end or at == len(toks) or starts[at] != literal_at:
+            continue  # nested in an earlier literal, or inside a comment or a string
         p = _Parser(toks, env, expansion)
-        p.i = bisect_left(starts, literal_at)
+        p.i = at
         value = p.value()
-        end = toks[min(p.i, len(toks)) - 1].end if toks else literal_at
-        base, name = (m.group(1), m.group(2)) if m.group(2) else ("", m.group(3))
+        end = toks[min(p.i, len(toks)) - 1].end
+        base, name = (m.group(1), m.group(2)) if m.group(2) else ("", m.group(3) or m.group(4))
         if not base:
             env[name] = value
             expansion.weight(value)
-        found.append(Assignment(name, value, literal_at, end, base))
+        found.append(Assignment(name, value, literal_at, end, base, local[at]))
         last_end = end
     return found
+
+
+_CONTROL_WORDS = frozenset({"if", "for", "while", "switch", "catch", "with"})
+
+
+def _grouping(toks: list[_Tok], i: int) -> bool:
+    """Whether the ``(`` at ``i`` groups an expression rather than calling something."""
+    prev = toks[i - 1] if i else None
+    return prev is None or not (prev.kind in ("word", "num") or prev.text in (")", "]"))
+
+
+def _invoked_at_load(toks: list[_Tok], i: int) -> bool:
+    """Whether the function whose ``function`` keyword is token ``i`` is an IIFE."""
+    prev = toks[i - 1] if i else None
+    if prev is not None and prev.text in "!+-~":
+        return True
+    return prev is not None and prev.text == "(" and _grouping(toks, i - 1)
+
+
+def _function_local(toks: list[_Tok]) -> list[bool]:
+    """Per token: inside the body of a function that is not invoked as the script loads.
+
+    Such a function (a render helper, a callback, a method) holds scratch values,
+    not page data, and may never run at all.
+    """
+    flags: list[bool] = []
+    braces: list[bool] = []
+    parens: list[int] = []
+    closed = -1  # the opening index of the most recent ``)``
+    pending: bool | None = None  # the next function body's "invoked at load"
+    for i, t in enumerate(toks):
+        inside = braces[-1] if braces else False
+        flags.append(inside)
+        if t.kind == "word" and t.text == "function":
+            pending = _invoked_at_load(toks, i)
+        elif t.text == "(" and t.kind == "punct":
+            parens.append(i)
+        elif t.text == ")" and t.kind == "punct":
+            closed = parens.pop() if parens else -1
+        elif t.text == "{" and t.kind == "punct":
+            prev = toks[i - 1].text if i else ""
+            body = False
+            if prev == ")" and pending is not None:
+                body, pending = not pending, None
+            elif prev == ">" and i > 1 and toks[i - 2].text == "=":  # an arrow function
+                params = toks[i - 3] if i > 2 else None
+                once = params is not None and params.text == ")" and closed > 0
+                body = not (once and toks[closed - 1].text == "(" and _grouping(toks, closed - 1))
+            elif prev == ")" and closed > 0:
+                body = toks[closed - 1].text not in _CONTROL_WORDS  # a method, not a block
+            braces.append(inside or body)
+        elif t.text == "}" and t.kind == "punct" and braces:
+            braces.pop()
+    return flags

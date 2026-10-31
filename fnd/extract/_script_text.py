@@ -2,10 +2,10 @@
 
 Such pages ship empty containers and fill them at runtime from JS data, so the
 DOM walk sees none of it. This reads the scripts' data literals (statically, see
-``_js_data``, or evaluated in a sandbox, see ``_js_eval``) and rebuilds the page's own structure: a program
-listing, then numbered steps, each with its narration, the code it runs, its
-printed output, and the diagram views (chips, partitions, row mappings,
-tables, terminal transcripts) as inline code, lists and tables.
+``_js_data``, or evaluated in a sandbox, see ``_js_eval``) and rebuilds the page's
+own structure: a program listing, then numbered steps, each with its narration,
+the code it runs, its printed output, and the diagram views (chips, partitions,
+row mappings, tables, terminal transcripts) as inline code, lists and tables.
 
 Blocks are keyed by the name of the object they sit in, so the walker can place
 them at the DOM node whose attribute carries the same name (``FLOWS.fs = {...}``
@@ -37,6 +37,7 @@ _MAX_DEPTH = 40
 _MAX_CELL_DEPTH = 12
 _MAX_COVERAGE_CHECKS = 200
 _DATA_TYPES = frozenset({"application/json", "text/json"})
+ISLAND_ATTR = "data-fnd-island"  # marks a JSON island so the walker places its data there
 _CONTROL = re.compile(
     r"\x1b\[[0-9;?]*[\x20-\x2f]*[\x40-\x7e]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff"
     + chr(0xFFFE)
@@ -305,11 +306,12 @@ class _Renderer:
                     and bool(v)
                     and not _is_links(v)  # citations stay with the content they support
                 )
+                before = len(self.blocks)
                 if labelled:
                     self._add(ScriptBlock("h", _humanise(k)))
                 lead = len(self.blocks)
                 self._walk(v, k, tuple(listing) if listing else lines)
-                if labelled and len(self.blocks) == lead:
+                if lead > before and len(self.blocks) == lead:
                     self.blocks.pop()  # a lead-in with nothing under it
             self._listing_lang = outer
 
@@ -635,14 +637,16 @@ def _computed(value: object, depth: int = 0, seen: set[int] | None = None) -> bo
     return any(_computed(v, depth + 1, seen) for v in parts)
 
 
-def _with_computed(src: str, assigned: list[Assignment], timeout: float) -> list[Assignment]:
+def _with_computed(
+    src: str, assigned: list[Assignment], timeout: float, ids: dict[str, str]
+) -> list[Assignment]:
     """Swap in the evaluated value where the static one is incomplete."""
     # A shell costs ~50 ms: only worth it where a script with computed values also holds prose.
-    if not any(_computed(a.value) for a in assigned):
+    if not any(_computed(a.value) and not a.local for a in assigned):
         return assigned
     if not any(_readable(text) for _, text in strings(src)):
         return assigned
-    values = _js_eval.evaluate(src, assigned, timeout)
+    values = _js_eval.evaluate(src, assigned, timeout, ids)
     return [a._replace(value=values.get((a.base, a.name), a.value)) for a in assigned]
 
 
@@ -661,7 +665,8 @@ def _script_blocks(root: HtmlElement) -> dict[str, list[ScriptBlock]]:
     chars, nodes = _MAX_TOTAL_CHARS, _MAX_NODES
     deadline = time.monotonic() + _js_eval.TIMEOUT_SECONDS  # one evaluation budget per file
     render_by = time.monotonic() + _RENDER_SECONDS
-    for el in root.iter("script"):
+    ids = _islands(root)
+    for n, el in enumerate(root.iter("script")):
         src = el.text_content()
         if el.get("src") or len(src) > _MAX_SCRIPT_CHARS:
             continue
@@ -669,10 +674,12 @@ def _script_blocks(root: HtmlElement) -> dict[str, list[ScriptBlock]]:
         if "json" in kind and kind not in _DATA_TYPES:  # JSON-LD, import maps: not page content
             continue
         is_json = kind in _DATA_TYPES
-        if is_json:
-            assigned = [Assignment("", parse_literal(src), 0, len(src))]
+        if is_json:  # an island's data belongs where the island sits in the page
+            key = f"{ISLAND_ATTR} {n}"  # a space: never the name of a JS object
+            el.set(ISLAND_ATTR, key)
+            assigned = [Assignment(key, parse_literal(src), 0, len(src))]
         else:
-            assigned = _with_computed(src, parse_assignments(src), deadline - time.monotonic())
+            assigned = _with_computed(src, parse_assignments(src), deadline - time.monotonic(), ids)
         renderer = _Renderer(
             _kind_labels(assigned), data=is_json, nodes=nodes, chars=chars, deadline=render_by
         )
@@ -696,6 +703,21 @@ def _script_blocks(root: HtmlElement) -> dict[str, list[ScriptBlock]]:
         if chars < 0:
             break
     return _with_loose(out, loose)
+
+
+def _islands(root: HtmlElement) -> dict[str, str]:
+    """Text of the page's non-JS ``<script id=...>`` blocks, which its own code reads by id."""
+    ids: dict[str, str] = {}
+    room = _MAX_SCRIPT_CHARS
+    for el in root.iter("script"):
+        kind, key = el.get("type") or "", el.get("id")
+        if key and kind and "javascript" not in kind and kind != "module":
+            text = el.text_content()
+            room -= len(text)
+            if room < 0:
+                break
+            ids[key] = text
+    return ids
 
 
 def _with_loose(

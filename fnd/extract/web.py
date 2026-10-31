@@ -50,5 +50,5 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     unclaimed = [b for blocks in attach.values() for b in blocks]
     if unclaimed:
         sec.add_heading(2, "Script text")
-        add_blocks(sec, unclaimed, headings=True)
+        add_blocks(sec, unclaimed, level=3)
     yield from sec.finish()

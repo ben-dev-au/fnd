@@ -45,6 +45,11 @@ class HeadingSectioner:
         self._has_content = False
         self._chunks: list[Chunk] = []
 
+    @property
+    def depth(self) -> int:
+        """The level of the innermost open heading (0 before the first)."""
+        return len(self._stack)
+
     def add_heading(self, level: int, text: str) -> None:
         text = text.strip()
         if not text:

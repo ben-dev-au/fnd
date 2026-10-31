@@ -2,8 +2,9 @@
 
 Static reading (``_js_data``) cannot see values a page computes with its own
 helpers (``ROWS.map(function (r) { return chip(r); })``). Where the OS ships a
-shell (macOS: ``jsc``) this runs the page's script up to its last data literal
-against a do-nothing DOM and reads the data objects back as JSON. The shell runs
+shell (macOS: ``jsc``) this runs the page's script against a do-nothing DOM, each
+data literal wrapped so its value is kept where it is built (top level, IIFE or
+``window.X``), and reads the kept values back as JSON. The shell runs
 in a child process under ``sandbox-exec`` (no network, no fork, no file writes,
 no reads of user data), with an empty environment, a CPU and wall-clock limit and
 a streamed output cap. Without the sandbox nothing runs. Any failure returns
@@ -15,7 +16,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 import secrets
 import signal
 import subprocess
@@ -39,10 +39,9 @@ _WRAPPER = (
     'ulimit -t "$0"; "$@" & p=$!; (sleep "$0"; kill -9 $p) >/dev/null 2>&1 & w=$!; '
     "wait $p; s=$?; kill $w >/dev/null 2>&1; exit $s"
 )
-_NEXT_STATEMENT = re.compile(r"[ \t]*;")
-
 _PRELUDE = r"""
-var __print = print;
+var __print = print, __kept = {};
+function __keep(key, value) { __kept[key] = value; return value; }
 (function (g) {
   ["readFile", "writeFile", "read", "readline", "load", "loadString", "run", "runString", "write",
    "printErr", "debug", "quit", "createGlobalObject", "$", "$262", "setTimeout", "setInterval",
@@ -67,13 +66,32 @@ var __stub = (function () {
   });
   return p;
 })();
-var document = __stub, window = __stub, self = __stub, navigator = __stub, location = __stub,
-    localStorage = __stub, sessionStorage = __stub, history = __stub, screen = __stub,
+var window = new Proxy({}, {
+  get: function (t, k) { return k in t ? t[k] : __stub; },
+  set: function (t, k, v) { t[k] = v; return true; }, has: function () { return true; }
+});
+function __element(id) {
+  if (!Object.prototype.hasOwnProperty.call(__ids, id)) return __stub;
+  var text = __ids[id];
+  return new Proxy({}, { get: function (t, k) {
+    return k === "textContent" || k === "innerText" || k === "innerHTML" ? text : __stub;
+  } });
+}
+var document = new Proxy({}, { get: function (t, k) {
+  if (k === "getElementById") return __element;
+  if (k === "querySelector") return function (s) {
+    return typeof s === "string" && /^#[\w-]+$/.test(s) ? __element(s.slice(1)) : __stub;
+  };
+  return __stub;
+} });
+var __storage = { getItem: function () { return null; }, setItem: function () {},
+  removeItem: function () {}, clear: function () {}, key: function () { return null; }, length: 0 };
+var self = window, navigator = __stub, location = __stub,
+    localStorage = __storage, sessionStorage = __storage, history = __stub, screen = __stub,
     IntersectionObserver = __stub, ResizeObserver = __stub, MutationObserver = __stub,
     requestAnimationFrame = __stub, matchMedia = __stub, getComputedStyle = __stub,
     setTimeout = __stub, setInterval = __stub, clearTimeout = __stub, fetch = __stub,
     console = { log: function () {}, warn: function () {}, error: function () {} };
-function __get(fn) { try { return fn(); } catch (e) { return null; } }
 function __dump(o) {
   var chain = [];
   __print("@@MARK@@" + JSON.stringify(o, function (k, v) {
@@ -160,20 +178,24 @@ def _run(cmd: list[str], cwd: str, timeout: float) -> bytes:
     return bytes(buf)
 
 
-def _program(src: str, assigned: list[Assignment], mark: str) -> str:
-    end = max(a.end for a in assigned)
-    if m := _NEXT_STATEMENT.match(src, end):
-        end = m.end()
-    keys = {(a.base, a.name) for a in assigned}
-    bases = {base for base, _ in keys}
-    wanted = ",".join(
-        f'"{base}:{name}": __get(function () {{ return {base + "." + name if base else name}; }})'
-        for base, name in sorted(keys)
-        if base not in ("window", "document", "self") and (base or name not in bases)
-    )
-    return (
-        f"{_PRELUDE.replace('@@MARK@@', mark)}\n{src[:end]}\n;__dump({{{wanted}}});\n{src[end:]}\n"
-    )
+def _program(
+    src: str, assigned: list[Assignment], mark: str, ids: dict[str, str] | None = None
+) -> str:
+    """The page's script with each data literal kept as it is built, then one dump.
+
+    ``FLOWS`` itself is not kept when ``FLOWS.x`` literals are: it would repeat them.
+    ``ids`` is the text of the page's own ``<script id=...>`` islands, for ``getElementById``.
+    """
+    bases = {a.base for a in assigned}
+    for a in sorted(assigned, key=lambda a: a.start, reverse=True):
+        if a.local or (not a.base and a.name in bases):
+            continue
+        key = json.dumps(f"{a.base}:{a.name}")
+        src = f"{src[: a.start]}__keep({key}, {src[a.start : a.end]}){src[a.end :]}"
+    page = json.dumps(src)  # run through eval, so a throw part-way still reaches the dump
+    islands = f"var __ids = {json.dumps(ids or {})};"
+    prelude = _PRELUDE.replace("@@MARK@@", mark)
+    return f"{islands}\n{prelude}\ntry {{ (0, eval)({page}); }} catch (e) {{}}\n__dump(__kept);\n"
 
 
 def _command(jsc: Path, script: Path, timeout: float) -> list[str]:
@@ -183,7 +205,10 @@ def _command(jsc: Path, script: Path, timeout: float) -> list[str]:
 
 
 def evaluate(
-    src: str, assigned: list[Assignment], timeout: float | None = None
+    src: str,
+    assigned: list[Assignment],
+    timeout: float | None = None,
+    ids: dict[str, str] | None = None,
 ) -> dict[tuple[str, str], object]:
     """Evaluated value of each ``base.name`` / ``name`` assignment; empty on any failure."""
     jsc = find_jsc()
@@ -194,7 +219,7 @@ def evaluate(
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp).resolve()
         script = root / "page.js"
-        script.write_text(_program(src, assigned, mark), encoding="utf-8")
+        script.write_text(_program(src, assigned, mark, ids), encoding="utf-8")
         try:
             out = _run(_command(jsc, script, timeout), str(root), timeout)
         except OSError:
@@ -205,7 +230,7 @@ def evaluate(
 
 
 def _read(stdout: str, mark: str) -> dict[tuple[str, str], object]:
-    for line in stdout.split("\n"):
+    for line in reversed(stdout.split("\n")):  # the real dump is the script's last word
         if line.startswith(mark):
             try:
                 data = json.loads(line[len(mark) :])

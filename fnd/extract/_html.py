@@ -11,6 +11,7 @@ docx path produces them.
 from __future__ import annotations
 
 import re
+from itertools import chain
 from typing import TYPE_CHECKING
 
 import lxml.html
@@ -101,6 +102,7 @@ _CALLOUT_CLASS = re.compile(
     re.I,
 )
 _BLOCK_ATTR = "fnd-block"  # set on an element with a block-level descendant
+_INLINE_DATA_CHARS = 4_000
 _BREAK = re.compile(r"<br\s*/?>", re.I)
 _MD_LINK = re.compile(r"\[([^\[\]]*)\]\([^()]*\)")
 _EMPHASIS_CLASS = re.compile(r"(?:^|\s)(?:key|takeaway|tldr)(?:\s|$)")
@@ -373,24 +375,24 @@ def _fragment(markup: str) -> HtmlElement | None:
     return holder
 
 
-def add_blocks(sec: HeadingSectioner, blocks: list[ScriptBlock], *, headings: bool = False) -> None:
+def add_blocks(sec: HeadingSectioner, blocks: list[ScriptBlock], *, level: int = 0) -> None:
     """Emit script-derived blocks; paragraphs keep their inline markup as markdown.
 
-    ``headings`` lets a data section's name open a section of its own; mid-page it is a bold lead.
+    A data section's name opens a heading at ``level``; with no level it is a bold lead.
     """
     for block in blocks:
         try:
-            _add_block(sec, block, headings)
+            _add_block(sec, block, level)
         except RecursionError:  # a fragment nested too deep for the stack the page already uses
             plain = _collapse(_TAG.sub("", block.text))
             if plain:
                 sec.add_paragraph(plain, plain)
 
 
-def _add_block(sec: HeadingSectioner, block: ScriptBlock, headings: bool) -> None:
+def _add_block(sec: HeadingSectioner, block: ScriptBlock, level: int) -> None:
     if block.kind == "h":
-        if headings:
-            sec.add_heading(3, block.text)
+        if level:
+            sec.add_heading(level, block.text)
         else:
             sec.add_paragraph(f"**{block.text}**", block.text)
     elif block.kind == "code":
@@ -509,6 +511,7 @@ def _walk_child(
         return
     tag = child.tag.lower()
     if tag in _SKIP:
+        _attach(child, sec, attach)  # a JSON island's own data is placed where it sits
         return
     if tag in _HEADINGS:
         sec.add_heading(_HEADINGS[tag], _heading_text(child))
@@ -535,13 +538,26 @@ def _walk_child(
         _paragraph(sec, child)
     elif tag in _CONTAINERS or len(child):
         _walk(child, sec, attach)
+        _attach(child, sec, attach)
+        return
     else:
         text = _collapse(child.text_content())
         if text:
             sec.add_paragraph(text, text)
-    for name, value in child.attrib.items():
-        if (name == "id" or name.startswith("data-")) and value in attach:
-            add_blocks(sec, attach.pop(value))
+    _attach(child, sec, attach)
+    for island in child.iterdescendants("script"):  # flattened above, so never walked
+        _attach(island, sec, attach)
+
+
+def _attach(el: HtmlElement, sec: HeadingSectioner, attach: dict[str, list[ScriptBlock]]) -> None:
+    """Emit the script blocks named by ``el``'s ``id`` or a ``data-*`` attribute."""
+    for name, value in el.attrib.items():  # an empty value (data-v-1a2b="") names nothing
+        if value and (name == "id" or name.startswith("data-")) and value in attach:
+            blocks = attach.pop(value)
+            size = sum(len(b.text) + sum(map(len, chain(*b.rows))) for b in blocks)
+            # A widget's data reads as part of its section; a whole dataset gets sections.
+            level = min(max(sec.depth + 1, 2), 6) if size > _INLINE_DATA_CHARS else 0
+            add_blocks(sec, blocks, level=level)
 
 
 def walk_html(
