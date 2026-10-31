@@ -123,6 +123,10 @@ DEFAULT_FIELD_BOOSTS: Final[dict[str, float]] = {
     F_PATH_TOKENS: 0.25,
     F_BODY: 1.0,
 }
+# A plain body word's weight: this share from its form as typed (F_WORDS), the rest its stem.
+# NQ page nDCG@10 +0.004, +0.004, +0.007 (full, 3-word, 2-word questions); full questions'
+# deeper-section MRR -0.006 (p 0.03). BEIR level; NFCorpus strong-signal 16 to 12 of 323.
+EXACT_FORM_SHARE: Final = 0.5
 # Within a file, a query word's heading BM25 times this counts where it beats the body's
 # BM25 for the word. NQ right section first, full questions: 1 gives 0.380, 2 0.444,
 # 3 0.436, 5 0.425.
