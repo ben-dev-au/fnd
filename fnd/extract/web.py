@@ -3,7 +3,8 @@
 Parses the document with the shared ``lxml.html`` walker and feeds a
 ``HeadingSectioner``, so a standalone ``.html`` page renders through the same
 structural path as markdown/docx (headings, lists, tables, code, prose) with
-matching highlighting and scroll-to-match.
+matching highlighting and scroll-to-match. Content a page builds at runtime from
+inline script data is recovered by ``_script_text`` (see there).
 """
 
 from __future__ import annotations
@@ -11,7 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from fnd.extract._html import parse, walk_html
+from fnd.extract._html import add_blocks, parse, walk_html
+from fnd.extract._script_text import script_text
 from fnd.extract._sectioner import HeadingSectioner
 from fnd.extract.base import Chunk, ExtractError, file_parent_id
 from fnd.fsmeta import read_file_times
@@ -43,5 +45,10 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     sec = HeadingSectioner(
         parent_id=file_parent_id(path), path=path, times=times, kind=kind, title=title
     )
-    walk_html(root, sec)
+    attach = script_text(root)
+    walk_html(root, sec, attach)
+    unclaimed = [b for blocks in attach.values() for b in blocks]
+    if unclaimed:
+        sec.add_heading(2, "Script text")
+        add_blocks(sec, unclaimed, level=3)
     yield from sec.finish()

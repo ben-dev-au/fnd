@@ -45,6 +45,11 @@ class HeadingSectioner:
         self._has_content = False
         self._chunks: list[Chunk] = []
 
+    @property
+    def depth(self) -> int:
+        """The level of the innermost open heading (0 before the first)."""
+        return len(self._stack)
+
     def add_heading(self, level: int, text: str) -> None:
         text = text.strip()
         if not text:
@@ -70,8 +75,10 @@ class HeadingSectioner:
             self._body_parts.append(text)
         self._has_content = True
 
-    def add_list_item(self, md: str, text: str, *, depth: int = 0, ordered: bool = False) -> None:
-        prefix = "1. " if ordered else "- "
+    def add_list_item(
+        self, md: str, text: str, *, depth: int = 0, ordered: bool = False, number: int = 1
+    ) -> None:
+        prefix = f"{number}. " if ordered else "- "
         indent = "  " * max(depth, 0)
         self._md_lines.append(f"{indent}{prefix}{md}".rstrip())
         text = text.strip()
@@ -80,22 +87,32 @@ class HeadingSectioner:
             self._body_parts.append(text)
         self._has_content = True
 
-    def add_code(self, code: str) -> None:
+    def add_code(self, code: str, lang: str = "") -> None:
         code = code.strip("\n")
         if not code.strip():
             return
-        self._md_lines.append(fenced(code))
+        self._md_lines.append(fenced(code, lang))
         self._blocks.append(Block(kind="code", text=code))
         self._body_parts.append(code)
         self._has_content = True
 
-    def add_quote(self, text: str) -> None:
+    def add_quote(self, text: str, md: str = "") -> None:
         text = text.strip()
         if not text:
             return
-        self._md_lines.append("\n".join(f"> {ln}" for ln in text.splitlines()))
+        self._md_lines.append("\n".join(f"> {ln}" for ln in (md or text).splitlines()))
         self._blocks.append(Block(kind="quote", text=text))
         self._body_parts.append(text)
+        self._has_content = True
+
+    def add_callout(self, kind: str, title: str, body_md: str, body_text: str) -> None:
+        """An Obsidian callout (``> [!kind] title``); the marker stays out of the indexed text."""
+        lines = [f"[!{kind}] {title}".rstrip(), *body_md.splitlines()]
+        self._md_lines.append("\n".join(f"> {ln}".rstrip() for ln in lines))
+        for text in (title.strip(), body_text.strip()):
+            if text:
+                self._blocks.append(Block(kind="quote", text=text))
+                self._body_parts.append(text)
         self._has_content = True
 
     def add_table(self, md: str, cell_texts: list[str]) -> None:

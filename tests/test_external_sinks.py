@@ -61,6 +61,8 @@ _SUBPROCESS_ALLOWED = {
     "embed_job.py",
     # The mermaid render worker: termaid can hang, so it runs where it can be killed.
     "tui/mermaid_render.py",
+    # The page-script evaluator: untrusted JS runs in a child that can be killed on a timeout.
+    "extract/_js_eval.py",
 }
 
 
