@@ -743,6 +743,7 @@ class Searcher:
         from fnd.query_dsl import preprocess
         from fnd.query_filters import extract_filters
         from fnd.schema import (
+            EXACT_FORM_SHARE,
             F_BODY,
             F_HEADING_PATH,
             F_PATH_TOKENS,
@@ -790,7 +791,11 @@ class Searcher:
             node = parse_query_ast(content, alternatives=alternatives) if has_content else None
             if has_content:
                 body_required = compile_query(
-                    node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs
+                    node,
+                    searcher=self,
+                    schema=schema,
+                    parse_kwargs=body_parse_kwargs,
+                    exact_form_share=EXACT_FORM_SHARE,
                 )
             elif filters:
                 body_required = tantivy.Query.all_query()

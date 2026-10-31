@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import tantivy
 from tantivy import Occur, Query
 
-from fnd.analysis import fold, index_token
+from fnd.analysis import fold, index_token, word_tokens
 from fnd.query_ast import (
     Alternatives,
     And,
@@ -66,22 +66,29 @@ def compile_query(
     searcher: Searcher,
     schema: tantivy.Schema,
     parse_kwargs: dict[str, object],
+    exact_form_share: float = 0.0,
 ) -> Query:
     """Compile ``node`` against ``searcher``'s index. ``parse_kwargs`` carries the
     body ``default_field_names`` (and any cascade ``fuzzy_fields``) used for plain
-    term/phrase leaves so the auto-fuzzy pass still reaches them."""
+    term/phrase leaves so the auto-fuzzy pass still reaches them. A plain-text leaf
+    reads ``exact_form_share`` of its weight from its words as typed (F_WORDS)."""
     if node is None:
         return Query.empty_query()
-    return _Compiler(searcher, schema, parse_kwargs).compile(node)
+    return _Compiler(searcher, schema, parse_kwargs, exact_form_share).compile(node)
 
 
 class _Compiler:
     def __init__(
-        self, searcher: Searcher, schema: tantivy.Schema, parse_kwargs: dict[str, object]
+        self,
+        searcher: Searcher,
+        schema: tantivy.Schema,
+        parse_kwargs: dict[str, object],
+        exact_form_share: float,
     ) -> None:
         self._s = searcher
         self._schema = schema
         self._pk = parse_kwargs
+        self._share = exact_form_share
 
     def compile(self, n: Node) -> Query:
         if isinstance(n, Term):
@@ -157,14 +164,30 @@ class _Compiler:
             return compiled
         # Whitespace inside an atom comes from a quoted value (``TODO:"a b"``).
         escaped = literal_phrase(text) if any(ch.isspace() for ch in text) else literal(text)
-        return _parse_query(self._s._index, escaped, **self._pk)
+        return self._exact_form(_parse_query(self._s._index, escaped, **self._pk), text)
 
     def _phrase(self, n: Phrase) -> Query:
         words = n.text.split()
         if any(is_phrase_pattern(w) for w in words):
             # parse_query drops ``*`` and ``~``, so this is a positional regex phrase on F_BODY.
             return self._pattern_phrase(words, n.slop)
-        return _parse_query(self._s._index, literal_phrase(n.text, slop=n.slop), **self._pk)
+        parsed = _parse_query(self._s._index, literal_phrase(n.text, slop=n.slop), **self._pk)
+        return self._exact_form(parsed, n.text)
+
+    def _exact_form(self, stems: Query, text: str) -> Query:
+        """``stems`` matching as before, with the share of its weight moved to chunks
+        holding ``text`` as typed. One word only: F_WORDS has no positions to read a
+        phrase by, and its words apart would outscore the phrase itself."""
+        tokens = word_tokens(text)
+        if not self._share or len(tokens) != 1:
+            return stems
+        typed = Query.term_query(self._schema, F_WORDS, tokens[0])
+        return Query.boolean_query(
+            [
+                (Occur.Must, Query.boost_query(stems, 1.0 - self._share)),
+                (Occur.Should, Query.boost_query(typed, self._share)),
+            ]
+        )
 
     def _pattern_phrase(self, words: list[str], slop: int) -> Query:
         if len(words) == 1:

@@ -79,11 +79,16 @@ def index_token(word: str) -> str:
     return "".join(tokens) if tokens else word.lower()
 
 
-@lru_cache(maxsize=65536)
-def word_token(word: str) -> str:
-    """One word as the index's word field stores it: folded and lowercased, unstemmed."""
+def word_tokens(text: str) -> list[str]:
+    """``text``'s tokens as the index's word field stores them: folded, lowercased, unstemmed."""
     analyser = getattr(_LOCAL, "words", None)
     if analyser is None:
         analyser = _LOCAL.words = _build(stem=False)
-    tokens = analyser.analyze(word)
+    return analyser.analyze(text)
+
+
+@lru_cache(maxsize=65536)
+def word_token(word: str) -> str:
+    """One word as the index's word field stores it: folded and lowercased, unstemmed."""
+    tokens = word_tokens(word)
     return "".join(tokens) if tokens else word.lower()
