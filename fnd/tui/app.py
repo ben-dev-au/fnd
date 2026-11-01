@@ -2204,7 +2204,7 @@ sidebar panels stop showing a stale ``current selection`` band
         which the skip-expanded-parents validator clamps to 0 and walks into
         a jump to the first file: visible when the rebuild is delayed (e.g.
         the preview pane is mid full-mount). ``move_cursor_to_line`` forces
-        the rebuild (it reads ``_tree_lines``) and the first child always
+        the line rebuild and the first child always
         sits one row below its parent, so the move is correct synchronously.
         """
         if not node.children:

@@ -39,7 +39,7 @@ class HomeToFirstRow:
         # `validate_cursor_line` owns what is selectable, and the results tree
         # refuses an expanded parent BY DIRECTION (an upward move onto line 0
         # is a no-op), so walk down until it accepts a line.
-        for line in range(min(_FIRST_ROW_SCAN, len(tree._tree_lines))):
+        for line in range(min(_FIRST_ROW_SCAN, tree.last_line + 1)):
             tree.cursor_line = line
             if tree.cursor_line == line:
                 break

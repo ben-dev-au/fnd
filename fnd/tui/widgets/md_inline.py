@@ -16,7 +16,7 @@ from fnd.render import match_word_spans
 from fnd.tui.widgets.content_edits import Edit, apply_edits
 
 if TYPE_CHECKING:
-    from textual.widgets._markdown import MarkdownBlock
+    from textual.widgets.markdown import MarkdownBlock
 
 __all__ = [
     "MARK_STYLE",

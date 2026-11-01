@@ -89,7 +89,7 @@ class OutlineTree(ResultsTree):
             self.unselect()
             return
         node = _deepest_visible(self._heading_nodes[index])
-        _ = self._tree_lines  # builds the lines, so node.line is current
+        _ = self.last_line  # builds the lines, so node.line is current
         if self.cursor_line < 0 or node is not self.cursor_node:
             self.move_cursor(node)
 

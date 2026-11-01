@@ -14,10 +14,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.widgets import Markdown
 from textual.widgets._markdown import (
-    MarkdownBlock,
     MarkdownBlockQuote,
     MarkdownBullet,
-    MarkdownFence,
     MarkdownH1,
     MarkdownH2,
     MarkdownH3,
@@ -33,6 +31,7 @@ from textual.widgets._markdown import (
     MarkdownTH,
     MarkdownUnorderedListItem,
 )
+from textual.widgets.markdown import MarkdownBlock, MarkdownFence
 
 from fnd.display_text import fit
 from fnd.matching import MatchSpec, phrase_char_spans

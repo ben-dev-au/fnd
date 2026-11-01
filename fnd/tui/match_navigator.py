@@ -23,6 +23,8 @@ import time
 from bisect import bisect_right
 from typing import TYPE_CHECKING
 
+from fnd.tui.widgets.tree_rows import line_of
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -786,8 +788,8 @@ class MatchNavigator:
         if row is None:
             return False
         if not file_node.is_expanded:
-            file_node.expand()  # its rows are what `_tree_lines` is read for
-        line = next((i for i, tl in enumerate(tree._tree_lines) if tl.node is row), None)
+            file_node.expand()
+        line = line_of(tree, row)
         if line is None:
             return False
         preview = getattr(self._app, "_preview", None)
