@@ -209,11 +209,13 @@ def test_cancel_during_worker_start_up_is_prompt():
 def test_a_cancel_while_the_worker_is_spawning_is_not_lost(monkeypatch: pytest.MonkeyPatch):
     """A cancel that lands before the worker process exists still stops it rendering."""
     spawning, cancelled = threading.Event(), threading.Event()
+    spawned: list[subprocess.Popen[str]] = []
     real_popen = subprocess.Popen
 
     def held_popen(*args: object, **kwargs: object) -> subprocess.Popen[str]:
         proc = real_popen(*args, **kwargs)  # type: ignore[call-overload]
         if threading.current_thread().name.startswith("mermaid"):
+            spawned.append(proc)
             spawning.set()
             cancelled.wait(5)
         return proc
@@ -232,6 +234,7 @@ def test_a_cancel_while_the_worker_is_spawning_is_not_lost(monkeypatch: pytest.M
 
     assert asyncio.run(run()) < 1.0
     assert r._worker._proc is None
+    assert [p.poll() is not None for p in spawned] == [True]
     assert not r.is_prepared(LABEL_HANG)
 
 
