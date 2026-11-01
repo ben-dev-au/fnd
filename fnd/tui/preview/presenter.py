@@ -218,6 +218,9 @@ class PreviewPresenter:
         self.load_progress: tuple[int, int | None] | None = None
         # Strong ref so the event loop doesn't GC the in-flight mount task.
         self.mount_task: object | None = None
+        # Mount tasks a same-file jump replaced while they ran: still cancelled
+        # with the current one, never left running unreferenced (#201).
+        self._superseded_mounts: set[asyncio.Task[None]] = set()
         # The in-flight chunk-decode worker, if any. A cold load cancels the
         # mount task and the debounce timer before handing off to this worker,
         # so without tracking it the pipeline looks idle for the whole decode:
@@ -1032,6 +1035,7 @@ class PreviewPresenter:
                 # route through the scoped settle (cheap when already idle).
                 import asyncio as _asyncio
 
+                self._park_superseded_mount()
                 self.mount_task = _asyncio.create_task(
                     self._settled_instant_scroll(container, parent_id, focus_chunk_seq)
                 )
@@ -2364,6 +2368,9 @@ class PreviewPresenter:
         so a later visit can resume it."""
         import contextlib
 
+        for superseded in list(self._superseded_mounts):
+            superseded.cancel()
+        self._superseded_mounts.clear()
         task = self.mount_task
         if task is None:
             return
@@ -2375,6 +2382,13 @@ class PreviewPresenter:
             with contextlib.suppress(Exception):
                 task.cancel()  # type: ignore[attr-defined]
         self.mount_task = None
+
+    def _park_superseded_mount(self) -> None:
+        """Keep the running mount task cancellable once a newer one takes the slot."""
+        task = self.mount_task
+        if isinstance(task, asyncio.Task) and not task.done():
+            self._superseded_mounts.add(task)  # pyright: ignore[reportUnknownArgumentType]
+            task.add_done_callback(self._superseded_mounts.discard)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
     def _supersede_decode(self) -> None:
         """A newer mount owns the pane. A decode still running is a thread and
