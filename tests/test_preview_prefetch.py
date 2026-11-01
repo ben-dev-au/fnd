@@ -253,7 +253,7 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
 
 @pytest.mark.asyncio
 async def test_user_selection_of_prefetched_container_runs_to_completion(
-    multi_md_index: Path,
+    multi_md_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Selecting a prefetched container completes mount up to the
     background-fill radius (regression for a prefetch/user-side mount
@@ -261,8 +261,11 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     With ``BACKGROUND_FILL_RADIUS = 10`` stages 2a/2b cap mount at
     ``focus +/- 10``; full-file completion would need a wider radius."""
 
+    from fnd.tui.preview import tuning
     from fnd.tui.preview.tuning import BACKGROUND_FILL_RADIUS
 
+    # The render below bypasses the cursor; the paint check would repair it away.
+    monkeypatch.setattr(tuning, "PAINT_CHECK_MS", 60_000)
     cfg = Config(
         defaults=Defaults(preview_prefetch_count=10, preview_load_debounce_ms=0),
         ranking={"default": RankingProfileConfig()},

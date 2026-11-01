@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -39,7 +40,9 @@ def test_valid_flowchart_returns_text():
 
 def test_render_never_renders_an_unprepared_source(monkeypatch: pytest.MonkeyPatch):
     r = MermaidRenderer()
-    monkeypatch.setattr(r._worker, "render", lambda key: pytest.fail("rendered on the caller"))
+    monkeypatch.setattr(
+        r._worker, "render", lambda key, wanted: pytest.fail("rendered on the caller")
+    )
     assert r.render(FLOW) is None
 
 
@@ -88,7 +91,7 @@ def test_a_large_parent_does_not_count_against_the_worker(monkeypatch: pytest.Mo
 def test_a_failed_source_is_not_retried(monkeypatch: pytest.MonkeyPatch):
     r = MermaidRenderer()
     calls: list[str] = []
-    monkeypatch.setattr(r._worker, "render", lambda key: calls.append(key[0]))
+    monkeypatch.setattr(r._worker, "render", lambda key, wanted: calls.append(key[0]))
     _prepared(r, LABEL_HANG)
     _prepared(r, LABEL_HANG)
     assert calls == [LABEL_HANG]
@@ -98,7 +101,9 @@ def test_cache_hit_does_not_reinvoke(monkeypatch: pytest.MonkeyPatch):
     r = MermaidRenderer()
     real = r._worker.render
     calls: list[str] = []
-    monkeypatch.setattr(r._worker, "render", lambda key: calls.append(key[0]) or real(key))
+    monkeypatch.setattr(
+        r._worker, "render", lambda key, wanted: calls.append(key[0]) or real(key, wanted)
+    )
     assert _prepared(r, FLOW) is not None
     assert _prepared(r, FLOW) is not None
     assert calls == [FLOW]
@@ -127,7 +132,9 @@ def test_ascii_mode_differs():
 def test_oversized_source_falls_back_without_rendering(monkeypatch: pytest.MonkeyPatch):
     """Past the line cap the art would stall the loop to convert; it is never requested."""
     r = MermaidRenderer()
-    monkeypatch.setattr(r._worker, "render", lambda key: pytest.fail("oversized source rendered"))
+    monkeypatch.setattr(
+        r._worker, "render", lambda key, wanted: pytest.fail("oversized source rendered")
+    )
     huge = "flowchart TD\n" + "\n".join(f"  N{i} --> N{i + 1}" for i in range(m.MAX_SOURCE_LINES))
     assert r.is_prepared(huge)
     assert _prepared(r, huge) is None
@@ -199,6 +206,38 @@ def test_cancel_during_worker_start_up_is_prompt():
     assert not r.is_prepared(LABEL_HANG)
 
 
+def test_a_cancel_while_the_worker_is_spawning_is_not_lost(monkeypatch: pytest.MonkeyPatch):
+    """A cancel that lands before the worker process exists still stops it rendering."""
+    spawning, cancelled = threading.Event(), threading.Event()
+    spawned: list[subprocess.Popen[str]] = []
+    real_popen = subprocess.Popen
+
+    def held_popen(*args: object, **kwargs: object) -> subprocess.Popen[str]:
+        proc = real_popen(*args, **kwargs)  # type: ignore[call-overload]
+        if threading.current_thread().name.startswith("mermaid"):
+            spawned.append(proc)
+            spawning.set()
+            cancelled.wait(5)
+        return proc
+
+    monkeypatch.setattr(m.subprocess, "Popen", held_popen)
+    r = MermaidRenderer()
+
+    async def run() -> float:
+        job = asyncio.ensure_future(r.prepare([LABEL_HANG]))
+        assert await asyncio.to_thread(spawning.wait, 5)
+        started = time.monotonic()
+        r.cancel_pending()
+        cancelled.set()
+        await job
+        return time.monotonic() - started
+
+    assert asyncio.run(run()) < 1.0
+    assert r._worker._proc is None
+    assert [p.poll() is not None for p in spawned] == [True]
+    assert not r.is_prepared(LABEL_HANG)
+
+
 @pytest.mark.skipif(not hasattr(signal, "SIGTSTP"), reason="no job control")
 def test_the_worker_ignores_job_control_and_ctrl_c():
     """It shares fnd's process group: a Ctrl+Z must not stop it mid-render."""
@@ -238,7 +277,9 @@ def test_the_worker_refuses_oversized_art_before_serialising_it():
 
 def test_a_long_single_line_source_falls_back_without_rendering(monkeypatch: pytest.MonkeyPatch):
     r = MermaidRenderer()
-    monkeypatch.setattr(r._worker, "render", lambda key: pytest.fail("oversized source rendered"))
+    monkeypatch.setattr(
+        r._worker, "render", lambda key, wanted: pytest.fail("oversized source rendered")
+    )
     long_label = "flowchart TD\n  A[" + "x" * m.MAX_SOURCE_CHARS + "] --> B"
     assert r.is_prepared(long_label)
     assert _prepared(r, long_label) is None
@@ -249,6 +290,8 @@ def test_a_prepare_from_before_a_cancel_renders_nothing(monkeypatch: pytest.Monk
     r = MermaidRenderer()
     started = r.epoch
     r.cancel_pending()
-    monkeypatch.setattr(r._worker, "render", lambda key: pytest.fail("rendered after cancel"))
+    monkeypatch.setattr(
+        r._worker, "render", lambda key, wanted: pytest.fail("rendered after cancel")
+    )
     asyncio.run(r.prepare([FLOW], epoch=started))
     assert not r.is_prepared(FLOW)

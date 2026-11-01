@@ -13,6 +13,7 @@ import pytest
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.preview import tuning
 from fnd.tui.progress import FNDProgressBar
 from tests._pilot_wait import run_search, wait_until
 
@@ -20,6 +21,13 @@ from tests._pilot_wait import run_search, wait_until
 def _write_md(p: Path, body: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body, encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _no_paint_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests drive the presenter, not the cursor, so the paint check would
+    repair each one back to the cursor's file on a slow run."""
+    monkeypatch.setattr(tuning, "PAINT_CHECK_MS", 60_000)
 
 
 @pytest.fixture
