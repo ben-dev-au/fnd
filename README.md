@@ -560,7 +560,7 @@ markdown frontmatter filters. They compose freely.
 
 | You type                        | What it does                                                                              |
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `invoice`                       | One term. Searches body, title, headings, and filename. Stemmed (`invoice` = `invoices`). |
+| `invoice`                       | One term in body, title, headings and filename. Stemmed; `invoice` outweighs `invoices`.  |
 | `holiday budget plan`           | Several terms, ranked. Docs matching more terms rank higher; all-term docs reach the top. |
 | `holiday AND budget`            | Require both terms.                                                                       |
 | `"follow up email"`             | Exact phrase, in order. Also matches `follow-up email`.                                   |
