@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import tantivy
 
 from fnd import regex_terms
-from fnd.analysis import index_token
+from fnd.analysis import index_token, word_token
 from fnd.matching import auto_fuzzy_distance, glob_to_regex, leading_edits, osa_within
 from fnd.query_ast import fuzzy_word
 from fnd.schema import F_BODY, F_WORDS
@@ -32,28 +33,42 @@ _DICT_LIMIT = 50_000
 
 
 def fuzzy_variants(
-    searcher: Searcher, stem: str, max_dist: int, *, front: bool = False
+    searcher: Searcher, stem: str, max_dist: int, *, front: bool = False, field: str = F_BODY
 ) -> list[str]:
-    """Indexed F_BODY stems within ``max_dist`` edits of ``stem``, the exact stem
+    """Indexed ``field`` terms within ``max_dist`` edits of ``stem``, the exact term
     first, as :func:`fnd.matching.fuzzy_reaches` admits them (``front``: one edit
     may change the first letter)."""
     index = searcher._searcher
     if max_dist == 0:
-        return [t for t, _ in index.terms_with_prefix(F_BODY, stem, limit=1) if t == stem]
+        return [t for t, _ in index.terms_with_prefix(field, stem, limit=1) if t == stem]
     if not stem:
         return []
     out: list[str] = []
     seen = False
-    for term, _count in index.terms_with_prefix(F_BODY, stem[0], limit=_DICT_LIMIT):
+    for term, _count in index.terms_with_prefix(field, stem[0], limit=_DICT_LIMIT):
         if term == stem:
             seen = True
         elif osa_within(term, stem, max_dist=max_dist) <= max_dist:
             out.append(term)
     if front:
-        out.extend(t for t in leading_edits(stem) if index.doc_freq(F_BODY, t) > 0)
+        out.extend(t for t in leading_edits(stem) if index.doc_freq(field, t) > 0)
     if seen:
         out.insert(0, stem)
     return out
+
+
+def typed_fuzzy_words(
+    searcher: Searcher, term: str, max_dist: int, stems: Iterable[str]
+) -> list[str]:
+    """Indexed F_WORDS words within ``max_dist`` edits of ``term`` as typed whose stem
+    is not among ``stems``: a typed ``term~N`` reaches these as well as the stems
+    near its own, which a stripped suffix can push out of reach (fnd.matching.typed_fuzzy_reaches)."""
+    have = set(stems)
+    return [
+        w
+        for w in fuzzy_variants(searcher, word_token(term), max_dist, front=True, field=F_WORDS)
+        if index_token(w) not in have
+    ]
 
 
 def prefix_variants(searcher: Searcher, prefix: str, *, limit: int = _DICT_LIMIT) -> list[str]:
@@ -104,7 +119,9 @@ def phrase_member_stems(searcher: Searcher, glob: str) -> frozenset[str] | None:
     if fuzzy is not None:
         stem = index_token(fuzzy.term)
         dist = fuzzy.distance if fuzzy.distance is not None else auto_fuzzy_distance(stem)
-        return frozenset(fuzzy_variants(searcher, stem, dist, front=True))
+        stems = fuzzy_variants(searcher, stem, dist, front=True)
+        words = typed_fuzzy_words(searcher, fuzzy.term, dist, stems)
+        return frozenset(stems).union(index_token(w) for w in words)
     variants = pattern_variants(searcher, glob_to_regex(glob), glob=True) or {}
     if len(variants) > PHRASE_MEMBER_WORDS:
         return None
@@ -180,7 +197,14 @@ def term_or_query(
 ) -> tantivy.Query | None:
     """BM25-scored OR of ``term_query`` over ``terms`` on ``field``. None if empty,
     the bare term_query for one, a Should-boolean for several."""
-    queries = [tantivy.Query.term_query(schema, field, t) for t in terms]
+    return fielded_or_query(schema, [(field, t) for t in terms])
+
+
+def fielded_or_query(
+    schema: tantivy.Schema, terms: Iterable[tuple[str, str]]
+) -> tantivy.Query | None:
+    """:func:`term_or_query` over ``(field, term)`` pairs."""
+    queries = [tantivy.Query.term_query(schema, field, t) for field, t in terms]
     if not queries:
         return None
     if len(queries) == 1:

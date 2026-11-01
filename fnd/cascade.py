@@ -51,9 +51,10 @@ if TYPE_CHECKING:
 
     from fnd.tag_query import TagFilter
 from fnd.analysis import index_token
+from fnd.query_resolvers import fielded_or_query, typed_fuzzy_words
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.render import keep_shown
-from fnd.schema import F_BODY, build_schema
+from fnd.schema import F_BODY, F_WORDS, build_schema
 from fnd.synonyms import SynonymTable, compound_table, expand
 
 
@@ -161,7 +162,7 @@ def fuzzy_body_clauses(
     if not term_dists:
         return None
     schema = build_schema()
-    stems_with_dists: list[tuple[str, int, bool]] = []
+    stems_with_dists: list[tuple[str, str, int, bool]] = []
     for term, explicit in term_dists:
         stem = index_token(term)
         if explicit is not None:
@@ -170,15 +171,15 @@ def fuzzy_body_clauses(
             d = auto_fuzzy_reach(stem, min_term_chars=min_term_chars)
         else:
             d = 0
-        stems_with_dists.append((stem, d, explicit is not None))
-    if all(d == 0 for _, d, _ in stems_with_dists):
+        stems_with_dists.append((term, stem, d, explicit is not None))
+    if all(d == 0 for _, _, d, _ in stems_with_dists):
         return None
     respelt = {
         index_token(word): [index_token(o) for o in options]
         for word, options in (corrections or {}).items()
     }
     clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
-    for stem, dist, front in stems_with_dists:
+    for term, stem, dist, front in stems_with_dists:
         variants = list(
             dict.fromkeys(
                 v
@@ -186,22 +187,15 @@ def fuzzy_body_clauses(
                 for v in _fuzzy_term_variants(searcher, s, dist, front=front)
             )
         )
-        if not variants:
-            # No indexed stem within distance, so the AND of fuzzy term clauses
+        words = typed_fuzzy_words(searcher, term, dist, variants) if front else []
+        term_or = fielded_or_query(
+            schema, [(F_BODY, v) for v in variants] + [(F_WORDS, w) for w in words]
+        )
+        if term_or is None:
+            # Nothing indexed within distance, so the AND of fuzzy term clauses
             # can never match.
             return None
-        if len(variants) == 1:
-            clauses.append(
-                (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_BODY, variants[0]))
-            )
-        else:
-            term_or = tantivy.Query.boolean_query(
-                [
-                    (tantivy.Occur.Should, tantivy.Query.term_query(schema, F_BODY, v))
-                    for v in variants
-                ]
-            )
-            clauses.append((tantivy.Occur.Must, term_or))
+        clauses.append((tantivy.Occur.Must, term_or))
     return clauses
 
 

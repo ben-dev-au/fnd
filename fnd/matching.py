@@ -138,7 +138,7 @@ def glob_matches(
     if fuzzy is not None:
         base = index_token(fuzzy.term)
         dist = fuzzy.distance if fuzzy.distance is not None else auto_fuzzy_distance(base)
-        return stem == base or fuzzy_reaches(stem, base, dist, front=True)
+        return stem == base or typed_fuzzy_reaches(stem, word, base, word_token(fuzzy.term), dist)
     return _glob_pattern(glob).fullmatch(word) is not None
 
 
@@ -324,6 +324,16 @@ def fuzzy_reaches(stem: str, query_stem: str, max_dist: int, *, front: bool = Fa
     return osa_within(stem, query_stem, max_dist=max_dist) <= max_dist
 
 
+def typed_fuzzy_reaches(
+    stem: str, word: str, query_stem: str, query_word: str, max_dist: int
+) -> bool:
+    """Whether search admits a token for a typed ``term~N``: its stem near the typed
+    stem, or its word near the word as typed (fnd.query_resolvers.typed_fuzzy_words)."""
+    return fuzzy_reaches(stem, query_stem, max_dist, front=True) or bool(
+        word and fuzzy_reaches(word, query_word, max_dist, front=True)
+    )
+
+
 _FRONT_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
@@ -402,6 +412,8 @@ class MatchSpec:
     group_stopwords: frozenset[str] = field(default_factory=frozenset)
     # Stems typed with ``~N``, whose fuzzy may change the first letter (fuzzy_reaches).
     explicit_fuzzy: frozenset[str] = field(default_factory=frozenset)
+    # ``(stem, word as typed, N)`` for each ``~N`` term: its reach is measured on both.
+    typed_fuzzy: tuple[tuple[str, str, int], ...] = ()
     # The stems search matched for each wildcard word of a phrase or proximity group
     # (None: the glob ran over stems), set from the search by with_phrase_globs.
     phrase_globs: tuple[tuple[str, frozenset[str] | None], ...] = ()
@@ -628,12 +640,14 @@ class MatchSpec:
                         exact.add(index_token(t))
         # Explicit per-term ~N: always honoured (user opt-in).
         explicit_pairs: dict[str, int] = {}
+        typed_fuzzy: dict[tuple[str, str, int], None] = {}
         for term, dist in _terms_with_fuzzy(loose_query):
             if dist is None or dist <= 0:
                 continue
             explicit_pairs[index_token(term.lower())] = max(
                 explicit_pairs.get(index_token(term.lower()), 0), dist
             )
+            typed_fuzzy[index_token(term.lower()), word_token(term), dist] = None
         auto_pairs: dict[str, int] = {}
         if auto_fuzzy and not _fuzzy_stands_down(query):
             # Typed stems only: synonyms and joined compounds are searched exactly,
@@ -683,13 +697,25 @@ class MatchSpec:
             unconstrained_terms=frozenset(free_keys) if proximity_groups else frozenset(),
             group_stopwords=group_stopwords,
             explicit_fuzzy=frozenset(explicit_pairs),
+            typed_fuzzy=tuple(typed_fuzzy),
         )
 
-    def fuzzy_admits(self, stem: str) -> bool:
-        """Whether search's fuzzy pass admits ``stem`` for any query stem."""
-        return any(
-            fuzzy_reaches(stem, q, d, front=q in self.explicit_fuzzy)
-            for q, d in self.fuzzy_per_stem
+    def fuzzy_admits(self, stem: str, word: str = "") -> bool:
+        """Whether search's fuzzy pass admits the token ``stem`` (word-field ``word``)
+        for any query stem."""
+        return any(self.fuzzy_reach(stem, word, q, d) for q, d in self.fuzzy_per_stem)
+
+    def fuzzy_reach(self, stem: str, word: str, query_stem: str, dist: int) -> bool:
+        """Whether ``query_stem`` fuzzed to ``dist`` admits the token, as search does."""
+        if query_stem not in self.explicit_fuzzy:
+            return fuzzy_reaches(stem, query_stem, dist)
+        return fuzzy_reaches(stem, query_stem, dist, front=True) or bool(
+            word
+            and any(
+                fuzzy_reaches(word, typed, reach, front=True)
+                for key, typed, reach in self.typed_fuzzy
+                if key == query_stem
+            )
         )
 
     @property
@@ -776,7 +802,7 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
         return True
     if any(regex_terms.matches(pattern, w) for pattern in spec.regexes):
         return True
-    return spec.fuzzy_admits(s)
+    return spec.fuzzy_admits(s, w)
 
 
 def match_color(word: str, spec: MatchSpec) -> int:
@@ -787,7 +813,7 @@ def match_color(word: str, spec: MatchSpec) -> int:
     s = index_token(word)
     for i, (kind, key, dist) in enumerate(spec.order):
         if kind == "term":
-            if s == key or (dist and fuzzy_reaches(s, key, dist, front=key in spec.explicit_fuzzy)):
+            if s == key or (dist and spec.fuzzy_reach(s, word_token(word), key, dist)):
                 return i
         elif kind == "wildcard":
             if glob_matches(key, s, word_token(word), spec.phrase_globs):

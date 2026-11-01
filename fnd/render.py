@@ -410,7 +410,7 @@ def word_highlight_runs(
     # wildcard variance. Only for words that matched THIS way (not regex),
     # otherwise an unrelated raw term would paint the whole word orange.
     s = index_token(word)
-    matched_exact_or_fuzzy = s in spec.exact_stems or spec.fuzzy_admits(s)
+    matched_exact_or_fuzzy = s in spec.exact_stems or spec.fuzzy_admits(s, word_token(word))
     if matched_exact_or_fuzzy:
         raw = closest_raw_term(word, spec)
         if raw is not None:

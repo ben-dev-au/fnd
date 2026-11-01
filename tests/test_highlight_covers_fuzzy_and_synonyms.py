@@ -18,9 +18,10 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Tree
 
+from fnd.analysis import index_token, word_token
 from fnd.config import Config, load
 from fnd.index import build_index
-from fnd.matching import MatchSpec, word_matches
+from fnd.matching import MatchSpec, glob_matches, match_color, word_matches
 from fnd.synonyms import SynonymTable
 from fnd.tui import FNDApp
 from fnd.tui.widgets.markdown import FNDMarkdown
@@ -53,6 +54,24 @@ def test_match_spec_two_typo_fuzzy() -> None:
     assert word_matches("templates", spec)
     # AUTO (no ~N) does NOT reach distance 2:
     assert not word_matches("templates", MatchSpec.from_query("tempplatas"))
+
+
+def test_a_typed_word_reaches_only_its_own_distance() -> None:
+    """``connections~1 connect~2`` share a stem; "connectiomx" is two edits from the first."""
+    spec = MatchSpec.from_query("connections~1 connect~2")
+    assert not word_matches("connectiomx", spec)
+    assert word_matches("connectionx", spec)
+
+
+def test_explicit_fuzzy_measures_the_word_as_typed() -> None:
+    """``recurson~1`` is one edit from "recursion" but two from its stem ``recurs``."""
+    spec = MatchSpec.from_query("tail recurson~1")
+    assert word_matches("recursion", spec)
+    assert match_color("recursion", spec) == 1
+    in_phrase = MatchSpec.from_query('"tail recurson~1"')
+    assert glob_matches(
+        "recurson~1", index_token("recursion"), word_token("recursion"), in_phrase.phrase_globs
+    )
 
 
 def test_match_spec_synonym_expansion() -> None:

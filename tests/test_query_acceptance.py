@@ -104,6 +104,7 @@ _DOCS: list[tuple[str, _Doc]] = [
     ("prox-far", {"body": "cross " + "filler " * 40 + "entropy"}),
     ("fuzzy-mito", {"body": "the mitochondria is the powerhouse of the cell"}),
     ("fuzzy-kube", {"body": "kubernetes orchestrates containers at scale"}),
+    ("fuzzy-recursion", {"body": "tail recursion keeps the stack flat"}),
     (
         "fld-title",
         {"body": "neural networks process sequences", "title": "transformer architecture"},
@@ -360,6 +361,10 @@ _CASES: list[_Case] = [
     ),
     ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, _OK),
     ("fuzzy-two", "kubernates~2", lambda r: "fuzzy-kube" in r, _OK),
+    # One edit from the word as typed, two from its stem (recurson vs recurs).
+    ("fuzzy-stem-shortened", "recurson~1", lambda r: "fuzzy-recursion" in r, _OK),
+    ("fuzzy-stem-shortened-phrase", '"tail recurson~1"', lambda r: "fuzzy-recursion" in r, _OK),
+    ("fuzzy-stem-shortened-near", "{3}tail recurson~1", lambda r: "fuzzy-recursion" in r, _OK),
     # --- P4: competitive operators ---
     # Free via parse_query (locked as regression guards):
     ("required-prohibited", "+cross -loss", lambda r: "cross-only" in r and "all3" not in r, _OK),
