@@ -12,6 +12,7 @@ from textual.widgets import Tree
 from fnd.config import Config, Defaults, RankingProfileConfig
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.preview import tuning
 from fnd.tui.preview.presenter import target_from_node_data
 from tests._pilot_wait import run_search, wait_until
 
@@ -86,3 +87,85 @@ async def test_enter_on_the_settled_row_loads_it_again(mixed_index: Path, suffix
         await pilot.press("enter")
         await wait_until(pilot, _settled, timeout=30.0, message="re-select never settled")
         assert renders == [target]
+
+
+@pytest.mark.asyncio
+async def test_enter_while_a_cached_reveal_is_queued_starts_no_second_render(
+    mixed_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Enter while a cached container waits for its queued reveal keeps the latch."""
+    monkeypatch.setattr(tuning, "REVEAL_WATCHDOG_MS", 60_000)
+    monkeypatch.setattr(tuning, "PAINT_CHECK_MS", 60_000)
+    cfg = Config(
+        defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0),
+        ranking={"default": RankingProfileConfig()},
+    )
+    app = FNDApp(index_dir=mixed_index, config=cfg, collection="mixed")
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "latch-anchor")
+        preview = app._preview
+        tree: Tree[dict[str, Any]] = app.query_one("#results_pane", Tree)
+        for node in list(tree.root.children):
+            node.expand()
+        await pilot.pause()
+        by_path = {g.parent_id: g.path for g in app._search.groups}
+        rows = _row_lines(tree)
+        north = next(t for t in rows if by_path[t[0]].endswith("north.md"))
+        plain = next(t for t in rows if by_path[t[0]].endswith(".txt"))
+        sig = app._search.query_signature()
+        tree.focus()
+
+        def _settled_on(target: tuple[str, int]) -> bool:
+            return (
+                preview.showing_parent() == target[0]
+                and preview.is_painted()
+                and not preview.pipeline_busy()
+            )
+
+        tree.cursor_line = _row_lines(tree)[north]
+        await wait_until(
+            pilot,
+            lambda: (
+                _settled_on(north)
+                and (c := preview.preview_cache.get(north[0], sig)) is not None
+                and c.is_complete
+            ),
+            timeout=30.0,
+            message="north.md never completed into the cache",
+        )
+        cached = preview.preview_cache.get(north[0], sig)
+        tree.cursor_line = _row_lines(tree)[plain]
+        await wait_until(pilot, lambda: _settled_on(plain), timeout=30.0, message="no flat view")
+        assert preview.preview_cache.get(north[0], sig) is cached
+        held: list[tuple[Any, ...]] = []
+        real_finalise = preview.finalise_pre_reveal
+        preview.finalise_pre_reveal = lambda *args: held.append(args)  # type: ignore[method-assign]
+        tree.cursor_line = _row_lines(tree)[north]
+        await wait_until(pilot, lambda: bool(held), message="the cached reveal was never queued")
+        assert cached is not None
+        assert preview.active is cached
+        assert cached.has_class("-pre-reveal")
+        assert not preview.pipeline_busy()
+        renders: list[tuple[str, int]] = []
+        real_render = preview.render_full_doc
+
+        def _spy(parent_id: str, *, focus_chunk_seq: int) -> None:
+            renders.append((parent_id, focus_chunk_seq))
+            real_render(parent_id, focus_chunk_seq=focus_chunk_seq)
+
+        preview.render_full_doc = _spy  # type: ignore[method-assign]
+        releases: list[None] = []
+        real_release = preview.release_settled_target
+
+        def _counted_release() -> None:
+            releases.append(None)
+            real_release()
+
+        preview.release_settled_target = _counted_release  # type: ignore[method-assign]
+        await pilot.press("enter")
+        await wait_until(pilot, lambda: bool(releases), message="Enter never reached the handler")
+        assert renders == []
+        preview.finalise_pre_reveal = real_finalise  # type: ignore[method-assign]
+        real_finalise(*held[0])
+        await wait_until(pilot, lambda: _settled_on(north), timeout=30.0, message="never revealed")

@@ -583,8 +583,17 @@ class PreviewPresenter:
     def release_settled_target(self) -> None:
         """Let a deliberate re-select load the target that just settled; a load
         still landing keeps coalescing. Flat and warm settles leave the latch set."""
-        if not self.pipeline_busy():
+        if not self.pipeline_busy() and not self.awaiting_reveal():
             self.inflight_target = None
+
+    def awaiting_reveal(self) -> bool:
+        """The active container is laid out but not yet revealed: its finalise may
+        still be queued, where :meth:`pipeline_busy` cannot see it. The reveal
+        watchdog bounds the wait."""
+        if self._app._flat.active_buffer is not None:
+            return False
+        container = self.active
+        return container is not None and is_live(container) and container.has_class("-pre-reveal")
 
     def cancel_pending_load(self) -> None:
         if self.load_timer is not None:
