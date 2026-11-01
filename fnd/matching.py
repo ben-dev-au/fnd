@@ -32,7 +32,7 @@ from itertools import pairwise
 from fnd import regex_terms
 from fnd.analysis import fold, index_token, word_token
 from fnd.query_ast import fuzzy_word, is_phrase_pattern
-from fnd.query_spans import literal_spans, map_outside
+from fnd.query_spans import literal_spans, map_outside, without_literals
 from fnd.stopwords import STOPWORDS, is_all_stopwords
 from fnd.synonyms import SynonymTable, expand
 
@@ -207,6 +207,12 @@ def _mark_quoted_stopwords(query: str) -> str:
     return _QUOTED_PHRASE.sub(mark, query.replace(_STOPWORD_MARK, " "))
 
 
+def _group_depth(tok: str) -> int:
+    """Opening minus closing query-group parens in ``tok``; a regex's are literal."""
+    bare = without_literals(tok) if "/" in tok else tok
+    return bare.count("(") - bare.count(")")
+
+
 def _body_tokens(tokens: Iterable[str]) -> Iterator[tuple[int, str]]:
     """``(index, cleaned)`` for each token that is a body term: not under ``NOT``,
     ``-`` or a field group, and not an operator. ``cleaned`` keeps ``~N``/``^N``."""
@@ -214,7 +220,7 @@ def _body_tokens(tokens: Iterable[str]) -> Iterator[tuple[int, str]]:
     skip_depth = 0  # >0 while inside a skipped NOT-/-/field-scoped group
     for index, tok in enumerate(tokens):
         if skip_depth > 0:
-            skip_depth = max(0, skip_depth + tok.count("(") - tok.count(")"))
+            skip_depth = max(0, skip_depth + _group_depth(tok))
             continue
         if tok == "NOT":
             negate_next = True
@@ -227,8 +233,9 @@ def _body_tokens(tokens: Iterable[str]) -> Iterator[tuple[int, str]]:
         negate_next = False
         cleaned = tok.lstrip("+-").strip("()'\"")
         is_field = bool(_FIELD_QUALIFIER_RE.match(cleaned))
-        if opened.count("(") > opened.count(")") and (negated or is_field):
-            skip_depth = opened.count("(") - opened.count(")")
+        depth = _group_depth(opened)
+        if depth > 0 and (negated or is_field):
+            skip_depth = depth
             continue
         if cleaned and cleaned != _QUOTE_MARK and not is_field and not negated:
             yield index, cleaned

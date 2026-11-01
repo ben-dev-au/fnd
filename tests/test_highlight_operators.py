@@ -236,6 +236,28 @@ def test_a_quote_beside_an_excluded_one_still_highlights() -> None:
     assert spec.phrases == (("cross", "entropi"),)
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        r'NOT (/foo\(?/ OR "wallet purse") "cross entropy"',
+        r'NOT (/a\)/ OR "wallet purse") "cross entropy"',
+        r'-(/a\)/ "wallet purse") "cross entropy"',
+    ],
+)
+def test_a_regex_paren_neither_opens_nor_closes_an_excluded_group(query: str) -> None:
+    spec = MatchSpec.from_query(query)
+    assert spec.phrases == (("cross", "entropi"),)
+
+
+@pytest.mark.parametrize(
+    "query", [r"NOT (/foo\(?/ OR wallet) entropy", r"NOT (/a\)/ OR wallet) entropy"]
+)
+def test_a_term_after_a_group_holding_a_regex_paren_highlights(query: str) -> None:
+    spec = MatchSpec.from_query(query)
+    assert word_matches("entropy", spec)
+    assert not word_matches("wallet", spec)
+
+
 def test_regex_metacharacters_are_not_corrupted() -> None:
     """A `/regex/` is kept verbatim: lowercasing would flip `\\D`→`\\d` etc.
     and matched case-insensitively against the (lowercased) doc word."""
