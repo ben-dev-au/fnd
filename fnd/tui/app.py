@@ -1494,6 +1494,7 @@ sidebar panels stop showing a stale ``current selection`` band
         # immediately (leading edge) rather than waiting out the debounce window.
         self._preview._scan_move = False
         self._preview.cancel_pending_load()
+        self._preview.release_settled_target()
         self._load_result_node(ev.node.data)
 
     @on(Tree.NodeSelected, "#outline_pane")
