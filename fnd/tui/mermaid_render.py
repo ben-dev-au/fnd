@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Final
@@ -63,11 +63,14 @@ class _Worker:
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen[str] | None = None
+        # Orders a stop against a start publishing its process.
+        self._lock = threading.Lock()
         atexit.register(self.stop)
 
-    def render(self, key: _Key) -> Text | None:
+    def render(self, key: _Key, wanted: Callable[[], bool]) -> Text | None:
+        """``wanted`` turns False before a cancel's :meth:`stop`; a start sees one or the other."""
         proc = self._proc if self._proc is not None and self._proc.poll() is None else None
-        proc = proc or self._start()
+        proc = proc or self._start(wanted)
         if proc is None:
             return None
         source, theme, use_ascii = key
@@ -83,13 +86,16 @@ class _Worker:
         return _text_from(reply.get("art"))
 
     def stop(self) -> None:
-        proc, self._proc = self._proc, None
+        with self._lock:
+            proc, self._proc = self._proc, None
         if proc is not None and proc.poll() is None:
             proc.kill()
             proc.wait()
 
-    def _start(self) -> subprocess.Popen[str] | None:
+    def _start(self, wanted: Callable[[], bool]) -> subprocess.Popen[str] | None:
         self.stop()
+        if not wanted():
+            return None
         try:
             proc = subprocess.Popen(
                 [
@@ -109,7 +115,15 @@ class _Worker:
             )
         except OSError:
             return None
-        self._proc = proc  # before "ready", so a cancel during start-up can kill it
+        with self._lock:
+            # Published before "ready", so a cancel during start-up can kill it.
+            cancelled = not wanted()
+            if not cancelled:
+                self._proc = proc
+        if cancelled:
+            proc.kill()
+            proc.wait()
+            return None
         if _exchange(proc, "", WORKER_START_TIMEOUT_S) is None or self._proc is not proc:
             self.stop()
             proc.kill()
@@ -239,7 +253,7 @@ class MermaidRenderer:
                 return
             if self.is_prepared(*key):
                 continue
-            art = self._worker.render(key)
+            art = self._worker.render(key, lambda: epoch == self._epoch)
             if epoch != self._epoch:
                 return  # killed by cancel_pending, not by its own source
             with self._lock:
