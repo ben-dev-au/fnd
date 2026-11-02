@@ -43,6 +43,9 @@ PANE_ID = "outline_pane"
 # a Reading View round trip restores one row short.
 EDGE_SLACK = 2
 
+#: The scroll view (offset, height, scroll range), chunk and headings passed.
+_Sample = tuple[tuple[int, int, int], int, int | None]
+
 
 class OutlineView:
     """Drives ``#outline_pane`` from the preview's state; owns no widgets."""
@@ -56,8 +59,11 @@ class OutlineView:
         self._building: object | None = None
         self._shown = ""
         self._anchor: ScrollAnchor | None = None
-        # The view (offset, height, scroll range) the reader was last sampled in.
-        self._sampled: tuple[int, int, int] | None = None
+        # The reader's last committed sample: the view (offset, height, scroll range),
+        # the chunk under it and the headings passed. A change under a still view
+        # commits only once a second poll agrees, so a swap's unlaid frame cannot.
+        self._sampled: _Sample | None = None
+        self._pending: _Sample | None = None
         # The entry holding the reader, before any collapsed heading hides it,
         # and whether the cursor still owes a move to it.
         self._reader: int | None = None
@@ -174,7 +180,7 @@ class OutlineView:
         tree = self._tree()
         if anchor is not self._anchor:
             self._anchor = anchor
-            self._sampled = None
+            self._sampled = self._pending = None
             self._owed = False
             # A navigation can start and go idle between two polls; its settle
             # grace runs from when it was first seen, not the last busy poll.
@@ -200,11 +206,17 @@ class OutlineView:
     def _follow_reading(self, tree: OutlineTree) -> None:
         outline = tree.outline
         view = self._view()
-        if outline.entries and view is not None and view != self._sampled:
-            position = self._reader_position()
-            if position is not None:
-                self._sampled = view
-                passed = self._headings_passed(outline, *position)
+        position = self._reader_position() if outline.entries and view is not None else None
+        if position is not None and view is not None:
+            passed = self._headings_passed(outline, *position)
+            sample = (view, position[0], passed)
+            still = self._sampled is not None and self._sampled[0] == view
+            if sample == self._sampled:
+                self._pending = None
+            elif still and sample != self._pending:
+                self._pending = sample
+            else:
+                self._sampled, self._pending = sample, None
                 index = outline.index_for(position[0], headings_passed=passed)
                 if index != self._reader:
                     self._reader, self._owed = index, True
@@ -237,7 +249,7 @@ class OutlineView:
         return gap < 0 and y < -gap and y <= EDGE_SLACK
 
     def _forget_reader(self) -> None:
-        self._sampled = self._reader = None
+        self._sampled = self._pending = self._reader = None
         self._owed = False
 
     def _landed(self) -> bool:
