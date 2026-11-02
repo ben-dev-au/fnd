@@ -2312,27 +2312,23 @@ class PreviewPresenter:
         await self._refreeze_around(container, focus_chunk_seq)
 
     async def _refreeze_around(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
-        """Freeze everything outside the window centred on ``focus_chunk_seq``."""
+        """Freeze all but ``focus_chunk_seq``, or but the latest navigation's focus
+        once that has moved on."""
         chunks = self.chunk_cache.get(container.parent_doc_id)
         if not chunks:
             return
         focus_idx = next((i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), None)
         if focus_idx is None:
             return
-        # Only the focus chunk stays live. Keeping the whole visible window live
-        # was the first cut and it buys nothing: both policies settle at the same
-        # DOM (263 widgets on a 99-chunk file), because each navigation re-freezes
-        # whatever the last one left behind. Freezing the window as well simply
-        # gets there sooner: 401 widgets after the initial fill against 688.
+        # A one-chunk window: a live visible window settles at the same DOM (263
+        # widgets on a 99-chunk file) but gets there slower, 688 widgets after the
+        # initial fill against 401.
         win_start = focus_idx
         win_end = focus_idx + 1
         await self._freeze_chunks_outside_window(container, chunks, win_start, win_end)
-        # Reclaim here too, not only on the paths that rebuild. The sweep used to
-        # run on cross-file dispatch and the same-file rebuild alone, so a
-        # container stranded by an earlier navigation survived indefinitely while
-        # the user stayed in one file: measured twelve in-window navigations
-        # later, one strand still held 6 live chunks and 169 widgets, more DOM
-        # than the 92 frozen chunks of the file actually being read.
+        # A container stranded by an earlier navigation is reclaimed here, not only
+        # on rebuilds: twelve in-window navigations on, one held 6 live chunks and 169
+        # widgets, more than the 92 frozen chunks of the file being read.
         self.sweep_stranded_containers()
 
     def bump_reset_generation(self) -> None:
@@ -2537,8 +2533,9 @@ class PreviewPresenter:
         ``freeze`` rightly refuses it. Attempting it inline failed on all 72
         chunks of a real file.
 
-        The visible window is left live: those chunks are being read, and the
-        focused one is what the scroll resolves against.
+        The visible window and the latest navigation's focus are left live: those
+        chunks are being read, and the focus is what the scroll resolves against.
+        A window that no longer holds that focus is a replaced navigation's and freezes too.
 
         On by default; ``_FND_NO_FREEZE=1`` opts out. Measured on a real
         99-chunk file: 2,735 -> 263 widgets with every chunk still mounted and
@@ -2583,6 +2580,8 @@ class PreviewPresenter:
             pane_width = self.capture_width(self._app.query_one("#preview_pane", VerticalScroll))
         except Exception:
             pane_width = 0
+        window = {c.chunk_seq for c in chunks[win_start:win_end]}
+        known = {c.chunk_seq for c in chunks}
         frozen = unlaid = 0
         sweep_started = time.perf_counter()
         slice_start = sweep_started
@@ -2598,12 +2597,14 @@ class PreviewPresenter:
                     self.diag_log(f"freeze sweep superseded after {frozen} chunks")
                     break
                 slice_start = time.perf_counter()
-            # Only the VISIBLE window stays live. Skipping everything before
-            # win_end, as the first cut did, left every chunk ABOVE the focus
-            # live too, which is most of them on a file the user has read down
-            # through: 11 live chunks holding 329 widgets against 72 frozen
-            # holding 72.
-            if win_start <= index < win_end or index not in container.mounted_indices:
+            if index not in container.mounted_indices:
+                continue
+            # Only the window and the latest navigation's focus stay live; a window
+            # without that focus is a replaced navigation's and freezes too.
+            focus = self._navigation_focus(container)
+            focus = focus if focus in known else None
+            in_window = win_start <= index < win_end
+            if chunk.chunk_seq == focus or (in_window and (focus is None or focus in window)):
                 continue
             widget = container.chunk_widgets.get(chunk.chunk_seq)
             if not isinstance(widget, FNDMarkdown):
@@ -2676,6 +2677,14 @@ class PreviewPresenter:
             self._unlaid_refreeze = asyncio.create_task(
                 self._refreeze_unlaid(container, chunks, win_start, win_end, retries - 1)
             )
+
+    def _navigation_focus(self, container: PreviewContainer) -> int | None:
+        """The chunk the latest navigation in ``container`` aims at: a sweep from a
+        replaced one still holds its own, older window."""
+        anchor = self._app._preview_scroll.anchor
+        if anchor is None or anchor.parent_id != container.parent_doc_id:
+            return None
+        return anchor.focus_chunk_seq
 
     async def _refreeze_unlaid(
         self,

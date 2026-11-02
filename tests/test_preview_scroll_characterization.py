@@ -561,11 +561,14 @@ async def test_the_landing_probe_survives_the_focus_chunk_freezing(
         assert container is not None
         chunks = app._preview.chunk_cache[target_group.parent_id]
         mounted = sorted(container.mounted_indices)
+        # As a sweep that ran before this chunk became the focus would leave it.
+        app._preview._navigation_focus = lambda _container: None  # type: ignore[method-assign]
         await app._preview._freeze_chunks_outside_window(
             container, chunks, mounted[-1] + 1, mounted[-1] + 1
         )
-        frozen = sum(1 for w in container.chunk_widgets.values() if isinstance(w, FrozenChunkView))
-        assert frozen, "the sweep froze nothing, so this proves nothing"
+        assert isinstance(container.chunk_widgets[focus_seq], FrozenChunkView), (
+            "the focus chunk stayed live, so this proves nothing"
+        )
         # The stand-in has to lay out before it can resolve a row, and one pause
         # is a wait only while the machine is idle: the defect this whole file
         # is about.
