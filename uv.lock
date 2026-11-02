@@ -220,7 +220,7 @@ requires-dist = [
     { name = "lxml", specifier = "~=6.1.2" },
     { name = "markdown-it-py", specifier = "~=4.2.0" },
     { name = "onnxruntime", marker = "extra == 'semantic'", specifier = "~=1.31.0" },
-    { name = "platformdirs", specifier = ">=4.13,<4.15" },
+    { name = "platformdirs", specifier = "~=4.14.0" },
     { name = "pydantic", specifier = "~=2.14.1" },
     { name = "pymupdf", specifier = "~=1.28.2" },
     { name = "python-docx", specifier = "~=1.2.0" },
