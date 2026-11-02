@@ -122,7 +122,7 @@ dev = [
 # requirement; the extra no longer exists and uv warns if requested).
 # docling-slim is installed separately into its own uv tool venv
 # (transitive version conflicts make it unsafe to co-install in fnd's venv).
-pdf-structure = ["pymupdf4llm>=1.28.2,<2.1.0"]
+pdf-structure = ["pymupdf4llm~=2.0.0"]
 # Semantic search: opt-in, installed by ``fnd extras install semantic``. The
 # versions measured on 16 Oct 2026; onnxruntime ships macOS wheels for arm64 14+.
 semantic = ["onnxruntime~=1.31.0", "tokenizers~=0.23.3"]

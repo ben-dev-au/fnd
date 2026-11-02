@@ -252,7 +252,7 @@ dev = [
     { name = "ruff", specifier = ">=0.17.0" },
     { name = "tokenizers", specifier = "~=0.23.3" },
 ]
-pdf-structure = [{ name = "pymupdf4llm", specifier = ">=1.28.2,<2.1.0" }]
+pdf-structure = [{ name = "pymupdf4llm", specifier = "~=2.0.0" }]
 semantic = [
     { name = "onnxruntime", specifier = "~=1.31.0" },
     { name = "tokenizers", specifier = "~=0.23.3" },
