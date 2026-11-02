@@ -560,8 +560,84 @@ async def test_a_match_the_scroll_cannot_reach_puts_the_cursor_on_its_heading(
         assert position is not None
         passed = app._outline._headings_passed(_outline(app).outline, *position)
         assert passed == 2, "the fixture's tail brings the match to the reading line"
+        anchor = app._preview_scroll.anchor
+        await wait_until(
+            pilot,
+            lambda: _cursor_title(app) == "Findings",
+            message="the cursor never reached Findings",
+        )
         await _ticks(pilot, app)
         assert _cursor_title(app) == "Findings"
+        assert app._preview_scroll.anchor is anchor
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", ["landing_target", "chunk_heading_rows"])
+async def test_a_geometry_read_before_layout_settles_is_corrected(
+    tmp_path: Path, tmp_index_dir: Path, read: str
+) -> None:
+    """One stale read of the landing or of the chunk's heading rows is outgrown."""
+    app = FNDApp(index_dir=_end_notebook(tmp_path, tmp_index_dir), initial_query=TERM)
+    scroll = app._preview_scroll
+    real = getattr(scroll, read)
+    stale_reads: list[object] = []
+
+    def first_read_stale(*args: Any) -> Any:
+        value = real(*args)
+        if value is None or stale_reads:
+            return value
+        stale_reads.append(scroll.anchor)
+        if read == "landing_target":
+            return (value[0], 0)
+        return tuple(row + 1000 if i else row for i, row in enumerate(value))
+
+    setattr(scroll, read, first_read_stale)
+    async with app.run_test(size=(120, 45)) as pilot:
+        await _results_ready(pilot, app)
+        await _open(pilot, app, "end.ipynb")
+        assert stale_reads, "the stale read never happened, so this proves nothing"
+        assert stale_reads[0] is scroll.anchor, "the stale read was a different navigation's"
+        await wait_until(
+            pilot,
+            lambda: _cursor_title(app) == "Findings",
+            message="the stale read was never outgrown",
+        )
+        await _ticks(pilot, app)
+        assert _cursor_title(app) == "Findings"
+        assert stale_reads[0] is scroll.anchor, "a later navigation, not the fix, corrected it"
+
+
+@pytest.mark.asyncio
+async def test_a_one_poll_misread_under_a_still_view_never_moves_the_cursor(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """A read that a chunk swap's unlaid frame skews for one poll is never placed."""
+    app = FNDApp(index_dir=_end_notebook(tmp_path, tmp_index_dir), initial_query=TERM)
+    async with app.run_test(size=(120, 45)) as pilot:
+        await _results_ready(pilot, app)
+        await _open(pilot, app, "end.ipynb")
+        await wait_until(
+            pilot, lambda: _cursor_title(app) == "Findings", message="setup: never on Findings"
+        )
+        scroll = app._preview_scroll
+        real = scroll.chunk_heading_rows
+        skewed: list[None] = []
+
+        def skewed_once(seq: int) -> tuple[int, ...] | None:
+            rows = real(seq)
+            if rows is None or skewed:
+                return rows
+            skewed.append(None)
+            return tuple(row + 1000 if i else row for i, row in enumerate(rows))
+
+        scroll.chunk_heading_rows = skewed_once  # type: ignore[method-assign]
+        seen: list[str | None] = []
+        for _ in range(3):
+            await _ticks(pilot, app, 1)
+            seen.append(_cursor_title(app))
+        assert skewed, "the misread never happened, so this proves nothing"
+        assert seen == ["Findings"] * 3
+        assert not app._outline._owed
 
 
 @pytest.mark.asyncio
