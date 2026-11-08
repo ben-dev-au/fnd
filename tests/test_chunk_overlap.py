@@ -153,3 +153,31 @@ def test_a_pair_the_cut_runs_through_paints_as_its_window_sees_it(
     assert _painted(chunks[1], spec)[:1] == second
     assert has_paintable_match(chunks[0], spec)
     assert has_paintable_match(chunks[1], spec)
+
+
+def _fence_code(chunk: FileChunk) -> str:
+    from fnd.extract._fences import unfenced
+
+    fence = unfenced(read_seams(chunk.body_md)[2])
+    assert fence is not None
+    return fence[1]
+
+
+def test_blank_lines_before_a_cut_open_the_next_fence(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """A fence never shows its trailing blank lines, so the next one shows them first."""
+    rows = [f"x_{i} = {i}" for i in range(400)]
+    rows[146] = rows[147] = rows[294] = rows[295] = ""
+    text = "\n".join(rows)
+    chunks = _indexed(tmp_path, tmp_index_dir, "prog.py", text)
+    codes = [_fence_code(c) for c in chunks]
+    assert codes[1].startswith("\n\n")
+    assert "\n".join(codes) == text
+
+
+def test_a_fence_tag_is_no_evidence_of_a_match(tmp_path: Path) -> None:
+    """``python`` in the fence's language tag paints nothing, so it proves nothing."""
+    from fnd.tui.match_evidence import rendered_text
+
+    chunk = _extracted(tmp_path, "prog.py", "x = 1\ny = 2")[0]
+    assert rendered_text(chunk) == "x = 1\ny = 2"
+    assert not has_paintable_match(chunk, MatchSpec.from_query("python", auto_fuzzy=False))

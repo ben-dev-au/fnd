@@ -69,26 +69,26 @@ DIM_STYLES: frozenset[str] = frozenset(DIM_MATCH_STYLES) | {DIM_MISMATCH_STYLE}
 def union_spans(
     windows: Iterable[Iterable[tuple[int, int, str]]],
 ) -> list[tuple[int, int, str]]:
-    """Several windows' spans over one text, each place painted once: a full match
+    """Several windows' spans over one text, each character painted once: a full match
     outranks a dimmed stray there, otherwise the earlier window's span stands."""
-    kept: list[tuple[int, int, str] | None] = []
+    best: dict[int, tuple[int, int, str]] = {}
+    origin = 0
     for spans in windows:
-        prior = len(kept)
         for start, end, style in spans:
-            hits = [
-                i
-                for i in range(prior)
-                if (k := kept[i]) is not None and k[0] < end and start < k[1]
-            ]
-            if hits and (
-                style in DIM_STYLES
-                or any((k := kept[i]) is not None and k[2] not in DIM_STYLES for i in hits)
-            ):
-                continue
-            for i in hits:
-                kept[i] = None
-            kept.append((start, end, style))
-    return [k for k in kept if k is not None]
+            rank = 0 if style in DIM_STYLES else 1
+            for pos in range(start, end):
+                held = best.get(pos)
+                if held is None or rank > held[0]:
+                    best[pos] = (rank, origin, style)
+            origin += 1
+    runs: list[tuple[int, int, str, int]] = []
+    for pos in sorted(best):
+        _, owner, style = best[pos]
+        if runs and runs[-1][1] == pos and runs[-1][3] == owner:
+            runs[-1] = (runs[-1][0], pos + 1, style, owner)
+        else:
+            runs.append((pos, pos + 1, style, owner))
+    return [(start, end, style) for start, end, style, _ in runs]
 
 
 def match_style(color: int, *, dim: bool = False) -> str:

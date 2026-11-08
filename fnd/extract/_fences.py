@@ -17,3 +17,12 @@ def fenced(source: str, lang: str = "") -> str:
     longest = max((len(run) for run in _BACKTICK_RUN.findall(source)), default=0)
     fence = "`" * max(3, longest + 1)
     return f"{fence}{lang}\n{source.rstrip(chr(10))}\n{fence}"
+
+
+def unfenced(markdown: str) -> tuple[str, str] | None:
+    """``(lang, code)`` when ``markdown`` is one fence as :func:`fenced` writes it."""
+    head, _, rest = markdown.partition("\n")
+    fence = head[: len(head) - len(head.lstrip("`"))]
+    if len(fence) < 3 or not rest.endswith("\n" + fence):
+        return None
+    return head[len(fence) :], rest[: -len(fence) - 1]

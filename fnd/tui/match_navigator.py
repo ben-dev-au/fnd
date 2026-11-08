@@ -750,23 +750,6 @@ class MatchNavigator:
                 return sorted(h.chunk_seq for h in group.hits)
         return []
 
-    def _shows_match(self, parent: str | None, seq: int, pass_index: int) -> bool:
-        """Whether section ``seq``, found by search pass ``pass_index``, paints a match
-        of its own: one whose matches all show in the next chunk is no stop of its own."""
-        cache = getattr(getattr(self._app, "_preview", None), "chunk_cache", None) or {}
-        chunks = cache.get(parent) if parent else None
-        chunk = next((c for c in chunks or () if c.chunk_seq == seq), None)
-        if chunk is None or not chunk.repeat:
-            return True
-        from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
-
-        spec = evidence_spec_for_pass(
-            pass_index,
-            strict=self._app._effective_evidence_spec,
-            painting=self._app._effective_match_spec,
-        )
-        return has_paintable_match(chunk, spec)
-
     def _select_section_row(self, seq: int) -> bool:
         """Put the results cursor on this file's row for ``seq``, which is what
         performs the hand-over: the highlight drives the normal result landing,
@@ -834,19 +817,30 @@ class MatchNavigator:
         seq = self._focus_seq()
         if seq is None:
             return False
-        return adjacent_section(self._hop_sections(seq), seq, forward=True) is not None
+        return adjacent_section(list(self._hop_targets()), seq, forward=True) is not None
 
-    def _hop_sections(self, seq: int) -> list[int]:
-        """The listed sections a hand-over from ``seq`` may land on."""
+    def _hop_targets(self) -> dict[int, int]:
+        """Each chunk this file's listed sections land on, mapped to the first such
+        section: a section whose matches all show in the next chunk lands there."""
         parent = self._active_parent()
         groups = getattr(getattr(self._app, "_search", None), "groups", None) or []
         hits = next((g.hits for g in groups if g.parent_id == parent), ())
-        passes = {h.chunk_seq: getattr(h, "pass_index", 0) for h in hits}
-        return [
-            s
-            for s in self._listed_sections()
-            if s == seq or self._shows_match(parent, s, passes.get(s, 0))
-        ]
+        cache = getattr(getattr(self._app, "_preview", None), "chunk_cache", None) or {}
+        chunks = cache.get(parent) if parent else None
+        from fnd.tui.match_evidence import evidence_spec_for_pass, landing_chunk
+
+        targets: dict[int, int] = {}
+        for hit in sorted(hits, key=lambda h: h.chunk_seq):
+            seq = hit.chunk_seq
+            if chunks:
+                spec = evidence_spec_for_pass(
+                    getattr(hit, "pass_index", 0),
+                    strict=self._app._effective_evidence_spec,
+                    painting=self._app._effective_match_spec,
+                )
+                seq = landing_chunk(chunks, seq, spec)
+            targets.setdefault(seq, hit.chunk_seq)
+        return targets
 
     def _hop_section(self, *, forward: bool) -> bool:
         """Hand over to the adjacent listed section of this file, in document
@@ -856,9 +850,11 @@ class MatchNavigator:
             return False
         preview = getattr(self._app, "_preview", None)
         parent = self._active_parent()
-        target = adjacent_section(self._hop_sections(seq), seq, forward=forward)
-        if target is None:
+        targets = self._hop_targets()
+        landing = adjacent_section(list(targets), seq, forward=forward)
+        if landing is None:
             return False
+        target = targets[landing]
         if preview is not None and parent is not None and not forward:
             # The LANDING's intent, not a scroll of our own after it: the armed
             # anchor re-applies its position as later chunks freeze, overwriting

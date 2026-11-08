@@ -8,6 +8,7 @@ keeps a run of n returning to where it started.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from textual.geometry import Offset, Region, Size
 
@@ -180,3 +181,34 @@ def test_highlights_off_leaves_the_keys_inert() -> None:
     assert taken == []
     assert not nav.can_hop_section()
     assert not nav.current_chunk_has_stops()
+
+
+def test_a_section_whose_match_shows_in_an_unlisted_next_chunk_is_reached_there() -> None:
+    """A listed section whose only match the next chunk shows hops to that chunk,
+    even when the section cap left that chunk itself unlisted."""
+    from fnd.extract._fences import fenced
+    from fnd.extract.base import Block
+    from fnd.query import FileChunk
+
+    def chunk(seq: int, text: str, shown: str, repeat: int) -> FileChunk:
+        return FileChunk(
+            parent_id="p",
+            path="p.py",
+            kind="python",
+            page=0,
+            slide=0,
+            heading_path="",
+            chunk_seq=seq,
+            blocks=[Block(kind="code", text=text)],
+            body_md=fenced(shown, "python"),
+            repeat=repeat,
+            windows=((text, 0),),
+        )
+
+    nav = _nav([3], chunk_has_stop=True)
+    app: Any = nav._app
+    app._preview.chunk_cache = {
+        "p": [chunk(3, "x\nalpha", "x", 5), chunk(4, "alpha\ny", "alpha\ny", 0)]
+    }
+    app._effective_evidence_spec = MatchSpec.from_query("alpha", auto_fuzzy=False)
+    assert nav._hop_targets() == {4: 3}

@@ -32,7 +32,7 @@ Design notes:
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -155,7 +155,7 @@ def build_file_view(
     ``repeats[i]`` counts the characters at the end of chunk ``i`` that the
     next chunk repeats (:mod:`fnd.chunk_overlap`). They show once, the next
     chunk continuing the text with no gap row, and both chunks' spans paint
-    there; each still sets its own chunk's landing line.
+    there; a chunk lands on the first match painted across its whole window.
 
     Pure function: no widget mounting, no Textual side-effects.
     """
@@ -165,7 +165,7 @@ def build_file_view(
     parts: list[str] = []
     painted: list[tuple[int, int, str] | None] = []
     regions: list[tuple[int, int]] = []
-    landings: list[tuple[int, int]] = []
+    spans_of: list[tuple[int, int, int]] = []
     pos = 0
     shared_from = 0
     joined = False
@@ -179,9 +179,7 @@ def build_file_view(
             parts.append("\n")
             pos += 1
         repeat = repeats[nth] if nth < len(repeats) and nth + 1 < len(chunks) else 0
-        shown = len(text) - repeat
-        first_full: int | None = None
-        first_dim: int | None = None
+        shown = len(chunk_text[: len(chunk_text) - repeat].replace("\r\n", "\n"))
         shared = [
             i for i in range(shared_from, len(painted)) if joined and _ends_after(painted[i], pos)
         ]
@@ -192,18 +190,12 @@ def build_file_view(
             span_start, span_end = max(span_start, 0), min(span_end, len(text))
             if span_end <= span_start:
                 continue
-            if span_style not in _DIM_STYLES:
-                first_full = span_start if first_full is None else min(first_full, span_start)
-            elif first_dim is None or span_start < first_dim:
-                first_dim = span_start
             own.append((pos + span_start, pos + span_end, span_style))
         tail = [k for i in shared if (k := painted[i]) is not None]
         for i in shared:
             painted[i] = None
         painted.extend(union_spans([tail, own]) if tail else own)
-        target = first_full if first_full is not None else first_dim
-        if target is not None:
-            landings.append((chunk_id, pos + target))
+        spans_of.append((chunk_id, pos, pos + len(text)))
         regions.append((region, chunk_id))
         parts.append(text[:shown])
         pos += shown
@@ -229,10 +221,8 @@ def build_file_view(
         while owner + 1 < len(regions) and regions[owner + 1][0] <= start:
             owner += 1
         fv.line_to_chunk.append(regions[owner][1])
-    for kept in painted:
-        if kept is None:
-            continue
-        span_start, span_end, span_style = kept
+    drawn = sorted((k for k in painted if k is not None), key=lambda k: k[0])
+    for span_start, span_end, span_style in drawn:
         li = line_of(span_start)
         while li < len(fv.lines) and line_starts[li] < span_end:
             line = fv.lines[li]
@@ -242,8 +232,13 @@ def build_file_view(
                 line.stylize(span_style, local_start, local_end)
                 fv.match_lines.add(li)
             li += 1
-    for chunk_id, offset in landings:
-        fv.first_hit_line_in_chunk[chunk_id] = line_of(offset)
+    starts = [k[0] for k in drawn]
+    for chunk_id, first_char, end_char in spans_of:
+        inside = drawn[bisect_left(starts, first_char) : bisect_left(starts, end_char)]
+        full = next((k for k in inside if k[2] not in _DIM_STYLES), None)
+        target = full or (inside[0] if inside else None)
+        if target is not None:
+            fv.first_hit_line_in_chunk[chunk_id] = line_of(target[0])
     return fv
 
 

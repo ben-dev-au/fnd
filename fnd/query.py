@@ -167,6 +167,8 @@ def scope_arms(
 # decode parallelism: fall back to serial decode regardless of the
 # requested ``max_workers``.
 _PARALLEL_DECODE_THRESHOLD: Final = 50
+# ``Hit.pass_index`` of the cascade's fuzzy pass.
+FUZZY_PASS_INDEX: Final = 1
 
 
 @dataclass(slots=True, frozen=True)

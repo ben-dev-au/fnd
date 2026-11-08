@@ -18,10 +18,10 @@ is highlighted as either window sees it.
 from __future__ import annotations
 
 import dataclasses
-from itertools import pairwise
+from itertools import dropwhile, pairwise
 from typing import TYPE_CHECKING
 
-from fnd.extract._fences import fenced
+from fnd.extract._fences import fenced, unfenced
 from fnd.extract.plain import OVERLAP_CHARS
 from fnd.kinds import KIND_BY_ID
 from fnd.seams import Seam, with_seams
@@ -36,10 +36,15 @@ def mark_repeats(chunks: list[FileChunk]) -> list[FileChunk]:
     """``chunks`` (in ``chunk_seq`` order) with every verified window overlap marked."""
     repeats = [_repeated(a, b) for a, b in pairwise(chunks)] + [0]
     out: list[FileChunk] = []
+    lead = ""
     for i, chunk in enumerate(chunks):
         before = chunks[i - 1] if i > 0 and repeats[i - 1] else None
         if repeats[i] or before is not None:
-            chunk = _trimmed(chunk, repeats[i], before=before, before_repeat=repeats[i - 1])
+            chunk, lead = _trimmed(
+                chunk, repeats[i], before=before, before_repeat=repeats[i - 1], lead=lead
+            )
+        else:
+            lead = ""
         out.append(chunk)
     return out
 
@@ -81,24 +86,30 @@ def _is_line_window(chunk: FileChunk) -> bool:
 
 
 def _trimmed(
-    chunk: FileChunk, repeat: int, *, before: FileChunk | None, before_repeat: int
-) -> FileChunk:
-    """``chunk`` marked with ``repeat``. A fenced window's ``body_md`` drops it, is
-    seamed on each cut side, and keeps the windows that cover what it shows."""
+    chunk: FileChunk, repeat: int, *, before: FileChunk | None, before_repeat: int, lead: str
+) -> tuple[FileChunk, str]:
+    """``chunk`` marked with ``repeat``; a fenced window also drops it, seamed, and hands
+    its trailing blank lines to the next fence, as a fence never shows its own."""
     spec = KIND_BY_ID.get(chunk.kind)
-    if (
-        not chunk.body_md
-        or spec is None
-        or chunk.body_md != fenced(chunk.body_text, spec.fence_lang)
-    ):
-        return dataclasses.replace(chunk, repeat=repeat)
-    cut = Seam(code=True)
-    windows = [(chunk.body_text, 0)]
+    code = chunk.body_text.rstrip("\n")
+    if spec is None or unfenced(chunk.body_md) != (spec.fence_lang, code):
+        return dataclasses.replace(chunk, repeat=repeat), ""
+    own, handed = shown_text(chunk, repeat), ""
+    if repeat:
+        lines = own[:-1].split("\n")
+        blank = len(lines) - len(list(dropwhile(lambda ln: not ln.strip(), reversed(lines))))
+        blank = min(blank, len(lines) - 1)
+        own = "\n".join(lines[: len(lines) - blank])
+        handed = "".join(f"{ln}\n" for ln in lines[len(lines) - blank :])
+    lead = lead if before is not None else ""
+    windows = [(chunk.body_text, len(lead))]
     if before is not None:
-        windows.append((before.body_text, before_repeat - len(before.body_text)))
+        windows.append((before.body_text, before_repeat - len(before.body_text) + len(lead)))
+    cut = Seam(code=True)
     body_md = with_seams(
-        fenced(shown_text(chunk, repeat), spec.fence_lang),
+        fenced(lead + own, spec.fence_lang),
         above=cut if before is not None else None,
         below=cut if repeat else None,
     )
-    return dataclasses.replace(chunk, repeat=repeat, body_md=body_md, windows=tuple(windows))
+    trimmed = dataclasses.replace(chunk, repeat=repeat, body_md=body_md, windows=tuple(windows))
+    return trimmed, handed

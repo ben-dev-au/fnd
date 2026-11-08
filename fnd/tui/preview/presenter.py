@@ -457,28 +457,20 @@ class PreviewPresenter:
         return "first_match"
 
     def _landing_target(self, parent_id: str, focus_chunk_seq: int) -> int:
-        """The chunk a first-match landing on ``focus_chunk_seq`` aims at: the next
-        one when every match it paints sits in the stretch the next one shows."""
+        """The chunk a match landing on ``focus_chunk_seq`` aims at (see
+        :func:`fnd.tui.match_evidence.landing_chunk`), with any intent armed for it
+        moved along. A heading jump stays put."""
         chunks = self.chunk_cache.get(parent_id)
-        if not chunks or self._landing_intent(parent_id, focus_chunk_seq) != "first_match":
+        if not chunks or self._landing_intent(parent_id, focus_chunk_seq) == "chunk_top":
             return focus_chunk_seq
-        from itertools import pairwise
-
-        from fnd.render import text_has_any_match
-        from fnd.tui.match_evidence import has_paintable_match
+        from fnd.tui.match_evidence import landing_chunk
 
         spec = self._app._evidence_spec_for_current_row()
-        for chunk, after in pairwise(chunks):
-            if chunk.chunk_seq != focus_chunk_seq:
-                continue
-            if (
-                chunk.repeat
-                and not has_paintable_match(chunk, spec)
-                and text_has_any_match(chunk.body_text[-chunk.repeat :], spec)
-            ):
-                return after.chunk_seq
-            break
-        return focus_chunk_seq
+        landing = landing_chunk(chunks, focus_chunk_seq, spec)
+        pending = self.pending_landing_intent
+        if landing != focus_chunk_seq and pending and pending[:2] == (parent_id, focus_chunk_seq):
+            self.pending_landing_intent = (parent_id, landing, pending[2])
+        return landing
 
     def _retarget(self, parent_id: str, was: int, now: int) -> None:
         """Point the armed anchor and the in-flight latch for ``was`` at ``now``."""

@@ -290,10 +290,13 @@ def window_spans(plain: str, windows: tuple[tuple[str, int], ...], spec: MatchSp
 def _chunk_spans(
     plains: Sequence[str], spec: MatchSpec, windows: tuple[tuple[str, int], ...]
 ) -> list[list[Span]]:
-    """Per-block spans; a lone block shown from ``windows[0]`` is judged by the
-    windows, anything else (a mermaid diagram, say) on its own."""
-    if len(plains) == 1 and windows and windows[0][0].startswith(plains[0]):
-        return [window_spans(plains[0], windows, spec)]
+    """Per-block spans; a lone block shown from ``windows[0]`` (after any blank lead)
+    is judged by the windows, anything else (a mermaid diagram, say) on its own."""
+    if len(plains) == 1 and windows:
+        text, lead = windows[0]
+        plain = plains[0]
+        if 0 <= lead <= len(plain) and not plain[:lead].strip() and text.startswith(plain[lead:]):
+            return [window_spans(plain, windows, spec)]
     return _build_match_spans_multi(plains, spec)
 
 

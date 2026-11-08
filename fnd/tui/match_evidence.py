@@ -34,18 +34,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from fnd.extract._fences import unfenced
+from fnd.query import FUZZY_PASS_INDEX
 from fnd.render import text_has_any_match
 from fnd.seams import read_seams
 from fnd.tui.preview_dispatcher import PreviewBody, uses_markdown_renderer
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from fnd.matching import MatchSpec
+    from fnd.query import FileChunk
 
-__all__ = ["FUZZY_PASS_INDEX", "evidence_spec_for_pass", "has_paintable_match", "rendered_text"]
-
-# ``Hit.pass_index`` for the cascade's fuzzy pass (0 exact, 1 fuzzy, 2 synonym,
-# 3 fusion-phrase).
-FUZZY_PASS_INDEX = 1
+__all__ = [
+    "FUZZY_PASS_INDEX",
+    "evidence_spec_for_pass",
+    "has_paintable_match",
+    "landing_chunk",
+    "rendered_text",
+]
 
 
 def evidence_spec_for_pass(pass_index: int, *, strict: MatchSpec, painting: MatchSpec) -> MatchSpec:
@@ -66,9 +73,13 @@ def rendered_text(body: PreviewBody) -> str:
 
     Routes on :func:`fnd.tui.preview_dispatcher.uses_markdown_renderer` (the
     same predicate the mount loop uses) so this can't disagree with what gets
-    mounted.
+    mounted. A body that is one fence paints its code, never the fence's tag.
     """
-    return read_seams(body.body_md)[2] if uses_markdown_renderer(body) else body.body_text
+    if not uses_markdown_renderer(body):
+        return body.body_text
+    visible = read_seams(body.body_md)[2]
+    fence = unfenced(visible)
+    return visible if fence is None else fence[1]
 
 
 def has_paintable_match(body: PreviewBody, spec: MatchSpec) -> bool:
@@ -79,13 +90,28 @@ def has_paintable_match(body: PreviewBody, spec: MatchSpec) -> bool:
     """
     if spec.is_empty:
         return True
-    if text_has_any_match(rendered_text(body), spec):
+    shown = rendered_text(body)
+    if text_has_any_match(shown, spec):
         return True
     windows: tuple[tuple[str, int], ...] = getattr(body, "windows", ())
     if not any(text_has_any_match(text, spec) for text, _ in windows):
         return False
     from fnd.tui.widgets.markdown import paints_match
 
-    text = body.body_text
-    shown = text[: len(text) - getattr(body, "repeat", 0)].rstrip("\n")
     return paints_match((shown,), spec, windows)
+
+
+def landing_chunk(chunks: Sequence[FileChunk], seq: int, spec: MatchSpec) -> int:
+    """The chunk a landing on chunk ``seq`` shows its match in: the next one when every
+    match ``seq`` paints sits in the stretch that one shows (:mod:`fnd.chunk_overlap`)."""
+    for i, chunk in enumerate(chunks[:-1]):
+        if chunk.chunk_seq != seq:
+            continue
+        if (
+            chunk.repeat
+            and not has_paintable_match(chunk, spec)
+            and text_has_any_match(chunk.body_text[-chunk.repeat :], spec)
+        ):
+            return chunks[i + 1].chunk_seq
+        break
+    return seq
