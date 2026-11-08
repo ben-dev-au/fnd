@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from fnd.matching import MatchSpec
 
 
@@ -107,6 +109,21 @@ class SemanticTrace:
     ranks: dict[str, tuple[int | None, int | None]]
 
 
+def resolved(
+    spec: MatchSpec,
+    corrections: Mapping[str, tuple[str, ...]],
+    widened: Mapping[str, tuple[str, ...]],
+    phrase_globs: Sequence[tuple[str, frozenset[str] | None]],
+) -> MatchSpec:
+    """``spec`` plus a search's respellings and phrase wildcards: one rule for every
+    surface that judges matches after the search."""
+    return (
+        spec.with_corrections(corrections)
+        .with_corrections(widened, typed_written=True)
+        .with_phrase_globs(dict(phrase_globs))
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SearchTrace:
     """Unified per-query trace surfaced by :func:`fnd.layered.search_layered`.
@@ -157,11 +174,7 @@ class SearchTrace:
 
     def resolve(self, spec: MatchSpec) -> MatchSpec:
         """``spec`` plus what this search resolved: respellings and phrase wildcards."""
-        return (
-            spec.with_corrections(self.corrections)
-            .with_corrections(self.widened, typed_written=True)
-            .with_phrase_globs(dict(self.phrase_globs))
-        )
+        return resolved(spec, self.corrections, self.widened, self.phrase_globs)
 
     def to_json(self) -> dict[str, object]:
         out: dict[str, object] = {

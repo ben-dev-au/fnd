@@ -125,14 +125,27 @@ async def test_a_txt_preview_shows_the_file_once(txt_index: tuple[Path, list[str
         assert set(fv.first_hit_line_in_chunk.values()) == {200}
 
 
-@pytest.fixture
-def code_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+def _code(marks: dict[int, str], *, long_from: int, count: int = 400) -> str:
+    """Numbered rows; rows from ``long_from`` on are padded so their windows rank lower."""
+    pad = " ".join(f"pad{j}" for j in range(4))
+    rows = [f"x_{i} = {i}  # row {i}" + (f" {pad}" if i >= long_from else "") for i in range(count)]
+    for i, word in marks.items():
+        rows[i] += f" {word}"
+    return "\n".join(rows)
+
+
+def _index(tmp_path: Path, index_dir: Path, text: str) -> Path:
     docs = tmp_path / "docs"
     docs.mkdir()
-    rows = [f"x_{i} = {i}  # row {i}" + (" zebra" if i == 150 else "") for i in range(400)]
-    (docs / "prog.py").write_text("\n".join(rows), encoding="utf-8")
-    build_index(roots=[docs], index_dir=tmp_index_dir, collection="default")
-    return tmp_index_dir
+    (docs / "prog.py").write_text(text, encoding="utf-8")
+    build_index(roots=[docs], index_dir=index_dir, collection="default")
+    return index_dir
+
+
+@pytest.fixture
+def code_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """Row 150 sits in windows 0 and 1; padding ranks window 0 higher, so it is listed."""
+    return _index(tmp_path, tmp_index_dir, _code({150: "zebra"}, long_from=160))
 
 
 def _preview_rows(app: FNDApp) -> list[str]:
@@ -142,79 +155,86 @@ def _preview_rows(app: FNDApp) -> list[str]:
     return [row[pane.x : pane.right] for row in rows]
 
 
+def _landed(app: FNDApp, marker: str) -> bool:
+    """Settled with the row reading ``marker`` (``"row N zebra"``, pad words aside) on screen."""
+    label, word = marker.rsplit(" ", 1)
+    return (
+        app._preview.is_painted()
+        and not app._preview.pipeline_busy()
+        and not app._preview_scroll.is_settling
+        and any(f"# {label} " in f"{row} " and word in row for row in _preview_rows(app))
+    )
+
+
 @pytest.mark.asyncio
-async def test_each_code_section_lands_on_its_one_shown_match(code_index: Path) -> None:
-    """Both windows hold row 150; each section lands with it on screen, shown once,
-    though both land on chunk 1 and a warm settle leaves the latch on it."""
+async def test_the_listed_section_lands_on_its_one_shown_match(code_index: Path) -> None:
+    """Window 0 is listed but shows row 150 in window 1, where its landing goes."""
     app = FNDApp(index_dir=code_index, initial_query="zebra")
     async with app.run_test(size=(120, 30)) as pilot:
         tree = app.query_one("#results_pane", Tree)
         await wait_until(
-            pilot,
-            lambda: bool(tree.root.children) and len(tree.root.children[0].children) == 2,
-            timeout=20.0,
-            message="the overlap match never gave two sections",
+            pilot, lambda: _landed(app, "row 150 zebra"), timeout=20.0, message="never landed"
         )
-        pane = app.query_one("#preview_pane")
-        sections = list(tree.root.children[0].children)
-        if tree.cursor_node is sections[0]:
-            sections.reverse()
-        for section in sections:
-            await wait_until(
-                pilot,
-                lambda: app._preview.is_painted() and not app._preview.pipeline_busy(),
-                timeout=20.0,
-                message="the preview never settled",
-            )
-            pane.scroll_home(animate=False)
-            await wait_until(
-                pilot,
-                lambda: not any("row 150 zebra" in row for row in _preview_rows(app)),
-                message="the preview never left the match",
-            )
-            anchor = app._preview_scroll.anchor
-            assert anchor is not None
-            app._preview.inflight_target = (anchor.parent_id, anchor.focus_chunk_seq)
-            tree.move_cursor(section)
-            await wait_until(
-                pilot,
-                lambda: (
-                    app._preview.is_painted()
-                    and not app._preview.pipeline_busy()
-                    and not app._preview_scroll.is_settling
-                    and any("row 150 zebra" in row for row in _preview_rows(app))
-                ),
-                timeout=20.0,
-                message="the section never landed on its match",
-            )
-            rows = _preview_rows(app)
-            numbered = [row.split("# row ")[1].split()[0] for row in rows if "# row " in row]
-            assert sum("row 150 zebra" in row for row in rows) == 1, rows
-            assert len(numbered) == len(set(numbered)), rows
+        assert [h.chunk_seq for g in app._search.groups for h in g.hits] == [0]
+        assert len(tree.root.children[0].children) == 1
+        anchor = app._preview_scroll.anchor
+        assert anchor is not None
+        assert anchor.focus_chunk_seq == 1
+        rows = _preview_rows(app)
+        numbered = [row.split("# row ")[1].split()[0] for row in rows if "# row " in row]
+        assert sum("row 150 zebra" in row for row in rows) == 1, rows
+        assert len(numbered) == len(set(numbered)), rows
 
 
 @pytest.mark.asyncio
-async def test_b_never_hands_over_to_a_section_whose_match_shows_elsewhere(
-    code_index: Path,
-) -> None:
-    """Section 0's only match shows in chunk 1, so ``b`` from it has nowhere to go."""
+async def test_b_never_hands_over_to_the_match_already_shown(code_index: Path) -> None:
+    """The one listed section lands where the view already is, so ``b`` has nowhere to go."""
     app = FNDApp(index_dir=code_index, initial_query="zebra")
     async with app.run_test(size=(120, 30)) as pilot:
-
-        def landed() -> bool:
-            return (
-                app._preview.is_painted()
-                and not app._preview.pipeline_busy()
-                and not app._preview_scroll.is_settling
-                and any("row 150 zebra" in row for row in _preview_rows(app))
-            )
-
-        await wait_until(pilot, landed, timeout=20.0, message="the match never landed")
+        await wait_until(
+            pilot, lambda: _landed(app, "row 150 zebra"), timeout=20.0, message="never landed"
+        )
         app.action_nav_prev_match()
         assert app._preview.pending_landing_intent is None
         await settle(pilot)
-        assert landed()
+        assert _landed(app, "row 150 zebra")
         assert not app._current_match_unlocatable()
+
+
+@pytest.mark.asyncio
+async def test_n_and_b_reach_a_match_shown_in_the_next_chunk(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Window 1's only match, row 300, shows in window 2: n and b walk every match there."""
+    pad = " ".join(f"pad{j}" for j in range(6))
+    rows = [f"# row {i}" + (f" {pad}" if i >= 308 else "") for i in range(500)]
+    for i in (10, 300, 400, 470):
+        rows[i] += " zebra"
+    text = "\n".join(rows)
+    app = FNDApp(index_dir=_index(tmp_path, tmp_index_dir, text), initial_query="zebra")
+    async with app.run_test(size=(120, 30)) as pilot:
+        tree = app.query_one("#results_pane", Tree)
+        await wait_until(
+            pilot, lambda: bool(tree.root.children), timeout=20.0, message="no results"
+        )
+        first = next(
+            n for n in tree.root.children[0].children if n.data and n.data["hit"].chunk_seq == 0
+        )
+        tree.move_cursor(first)
+        await wait_until(
+            pilot, lambda: _landed(app, "row 10 zebra"), timeout=20.0, message="never landed"
+        )
+        assert sorted(h.chunk_seq for g in app._search.groups for h in g.hits) == [0, 1, 3]
+        assert app._match_nav._hop_targets() == {0: 0, 2: 1, 3: 3}
+        n, b = app.action_nav_next_match, app.action_nav_prev_match
+        for press, row in [(n, 300), (n, 400), (n, 470), (b, 400), (b, 300), (b, 10)]:
+            press()
+            await wait_until(
+                pilot,
+                lambda row=row: _landed(app, f"row {row} zebra"),
+                timeout=20.0,
+                message=f"missed row {row}",
+            )
 
 
 @pytest.mark.asyncio
@@ -316,3 +336,25 @@ async def test_a_phrase_across_a_fence_cut_stops_in_both_fences(
             assert frozen.stop_rows
         assert "alpha" in painted[0]
         assert "beta" in painted[1]
+
+
+def test_a_latch_on_a_shared_landing_swallows_only_a_repeat_of_its_row() -> None:
+    """Rows 0 and 1 both land on chunk 1: each move loads, each same-row repeat does not."""
+    from unittest.mock import MagicMock
+
+    from fnd.tui.preview.presenter import PreviewPresenter
+
+    p: Any = PreviewPresenter.__new__(PreviewPresenter)
+    p._app = MagicMock()
+    p.load_timer = None
+    p.inflight_target = None
+    p.inflight_request = None
+    p._landing_target = lambda parent_id, seq: 1
+    renders: list[tuple[str, int]] = []
+    p.render_full_doc = lambda parent_id, *, focus_chunk_seq: renders.append(
+        (parent_id, focus_chunk_seq)
+    )
+    for row in (0, 0, 1, 1, 0):
+        p.load_target = ("doc", row)
+        p.fire_pending_load()
+    assert renders == [("doc", 1)] * 3
