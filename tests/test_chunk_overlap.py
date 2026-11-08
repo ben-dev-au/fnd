@@ -181,3 +181,14 @@ def test_a_fence_tag_is_no_evidence_of_a_match(tmp_path: Path) -> None:
     chunk = _extracted(tmp_path, "prog.py", "x = 1\ny = 2")[0]
     assert rendered_text(chunk) == "x = 1\ny = 2"
     assert not has_paintable_match(chunk, MatchSpec.from_query("python", auto_fuzzy=False))
+
+
+def test_a_phrase_across_an_early_look_cut_still_counts() -> None:
+    """The whole text is checked before a window is judged to hold no match."""
+    from fnd.chunk_overlap import _PIECE_CHARS, _holds_a_match
+
+    text = "x\n" * (_PIECE_CHARS // 2) + "alpha\nbeta\n" + "y\n" * _PIECE_CHARS
+    spec = MatchSpec.from_query('"alpha beta"', auto_fuzzy=False)
+    assert text.find("alpha") < text.find("\n", _PIECE_CHARS) < text.find("beta")
+    assert _holds_a_match(text, spec)
+    assert not _holds_a_match(text.replace("beta", "gamma"), spec)

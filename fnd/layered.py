@@ -30,7 +30,8 @@ from typing import TYPE_CHECKING, Literal, overload
 
 from fnd.analysis import analyse
 from fnd.cascade import _with_pass, cascade_search
-from fnd.explain import CascadeTrace, SearchTrace, SemanticTrace, StrongSignalTrace
+from fnd.chunk_overlap import fold_repeated_sections
+from fnd.explain import CascadeTrace, SearchTrace, SemanticTrace, StrongSignalTrace, resolved
 from fnd.fusion import (
     STRONG_SIGNAL_MIN_NORM_GAP,
     STRONG_SIGNAL_MIN_NORM_SCORE,
@@ -41,6 +42,7 @@ from fnd.fusion import (
     query_rare_spellings,
     rank_by_position,
 )
+from fnd.matching import MatchSpec
 from fnd.query import (
     CandidatePool,
     FileGroup,
@@ -366,6 +368,26 @@ def search_layered(
         sections_per_file=len(hits),
         collapse_copies=collapse_copies,
     )
+    listed = {g.parent_id: len(g.hits) for g in groups}
+    globs = _phrase_globs(searcher, query)
+    groups = fold_repeated_sections(
+        groups,
+        strict=resolved(
+            MatchSpec.from_query(query, synonyms=synonyms, auto_fuzzy=False), fixes, widened, globs
+        ),
+        fuzzy=resolved(
+            MatchSpec.from_query(
+                query,
+                synonyms=synonyms,
+                auto_fuzzy=auto_fuzzy_enabled,
+                min_term_chars=min_term_chars,
+            ),
+            fixes,
+            widened,
+            globs,
+        ),
+    )
+    folded = {g.parent_id: listed[g.parent_id] - len(g.hits) for g in groups}
     groups = by_heading_within_file(
         searcher,
         f"{query} {respelt(query, {**fixes, **widened})}" if fixes or widened else query,
@@ -402,13 +424,14 @@ def search_layered(
             # shown file's section count is a floor.
             sections_truncated=(
                 not all(exhausted)
-                or sum(len(g.hits) for g in groups) < sum(1 for h in hits if h.parent_id in shown)
+                or sum(len(g.hits) for g in groups)
+                < sum(1 for h in hits if h.parent_id in shown) - sum(folded[p] for p in shown)
             ),
             strong_signal=ss_trace,
             fusion=fusion_trace,
             cascade=cascade_trace,
             elapsed_ms=0,  # populated by caller via timer; left 0 here for unit tests
-            phrase_globs=_phrase_globs(searcher, query),
+            phrase_globs=globs,
             widened=widened,
             semantic=None
             if skipped is None
