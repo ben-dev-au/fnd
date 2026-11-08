@@ -32,6 +32,7 @@ Design notes:
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -45,6 +46,7 @@ from textual.strip import Strip
 # The auto-scroll target prefers a full, qualifying match so a ``{N}``/``"a b"~N``
 # query lands on the actual co-occurrence, not an earlier dimmed lone-term hit.
 from fnd.render import DIM_STYLES as _DIM_STYLES
+from fnd.render import union_spans
 from fnd.tui.strip_document import StripDocumentView
 
 if TYPE_CHECKING:
@@ -127,6 +129,7 @@ def build_file_view(
     chunks: Sequence[tuple[int, str, Sequence[MatchSpan]]],
     *,
     insert_chunk_gaps: bool = True,
+    repeats: Sequence[int] = (),
 ) -> FileView:
     """Construct a FileView from decoded chunk data.
 
@@ -149,61 +152,98 @@ def build_file_view(
     chunks so the user can see where chunks split. The gap row belongs
     to the *following* chunk for offset-mapping purposes.
 
+    ``repeats[i]`` counts the characters at the end of chunk ``i`` that the
+    next chunk repeats (:mod:`fnd.chunk_overlap`). They show once, the next
+    chunk continuing the text with no gap row, and both chunks' spans paint
+    there; a chunk lands on the first match painted across its whole window.
+
     Pure function: no widget mounting, no Textual side-effects.
     """
     fv = FileView()
+    if not chunks:
+        return fv
+    parts: list[str] = []
+    painted: list[tuple[int, int, str] | None] = []
+    regions: list[tuple[int, int]] = []
+    spans_of: list[tuple[int, int, int]] = []
+    pos = 0
+    shared_from = 0
+    joined = False
     for nth, (chunk_id, chunk_text, match_spans) in enumerate(chunks):
-        # Compute which lines within the chunk contain a match.
         text = chunk_text.replace("\r\n", "\n")
-        # Find each line's [start, end) byte offset within the chunk.
-        line_offsets: list[tuple[int, int, str]] = []
-        cursor = 0
-        for raw_line in text.split("\n"):
-            line_offsets.append((cursor, cursor + len(raw_line), raw_line))
-            cursor += len(raw_line) + 1  # +1 for the dropped \n
-        chunk_first_match: int | None = None  # first FULL (qualifying) match line
-        chunk_first_dim: int | None = None  # fallback: a dim-only proximity line
-        # Per-line list of (local_start, local_end, style): preserves
-        # styles per span so each matched word can render with its own
-        # colour (e.g. fuzzy matches differ from exact matches).
-        local_styled_offsets: list[list[tuple[int, int, str]]] = [[] for _ in line_offsets]
+        if nth > 0 and not joined:
+            parts.append("\n")
+            pos += 1
+        region = pos
+        if nth > 0 and not joined and insert_chunk_gaps:
+            parts.append("\n")
+            pos += 1
+        repeat = repeats[nth] if nth < len(repeats) and nth + 1 < len(chunks) else 0
+        shown = len(chunk_text[: len(chunk_text) - repeat].replace("\r\n", "\n"))
+        shared = [
+            i for i in range(shared_from, len(painted)) if joined and _ends_after(painted[i], pos)
+        ]
+        shared_from = len(painted)
+        own: list[tuple[int, int, str]] = []
         for span in match_spans:
             span_start, span_end, span_style = _span_parts(span)
-            for li, (lstart, lend, _) in enumerate(line_offsets):
-                if span_end <= lstart or span_start >= lend:
-                    continue
-                local_start = max(0, span_start - lstart)
-                local_end = min(lend - lstart, span_end - lstart)
-                local_styled_offsets[li].append((local_start, local_end, span_style))
-        chunk_start = len(fv.lines)
-        # Chunk-boundary gap row (skipped for the very first chunk).
-        if insert_chunk_gaps and nth > 0:
-            fv.lines.append(Text(""))
-            fv.line_to_chunk.append(chunk_id)
-        for (_, _, raw_line), styled_spans in zip(line_offsets, local_styled_offsets, strict=False):
-            global_line_idx = len(fv.lines)
-            t = Text(raw_line)
-            if styled_spans:
-                for span_start, span_end, span_style in styled_spans:
-                    t.stylize(span_style, span_start, span_end)
-                fv.match_lines.add(global_line_idx)
-                # Prefer a full (qualifying) match for the auto-scroll target; a
-                # line whose only matches are dimmed proximity strays is a
-                # fallback, so a proximity query lands on the real co-occurrence.
-                if any(style not in _DIM_STYLES for _, _, style in styled_spans):
-                    if chunk_first_match is None:
-                        chunk_first_match = global_line_idx
-                elif chunk_first_dim is None:
-                    chunk_first_dim = global_line_idx
-            fv.lines.append(t)
-            fv.line_to_chunk.append(chunk_id)
-        chunk_end = len(fv.lines)
-        fv.chunk_to_range[chunk_id] = (chunk_start, chunk_end)
-        fv.structural_map.append((chunk_start, chunk_end, "chunk", chunk_id))
-        target_line = chunk_first_match if chunk_first_match is not None else chunk_first_dim
-        if target_line is not None:
-            fv.first_hit_line_in_chunk[chunk_id] = target_line
+            span_start, span_end = max(span_start, 0), min(span_end, len(text))
+            if span_end <= span_start:
+                continue
+            own.append((pos + span_start, pos + span_end, span_style))
+        tail = [k for i in shared if (k := painted[i]) is not None]
+        for i in shared:
+            painted[i] = None
+        painted.extend(union_spans([tail, own]) if tail else own)
+        spans_of.append((chunk_id, pos, pos + len(text)))
+        regions.append((region, chunk_id))
+        parts.append(text[:shown])
+        pos += shown
+        joined = repeat > 0
+    doc = "".join(parts)
+    line_starts: list[int] = []
+    cursor = 0
+    for raw_line in doc.split("\n"):
+        line_starts.append(cursor)
+        fv.lines.append(Text(raw_line))
+        cursor += len(raw_line) + 1
+
+    def line_of(offset: int) -> int:
+        return bisect_right(line_starts, offset) - 1
+
+    for i, (region, chunk_id) in enumerate(regions):
+        first = line_of(region)
+        end = line_of(regions[i + 1][0] - 1) + 1 if i + 1 < len(regions) else len(fv.lines)
+        fv.chunk_to_range[chunk_id] = (first, end)
+        fv.structural_map.append((first, end, "chunk", chunk_id))
+    owner = 0
+    for start in line_starts:
+        while owner + 1 < len(regions) and regions[owner + 1][0] <= start:
+            owner += 1
+        fv.line_to_chunk.append(regions[owner][1])
+    drawn = sorted((k for k in painted if k is not None), key=lambda k: k[0])
+    for span_start, span_end, span_style in drawn:
+        li = line_of(span_start)
+        while li < len(fv.lines) and line_starts[li] < span_end:
+            line = fv.lines[li]
+            local_start = max(0, span_start - line_starts[li])
+            local_end = min(len(line.plain), span_end - line_starts[li])
+            if local_end > local_start:
+                line.stylize(span_style, local_start, local_end)
+                fv.match_lines.add(li)
+            li += 1
+    starts = [k[0] for k in drawn]
+    for chunk_id, first_char, end_char in spans_of:
+        inside = drawn[bisect_left(starts, first_char) : bisect_left(starts, end_char)]
+        full = next((k for k in inside if k[2] not in _DIM_STYLES), None)
+        target = full or (inside[0] if inside else None)
+        if target is not None:
+            fv.first_hit_line_in_chunk[chunk_id] = line_of(target[0])
     return fv
+
+
+def _ends_after(span: tuple[int, int, str] | None, offset: int) -> bool:
+    return span is not None and span[1] > offset
 
 
 @dataclass(slots=True)

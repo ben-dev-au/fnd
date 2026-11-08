@@ -130,6 +130,7 @@ def test_module_exposes_no_filter() -> None:
         "FUZZY_PASS_INDEX",
         "evidence_spec_for_pass",
         "has_paintable_match",
+        "landing_chunk",
         "rendered_text",
     }
     assert not [n for n in dir(module) if "filter" in n.lower() or "drop" in n.lower()]
