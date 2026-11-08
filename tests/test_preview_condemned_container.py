@@ -31,7 +31,8 @@ from fnd.query import FileChunk, FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.preview_dispatcher import choose_preview_mode
 from fnd.tui.widgets.preview_container import PreviewContainer
-from tests._pilot_wait import safe_pause
+from tests._mount_gate import MountGate
+from tests._pilot_wait import safe_pause, wait_until
 
 
 @pytest.fixture
@@ -77,8 +78,7 @@ async def test_dispatch_never_adopts_a_container_it_just_condemned(built_index: 
     strand ``active`` on a detached widget (permanent blank pane)."""
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
-        await safe_pause(pilot)
-        assert app._search.groups, "setup: query produced no results"
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
         preview = app._preview
         g, chunks = _structural_group(app)
         query_sig = app._search.query_signature()
@@ -120,10 +120,13 @@ async def test_dispatch_never_adopts_a_container_it_just_condemned(built_index: 
             "mount will build into a widget that is about to be torn out of the DOM"
         )
 
-        await safe_pause(pilot)
-        await safe_pause(pilot)
+        await wait_until(
+            pilot,
+            lambda: preview.active is not None,
+            message="a navigation must leave an active preview",
+        )
         active = preview.active
-        assert active is not None, "a navigation must leave an active preview"
+        assert active is not None
         assert active.is_attached, "the active preview must be attached to the DOM"
         assert not active._pruning, "the active preview must not be condemned"
 
@@ -134,7 +137,7 @@ async def test_condemned_cache_entry_is_a_miss(built_index: Path) -> None:
     activates a widget that vanishes a tick later."""
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
-        await safe_pause(pilot)
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
         preview = app._preview
         g, chunks = _structural_group(app)
         query_sig = app._search.query_signature()
@@ -177,7 +180,7 @@ async def test_already_active_fast_path_skipped_when_active_is_condemned(
     about to disappear and leave the pane blank."""
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
-        await safe_pause(pilot)
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
         preview = app._preview
         g, chunks = _structural_group(app)
         query_sig = app._search.query_signature()
@@ -223,7 +226,7 @@ async def test_mount_finally_does_not_cache_a_condemned_container(built_index: P
 
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
-        await safe_pause(pilot)
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
         preview = app._preview
         g, chunks = _structural_group(app)
         query_sig = app._search.query_signature()
@@ -234,12 +237,7 @@ async def test_mount_finally_does_not_cache_a_condemned_container(built_index: P
 
         # Park the mount in its early-await window so it is still in flight when
         # we condemn the container.
-        gate = asyncio.Event()
-
-        async def _blocking_cancel_task_on(_c: object) -> None:
-            await gate.wait()
-
-        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+        gate = MountGate(app)
 
         container = PreviewContainer(
             parent_doc_id=g.parent_id,
@@ -256,7 +254,7 @@ async def test_mount_finally_does_not_cache_a_condemned_container(built_index: P
             )
         )
         preview.mount_task = task
-        await safe_pause(pilot)
+        await gate.wait_parked(pilot, container)
         assert container.parent is not None, "setup: parked mount has the container mounted"
 
         # Condemn it mid-flight, then release + cancel so the finally runs while
@@ -265,7 +263,7 @@ async def test_mount_finally_does_not_cache_a_condemned_container(built_index: P
         assert container.parent is not None, "setup: still attached in flight"
         assert container._pruning, "setup: condemned in flight"
         task.cancel()
-        gate.set()
+        gate.release()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 

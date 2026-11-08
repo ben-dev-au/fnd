@@ -22,7 +22,8 @@ import pytest
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.widgets.preview_container import PreviewContainer
-from tests._pilot_wait import run_search, safe_pause
+from tests._mount_gate import MountGate
+from tests._pilot_wait import run_search, safe_pause, wait_until
 
 
 @pytest.fixture
@@ -37,18 +38,12 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
 ) -> None:
     app = FNDApp(index_dir=built_index, initial_query="results")
     async with app.run_test() as pilot:
-        await safe_pause(pilot)
-        assert app._search.groups, "setup: query produced no results"
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
         preview = app._preview
 
         # Gate the cold structural mount in its early-await window so it sits
         # parked while a new query runs on top of it.
-        gate = asyncio.Event()
-
-        async def _blocking_cancel_task_on(_c: object) -> None:
-            await gate.wait()
-
-        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+        gate = MountGate(app)
 
         g = app._search.groups[0]
         seq = g.hits[0].chunk_seq if g.hits else 0
@@ -66,7 +61,7 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
             )
         )
         preview.mount_task = task
-        await safe_pause(pilot)  # park on the gate: container now mounted, pre-finalise
+        await gate.wait_parked(pilot, stale)
         assert stale.parent is not None, "setup: parked container should be mounted in DOM"
         assert getattr(stale, "_finalise_task", None) is None, "setup: must be pre-finalise"
 
@@ -80,7 +75,7 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
         # run() nulls preview.mount_task during cancellation, so
         # user_mount_in_flight() would report idle before this task's finally has
         # actually drained. Awaiting the captured task is the deterministic wait.
-        gate.set()
+        gate.release()
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=10.0)
         await safe_pause(pilot)
@@ -107,16 +102,10 @@ async def test_superseded_mount_cancels_detached_finaliser(built_index: Path) ->
     """
     app = FNDApp(index_dir=built_index, initial_query="results")
     async with app.run_test() as pilot:
-        await safe_pause(pilot)
-        assert app._search.groups, "setup: query produced no results"
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
         preview = app._preview
 
-        gate = asyncio.Event()
-
-        async def _blocking_cancel_task_on(_c: object) -> None:
-            await gate.wait()
-
-        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+        gate = MountGate(app)
 
         g = app._search.groups[0]
         seq = g.hits[0].chunk_seq if g.hits else 0
@@ -151,12 +140,12 @@ async def test_superseded_mount_cancels_detached_finaliser(built_index: Path) ->
             )
         )
         preview.mount_task = task
-        await safe_pause(pilot)  # park on the gate
+        await gate.wait_parked(pilot, container)
 
         # New query supersedes (mirrors run(): bump generation, then cancel).
         preview.bump_reset_generation()
         preview.cancel_mount_task()
-        gate.set()
+        gate.release()
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=10.0)
         await safe_pause(pilot)
