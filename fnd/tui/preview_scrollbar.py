@@ -57,6 +57,7 @@ from rich.style import Style as RichStyle
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.geometry import Region, Size
+from textual.scroll_view import ScrollView
 from textual.scrollbar import ScrollBar, ScrollBarRender
 
 try:  # private: an empty tuple is isinstance-safe, so its loss only costs the
@@ -403,17 +404,61 @@ class MatchAwareScroll(VerticalScroll):
     def _reading_view(self) -> bool:
         return bool(getattr(self.app, "_reading_mode", False))
 
+    def _flat_buffer(self) -> ScrollView | None:
+        """The flat file's buffer shown in this pane: it scrolls itself inside a
+        pane that never overflows, so the pane's scroll keys are its."""
+        buffer = getattr(getattr(self.app, "_flat", None), "active_buffer", None)
+        if isinstance(buffer, ScrollView) and buffer.parent is self and buffer.display:
+            return buffer
+        return None
+
+    def _scroll_flat(self, action: str, step: int = 0) -> bool:
+        """Run ``action`` on the flat buffer, if one is shown, as this pane's own
+        user scroll; ``step`` is Reading View's line count, signed."""
+        buffer = self._flat_buffer()
+        if buffer is None:
+            return False
+        if step and buffer.allow_vertical_scroll:
+            buffer.scroll_to(y=buffer.scroll_target_y + step, animate=False)
+        else:
+            getattr(buffer, f"action_{action}")()
+        self._schedule_lazy_check(user_initiated=True)
+        return True
+
+    def _step(self, sign: int) -> int:
+        return sign * self._READING_SCROLL_LINES if self._reading_view() else 0
+
     def action_scroll_down(self) -> None:
+        if self._scroll_flat("scroll_down", self._step(1)):
+            return
         if self._reading_view() and self.allow_vertical_scroll:
             self.scroll_to(y=self.scroll_target_y + self._READING_SCROLL_LINES, animate=False)
             return
         super().action_scroll_down()
 
     def action_scroll_up(self) -> None:
+        if self._scroll_flat("scroll_up", self._step(-1)):
+            return
         if self._reading_view() and self.allow_vertical_scroll:
             self.scroll_to(y=self.scroll_target_y - self._READING_SCROLL_LINES, animate=False)
             return
         super().action_scroll_up()
+
+    def action_page_down(self) -> None:
+        if not self._scroll_flat("page_down"):
+            super().action_page_down()
+
+    def action_page_up(self) -> None:
+        if not self._scroll_flat("page_up"):
+            super().action_page_up()
+
+    def action_scroll_home(self) -> None:
+        if not self._scroll_flat("scroll_home"):
+            super().action_scroll_home()
+
+    def action_scroll_end(self) -> None:
+        if not self._scroll_flat("scroll_end"):
+            super().action_scroll_end()
 
     def halt_glide(self) -> None:
         """Stop a scroll animation where it is. A scroll that finds the pane in
@@ -573,32 +618,21 @@ class MatchAwareScroll(VerticalScroll):
         # Everything ``watch_scroll_y`` would have told about the move: the
         # lazy mounter's boundary check and the ▲/▼ re-measure both key off a
         # scroll, and an absorb is one even though it keeps the reader still.
+        self._schedule_lazy_check()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        self._schedule_lazy_check()
+
+    def _schedule_lazy_check(self, *, user_initiated: bool | None = None) -> None:
+        """Hand a scroll to the lazy mounter, which debounces a burst. Unless told,
+        focus decides user from programmatic: navigation scrolls while the results
+        tree holds focus. With no mounter (the widget alone) it is a no-op."""
         with contextlib.suppress(Exception):
             lazy = getattr(self.app, "_lazy", None)
             if lazy is not None:
-                lazy.schedule_check(user_initiated=self.has_focus)
-
-    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        # Bubble to the app so it can extend the mounted chunk window
-        # when the viewport approaches a boundary. The app debounces
-        # internally so consecutive watcher trips (e.g., from a
-        # programmatic scroll-to-widget) collapse to a single check.
-        # Missing handler is a silent no-op so this widget stays
-        # usable in isolation.
-        super().watch_scroll_y(old_value, new_value)
-        try:
-            # Call the LazyMounter directly: the app-level delegation shim
-            # (_schedule_preview_lazy_mount_check) was removed when the
-            # delegation layer was dropped; this watcher kept calling the old
-            # name and silently no-op'd, severing scroll-driven lazy mount.
-            # Pass focus so the mounter can tell a user scroll (pane focused,
-            # e.g. Reading View) from a programmatic one (navigation /
-            # container swap, while the results tree holds focus).
-            lazy = getattr(self.app, "_lazy", None)
-            if lazy is not None:
-                lazy.schedule_check(user_initiated=self.has_focus)
-        except Exception:
-            pass
+                user = self.has_focus if user_initiated is None else user_initiated
+                lazy.schedule_check(user_initiated=user)
 
     def watch_has_focus(self, has_focus: bool) -> None:
         """Skip Textual's default behaviour of reapplying CSS to every

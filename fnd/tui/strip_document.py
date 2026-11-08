@@ -31,8 +31,9 @@ from fnd.tui.preview_scrollbar import MatchAwareScrollBar
 __all__ = ["StripDocumentView"]
 
 
-class StripDocumentView(ScrollView, can_focus=True):
-    """A scrollable document of pre-rendered strips.
+class StripDocumentView(ScrollView, can_focus=False):
+    """A scrollable document of pre-rendered strips. It scrolls inside a focusable
+    pane that takes its keys, so a click focuses that pane, never this.
 
     Subclasses own their strips and their addressing, and supply:
 
