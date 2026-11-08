@@ -35,4 +35,11 @@ updates:
       # back to 8.4.2: PYSEC-2026-1845. Drop this once it allows syrupy 5.
       - dependency-name: "pytest-textual-snapshot"
         versions: ["1.1.0"]
+      # PyMuPDF 2.x folds pymupdf4llm in (4llm 2.x is an empty shim) and makes
+      # pymupdf-layout (Polyform Noncommercial) a base requirement: a licence
+      # decision, so the major moves by hand, both packages together.
+      - dependency-name: "pymupdf"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pymupdf4llm"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
