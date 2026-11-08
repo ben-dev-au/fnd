@@ -40,6 +40,7 @@ from fnd.render import (
     HIGHLIGHT_STYLE,
     match_word_spans_multi,
     phrase_gap_spans,
+    union_spans,
 )
 from fnd.seams import Seam, read_seams
 from fnd.tui.mermaid_render import MermaidRenderer, in_rgb
@@ -256,15 +257,44 @@ def apply_chunk_highlights(md: FNDMarkdown, blocks: list[MarkdownBlock]) -> None
     spec = md.match_spec
     if spec.is_empty or not targets:
         return
-    for block, spans in zip(targets, _build_match_spans_multi(md.block_plains, spec), strict=True):
+    for block, spans in zip(
+        targets, _chunk_spans(md.block_plains, spec, md.match_windows), strict=True
+    ):
         _set_block_spans(block, spans)
         md.painted_match = md.painted_match or bool(spans)
 
 
-def paints_match(plains: Sequence[str], spec: MatchSpec) -> bool:
+def paints_match(
+    plains: Sequence[str], spec: MatchSpec, windows: tuple[tuple[str, int], ...] = ()
+) -> bool:
     """Whether ``spec`` would highlight anything in a chunk whose content blocks
     render as ``plains``: the same decision :func:`apply_chunk_highlights` makes."""
-    return not spec.is_empty and any(_build_match_spans_multi(plains, spec))
+    return not spec.is_empty and any(_chunk_spans(plains, spec, windows))
+
+
+def window_spans(plain: str, windows: tuple[tuple[str, int], ...], spec: MatchSpec) -> list[Span]:
+    """``plain``'s highlights as the index windows over it paint them, each window
+    a ``(text, offset of its start from plain's)``: see :mod:`fnd.chunk_overlap`."""
+    seen: list[list[tuple[int, int, str]]] = []
+    for text, offset in windows:
+        spans = (
+            (sp.start + offset, sp.end + offset, str(sp.style))
+            for sp in _build_match_spans(text, spec)
+        )
+        seen.append(
+            [(max(a, 0), min(b, len(plain)), st) for a, b, st in spans if a < len(plain) and b > 0]
+        )
+    return [Span(a, b, style) for a, b, style in union_spans(seen)]
+
+
+def _chunk_spans(
+    plains: Sequence[str], spec: MatchSpec, windows: tuple[tuple[str, int], ...]
+) -> list[list[Span]]:
+    """Per-block spans; a lone block shown from ``windows[0]`` is judged by the
+    windows, anything else (a mermaid diagram, say) on its own."""
+    if len(plains) == 1 and windows and windows[0][0].startswith(plains[0]):
+        return [window_spans(plains[0], windows, spec)]
+    return _build_match_spans_multi(plains, spec)
 
 
 def _apply_inline_code_highlights(block: MarkdownBlock) -> None:
@@ -1022,6 +1052,7 @@ class FNDMarkdown(Markdown):
         markdown: str | None = None,
         *,
         match_spec: MatchSpec | None = None,
+        match_windows: tuple[tuple[str, int], ...] = (),
         render_mermaid: bool = False,
         name: str | None = None,
         id: str | None = None,
@@ -1032,6 +1063,7 @@ class FNDMarkdown(Markdown):
         # Links open only through ``on_markdown_link_clicked``'s scheme check.
         super().__init__(markdown=markdown, name=name, id=id, classes=classes, open_links=False)
         self.match_spec: MatchSpec = match_spec or MatchSpec()
+        self.match_windows = match_windows
         # What a capture of this chunk needs to stand in for it under another
         # query: the source it was built from, its blocks' rendered text, and
         # whether any of that text was highlighted.

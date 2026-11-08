@@ -159,13 +159,13 @@ class FlatBufferView:
             return build_md_file_view(chunks, spec=spec, wrap_width=wrap_width)
         triples: list[tuple[int, str, list[tuple[int, int] | tuple[int, int, str]]]] = []
         for c in chunks:
-            body_text = "\n".join(b.text for b in c.blocks)
+            body_text = c.body_text
             spans = _build_match_spans(body_text, spec) if not spec.is_empty else []
             styled_spans: list[tuple[int, int] | tuple[int, int, str]] = [
                 (s.start, s.end, str(s.style)) for s in spans
             ]
             triples.append((c.chunk_seq, body_text, styled_spans))
-        return build_file_view(triples)
+        return build_file_view(triples, repeats=[c.repeat for c in chunks])
 
     def activate(self, buf: LineBufferPreview) -> None:
         """Show ``buf`` and hide every other preview widget (structural

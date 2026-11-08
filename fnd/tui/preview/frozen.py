@@ -197,7 +197,11 @@ def style_key(theme: str, *, render_mermaid: bool) -> tuple[str, bool]:
 
 
 def stands_in_for(
-    capture: FrozenChunk, source: str, spec: MatchSpec, key: tuple[str, bool]
+    capture: FrozenChunk,
+    source: str,
+    spec: MatchSpec,
+    key: tuple[str, bool],
+    windows: tuple[tuple[str, int], ...] = (),
 ) -> bool:
     """Whether ``capture`` paints what a fresh build of ``source`` under ``spec`` would.
 
@@ -208,7 +212,9 @@ def stands_in_for(
     if capture.painted_match or capture.source != source or capture.style_key != key:
         return False
     visible = read_seams(source)[2]
-    return not paints_match((visible,), spec) and not paints_match(capture.block_plains, spec)
+    return not paints_match((visible,), spec) and not paints_match(
+        capture.block_plains, spec, windows
+    )
 
 
 class FrozenChunkView(Widget):

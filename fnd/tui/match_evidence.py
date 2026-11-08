@@ -79,4 +79,13 @@ def has_paintable_match(body: PreviewBody, spec: MatchSpec) -> bool:
     """
     if spec.is_empty:
         return True
-    return text_has_any_match(rendered_text(body), spec)
+    if text_has_any_match(rendered_text(body), spec):
+        return True
+    windows: tuple[tuple[str, int], ...] = getattr(body, "windows", ())
+    if not any(text_has_any_match(text, spec) for text, _ in windows):
+        return False
+    from fnd.tui.widgets.markdown import paints_match
+
+    text = body.body_text
+    shown = text[: len(text) - getattr(body, "repeat", 0)].rstrip("\n")
+    return paints_match((shown,), spec, windows)

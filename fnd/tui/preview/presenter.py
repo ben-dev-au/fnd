@@ -456,6 +456,43 @@ class PreviewPresenter:
             return pending[2]
         return "first_match"
 
+    def _landing_target(self, parent_id: str, focus_chunk_seq: int) -> int:
+        """The chunk a first-match landing on ``focus_chunk_seq`` aims at: the next
+        one when every match it paints sits in the stretch the next one shows."""
+        chunks = self.chunk_cache.get(parent_id)
+        if not chunks or self._landing_intent(parent_id, focus_chunk_seq) != "first_match":
+            return focus_chunk_seq
+        from itertools import pairwise
+
+        from fnd.render import text_has_any_match
+        from fnd.tui.match_evidence import has_paintable_match
+
+        spec = self._app._evidence_spec_for_current_row()
+        for chunk, after in pairwise(chunks):
+            if chunk.chunk_seq != focus_chunk_seq:
+                continue
+            if (
+                chunk.repeat
+                and not has_paintable_match(chunk, spec)
+                and text_has_any_match(chunk.body_text[-chunk.repeat :], spec)
+            ):
+                return after.chunk_seq
+            break
+        return focus_chunk_seq
+
+    def _retarget(self, parent_id: str, was: int, now: int) -> None:
+        """Point the armed anchor and the in-flight latch for ``was`` at ``now``."""
+        scroll = self._app._preview_scroll
+        anchor = scroll.anchor
+        if (
+            scroll.is_armed
+            and anchor is not None
+            and (anchor.parent_id, anchor.focus_chunk_seq) == (parent_id, was)
+        ):
+            scroll.arm(dataclasses.replace(anchor, focus_chunk_seq=now))
+        if self.inflight_target == (parent_id, was):
+            self.inflight_target = (parent_id, now)
+
     def _landing_heading(self, parent_id: str, focus_chunk_seq: int) -> int:
         """The heading an outline jump to this target aims at, else -1."""
         if self._landing_intent(parent_id, focus_chunk_seq) == "chunk_top":
@@ -564,6 +601,7 @@ class PreviewPresenter:
             return
         self.load_target = None
         parent_id, focus_chunk_seq = target
+        focus_chunk_seq = self._landing_target(parent_id, focus_chunk_seq)
         # Coalesce redundant identical loads. A query both parks the
         # cursor (which fires NodeHighlighted) AND dispatches explicitly
         # as a fallback for when the cursor index is unchanged, so the
@@ -650,6 +688,7 @@ class PreviewPresenter:
 
         from fnd.tui import _perf
 
+        focus_chunk_seq = self._landing_target(parent_id, focus_chunk_seq)
         _perf.mark("click_to_display_start", parent_id=parent_id, focus_seq=focus_chunk_seq)
 
         # Any pending debounce timer is now moot: we're committing to
@@ -2444,7 +2483,10 @@ class PreviewPresenter:
             self.parent_id = parent_id
             self._app._refresh_status()
             return
-        self.dispatch_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
+        landing = self._landing_target(parent_id, focus_chunk_seq)
+        if landing != focus_chunk_seq:
+            self._retarget(parent_id, focus_chunk_seq, landing)
+        self.dispatch_mount(parent_id, landing, chunks, prebuilt=prebuilt)
 
     def user_mount_in_flight(self) -> bool:
         task = self.mount_task
@@ -4184,7 +4226,7 @@ class PreviewPresenter:
         source = chunk.body_md or _legacy_blocks_to_md(chunk.blocks)
         return (
             capture
-            if stands_in_for(capture, source, self._app._effective_match_spec, key)
+            if stands_in_for(capture, source, self._app._effective_match_spec, key, chunk.windows)
             else None
         )
 
@@ -4371,6 +4413,7 @@ class PreviewPresenter:
             md_widget = FNDMarkdown(
                 source,
                 match_spec=self._app._effective_match_spec,
+                match_windows=c.windows,
                 # Default-on: honour the model default when no config is injected.
                 render_mermaid=(
                     self._app._config.defaults.render_mermaid if self._app._config else True

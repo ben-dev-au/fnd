@@ -140,6 +140,7 @@ class WarmHost:
         widget = FNDMarkdown(
             chunk.body_md or _legacy_blocks_to_md(chunk.blocks),
             match_spec=match_spec if match_spec is not None else self._app._effective_match_spec,
+            match_windows=chunk.windows,
             render_mermaid=(
                 self._app._config.defaults.render_mermaid if self._app._config else True
             ),

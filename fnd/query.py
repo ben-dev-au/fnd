@@ -262,6 +262,13 @@ class FileChunk:
     page_label: str = ""
     body_md: str = ""
     score: float | None = None
+    line: int = 0
+    # Characters at the end of ``body_text`` the next chunk repeats (an extractor's
+    # window overlap); see :mod:`fnd.chunk_overlap`.
+    repeat: int = 0
+    # The index windows a trimmed fence is highlighted against: (text, offset of
+    # its start from the shown text's start).
+    windows: tuple[tuple[str, int], ...] = ()
 
     @property
     def body_text(self) -> str:
@@ -1029,11 +1036,14 @@ class Searcher:
             blocks=blocks,
             page_label=_first_str(doc, F_PAGE_LABEL),
             body_md=body_md,
+            line=_first_int(doc, F_LINE),
         )
 
     def get_file_chunks(self, parent_id: str, *, max_workers: int | None = None) -> list[FileChunk]:
         """Return every indexed chunk of the file identified by ``parent_id``,
-        ordered by ``chunk_seq``. Used by the TUI for the full-document preview.
+        ordered by ``chunk_seq`` with each window overlap marked
+        (:func:`fnd.chunk_overlap.mark_repeats`). Used by the TUI for the
+        full-document preview.
 
         ``max_workers`` controls decode parallelism:
 
@@ -1073,7 +1083,9 @@ class Searcher:
             chunks = [self._decode_chunk(searcher, a) for a in addresses]
         # Normalised storage keeps one document per (parent_id, chunk_seq), so
         # a shared file is not duplicated here; order by chunk_seq for the preview.
-        return sorted(chunks, key=lambda c: c.chunk_seq)
+        from fnd.chunk_overlap import mark_repeats
+
+        return mark_repeats(sorted(chunks, key=lambda c: c.chunk_seq))
 
     def _content_node(self, query: str) -> Node | None:
         """``query``'s text without its filters and stopwords, parsed; None when empty."""

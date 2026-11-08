@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
@@ -64,6 +64,31 @@ DIM_MISMATCH_STYLE = "#c0caf5 on #8c5c45"
 # auto-scroll target treats a span in this set as a non-qualifying stray, so a
 # {N}/"a b"~N query lands on the real co-occurrence, not an earlier lone term.
 DIM_STYLES: frozenset[str] = frozenset(DIM_MATCH_STYLES) | {DIM_MISMATCH_STYLE}
+
+
+def union_spans(
+    windows: Iterable[Iterable[tuple[int, int, str]]],
+) -> list[tuple[int, int, str]]:
+    """Several windows' spans over one text, each place painted once: a full match
+    outranks a dimmed stray there, otherwise the earlier window's span stands."""
+    kept: list[tuple[int, int, str] | None] = []
+    for spans in windows:
+        prior = len(kept)
+        for start, end, style in spans:
+            hits = [
+                i
+                for i in range(prior)
+                if (k := kept[i]) is not None and k[0] < end and start < k[1]
+            ]
+            if hits and (
+                style in DIM_STYLES
+                or any((k := kept[i]) is not None and k[2] not in DIM_STYLES for i in hits)
+            ):
+                continue
+            for i in hits:
+                kept[i] = None
+            kept.append((start, end, style))
+    return [k for k in kept if k is not None]
 
 
 def match_style(color: int, *, dim: bool = False) -> str:
