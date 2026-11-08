@@ -44,36 +44,46 @@ async def _flat_buffer(pilot: Any, app: FNDApp) -> LineBufferPreview:
     return buf
 
 
+def _lands(buf: LineBufferPreview, start: float, moves: str) -> bool:
+    page = buf.scrollable_content_region.height
+    target = buf.scroll_target_y
+    return {
+        "down": target > start,
+        "up": target < start,
+        "page_down": target == min(start + page, buf.max_scroll_y),
+        "page_up": target == max(start - page, 0),
+        "end": target == buf.max_scroll_y,
+        "home": target == 0,
+    }[moves]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("key", "moves"),
     [
         ("j", "down"),
         ("down", "down"),
-        ("pagedown", "down"),
-        ("end", "down"),
+        ("pagedown", "page_down"),
+        ("end", "end"),
         ("k", "up"),
         ("up", "up"),
-        ("pageup", "up"),
-        ("home", "up"),
+        ("pageup", "page_up"),
+        ("home", "home"),
     ],
 )
 async def test_a_scroll_key_moves_the_flat_buffer(flat_index: Path, key: str, moves: str) -> None:
-    """Each scroll key moves the flat buffer the way it moves a structural preview."""
+    """Each scroll key moves the flat buffer as it moves a structural preview: a line,
+    a page of the buffer's own height, or to either end."""
     app = FNDApp(index_dir=flat_index, initial_query="zebra")
     async with app.run_test(size=(120, 30)) as pilot:
         buf = await _flat_buffer(pilot, app)
         start = buf.scroll_y
-        assert 0 < start < buf.max_scroll_y, "the match should land mid-file"
+        page = buf.scrollable_content_region.height
+        assert page < start < buf.max_scroll_y - page, "the match should land pages from either end"
         await safe_press(pilot, key)
-        if moves == "down":
-            await wait_until(
-                pilot, lambda: buf.scroll_target_y > start, message=f"{key} did not scroll down"
-            )
-        else:
-            await wait_until(
-                pilot, lambda: buf.scroll_target_y < start, message=f"{key} did not scroll up"
-            )
+        await wait_until(
+            pilot, lambda: _lands(buf, start, moves), message=f"{key} did not move {moves}"
+        )
 
 
 @pytest.mark.asyncio
