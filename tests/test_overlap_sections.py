@@ -4,6 +4,7 @@ higher-ranked of the two that hold it."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,13 +13,15 @@ from fnd.layered import search_layered
 from fnd.query import FileGroup, Searcher
 
 
-def _groups(tmp_path: Path, index_dir: Path, files: dict[str, str], query: str) -> list[FileGroup]:
+def _groups(
+    tmp_path: Path, index_dir: Path, files: dict[str, str], query: str, **kwargs: Any
+) -> list[FileGroup]:
     docs = tmp_path / "docs"
     docs.mkdir()
     for name, text in files.items():
         (docs / name).write_text(text, encoding="utf-8")
     build_index(roots=[docs], index_dir=index_dir, collection="default")
-    out = search_layered(Searcher(index_dir=index_dir), query=query, limit=10)
+    out = search_layered(Searcher(index_dir=index_dir), query=query, limit=10, **kwargs)
     assert isinstance(out, list)
     return out
 
@@ -99,3 +102,38 @@ def test_a_respelt_query_keeps_the_sections_its_spelling_would(
     files = {"p.py": "\n".join(rows), "o.txt": "polymorphism invoice\n" * 2, "o2.txt": "nothing"}
     groups = _groups(tmp_path, tmp_index_dir, files, "polymorphsim invoice")
     assert _sections(groups, "p.py") == [1, 2]
+
+
+def test_a_phrase_the_cut_splits_keeps_the_window_that_holds_it(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Rows 147 to 148 hold a phrase only window 0 has whole, so it stays beside window 1."""
+    pad = " ".join(f"pad{j}" for j in range(8))
+    rows = [f"x_{i} = {i}  # {pad}" for i in range(140)] + [f"x_{i} = {i}" for i in range(140, 400)]
+    rows[147] += "  # alpha"
+    rows[148] = "beta = 148"
+    rows[150] += "  # alpha beta"
+    groups = _groups(tmp_path, tmp_index_dir, {"p.py": "\n".join(rows)}, '"alpha beta"')
+    (group,) = groups
+    ranks = {h.chunk_seq: h.rank_key for h in group.hits}
+    assert ranks[0] < ranks[1], "window 0 must rank lower, or the fold keeps it anyway"
+    assert _sections(groups, "p.py") == [0, 1]
+
+
+def test_a_fold_frees_a_capped_slot(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """Two slots: the overlap pair takes one, row 300's distinct match the other."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "p.py").write_text(_rows({150: "zebra", 300: "zebra"}, long_from=290), encoding="utf-8")
+    build_index(roots=[docs], index_dir=tmp_index_dir, collection="default")
+    out = search_layered(
+        Searcher(index_dir=tmp_index_dir),
+        query="zebra",
+        limit=10,
+        sections_per_file=2,
+        with_trace=True,
+    )
+    assert isinstance(out, tuple)
+    groups, trace = out
+    assert _sections(groups, "p.py") == [1, 2]
+    assert not trace.sections_truncated

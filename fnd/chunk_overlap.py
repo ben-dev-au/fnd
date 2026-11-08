@@ -82,7 +82,11 @@ def _folded(group: FileGroup, strict: MatchSpec, fuzzy: MatchSpec) -> FileGroup:
         spec = fuzzy if hit.pass_index == FUZZY_PASS_INDEX else strict
         cut = len(own.text) - n
         repeats_a_match = n and text_has_any_match(own.text[cut:], spec)
-        if repeats_a_match and not _holds_a_match(own.text[:cut], spec):
+        if (
+            repeats_a_match
+            and not _holds_a_match(own.text[:cut], spec)
+            and not _starts_before(own.text, cut, spec)
+        ):
             drop.add(after.chunk_seq if hit.rank_key > after.rank_key else seq)
     if not drop:
         return group
@@ -108,6 +112,17 @@ def _holds_a_match(text: str, spec: MatchSpec) -> bool:
             return True
         start = end + 1
     return text_has_any_match(text, spec)
+
+
+def _starts_before(text: str, cut: int, spec: MatchSpec) -> bool:
+    """Whether a match in ``text`` starts before ``cut``: with none wholly before it,
+    a phrase the cut splits, which only this window holds whole."""
+    from fnd.matching import phrase_char_spans
+    from fnd.render import match_word_spans
+
+    starts = [s for s, _ in phrase_char_spans(text, spec)]
+    starts += [s for s, _, _ in match_word_spans(text, spec)]
+    return any(start < cut for start in starts)
 
 
 def _may_repeat(prev: Hit, curr: Hit) -> bool:
