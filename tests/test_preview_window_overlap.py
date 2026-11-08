@@ -144,7 +144,8 @@ def _preview_rows(app: FNDApp) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_each_code_section_lands_on_its_one_shown_match(code_index: Path) -> None:
-    """Both windows hold row 150; each section lands with it on screen, shown once."""
+    """Both windows hold row 150; each section lands with it on screen, shown once,
+    though both land on chunk 1 and a warm settle leaves the latch on it."""
     app = FNDApp(index_dir=code_index, initial_query="zebra")
     async with app.run_test(size=(120, 30)) as pilot:
         tree = app.query_one("#results_pane", Tree)
@@ -171,6 +172,9 @@ async def test_each_code_section_lands_on_its_one_shown_match(code_index: Path) 
                 lambda: not any("row 150 zebra" in row for row in _preview_rows(app)),
                 message="the preview never left the match",
             )
+            anchor = app._preview_scroll.anchor
+            assert anchor is not None
+            app._preview.inflight_target = (anchor.parent_id, anchor.focus_chunk_seq)
             tree.move_cursor(section)
             await wait_until(
                 pilot,

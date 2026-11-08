@@ -249,6 +249,8 @@ class PreviewPresenter:
         # flight, so redundant identical dispatches landing in the same
         # tick coalesce. Cleared when that render finishes settling.
         self.inflight_target: tuple[str, int] | None = None
+        # The row that render was asked for: two rows can land on one chunk.
+        self.inflight_request: tuple[str, int] | None = None
         # Monotonic generation for the off-thread scrollbar-marker scan: each
         # refresh bumps it so a worker that finishes after a newer file/query
         # superseded it drops its now-stale result instead of overwriting.
@@ -594,6 +596,7 @@ class PreviewPresenter:
         self.load_target = None
         parent_id, focus_chunk_seq = target
         focus_chunk_seq = self._landing_target(parent_id, focus_chunk_seq)
+        request, self.inflight_request = self.inflight_request, target
         # Coalesce redundant identical loads. A query both parks the
         # cursor (which fires NodeHighlighted) AND dispatches explicitly
         # as a fallback for when the cursor index is unchanged, so the
@@ -602,7 +605,7 @@ class PreviewPresenter:
         # warm-resume and cancel the 1st's still-building mount, orphaning
         # the focus chunk's build_done and losing the match scroll. If the
         # exact same render is already in flight, skip: it will land it.
-        if self.inflight_target == (parent_id, focus_chunk_seq):
+        if self.inflight_target == (parent_id, focus_chunk_seq) and request == target:
             return
         self.inflight_target = (parent_id, focus_chunk_seq)
         # Re-anchor prefetch around where the cursor actually settled
