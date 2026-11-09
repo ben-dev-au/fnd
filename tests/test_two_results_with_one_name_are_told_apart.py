@@ -78,6 +78,9 @@ def test_it_does_not_grow_quadratically_with_the_result_count() -> None:
         return time.perf_counter() - t0
 
     small, large = paths(50), paths(200)
-    ratios = [best_of(large) / best_of(small) for _ in range(15)]
+    rounds = [(best_of(large), best_of(small)) for _ in range(15)]
+    ratios = [big / little for big, little in rounds]
 
-    assert statistics.median(ratios) < 8, f"200/50 row time ratios {sorted(ratios)}"
+    assert statistics.median(ratios) < 8, (
+        f"200/50 row ratios {sorted(ratios)}; (200, 50) row seconds {rounds}"
+    )

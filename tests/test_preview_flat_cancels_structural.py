@@ -30,7 +30,7 @@ from fnd.tui import FNDApp
 from fnd.tui.preview_dispatcher import choose_preview_mode
 from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._mount_gate import MountGate
-from tests._pilot_wait import safe_pause, wait_until
+from tests._pilot_wait import first_preview_landed, safe_pause, wait_until
 
 
 @pytest.fixture
@@ -66,15 +66,8 @@ def _pick(app: FNDApp, *, flat: bool) -> tuple[FileGroup, list[FileChunk]]:
 async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index: Path) -> None:
     app = FNDApp(index_dir=mixed_index, initial_query="apples")
     async with app.run_test() as pilot:
-        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
+        await first_preview_landed(pilot, app)
         preview = app._preview
-        # The app's own first preview must land first: the parked mount below
-        # takes its `mount_task` slot, so a load still running there is never cancelled.
-        await wait_until(
-            pilot,
-            lambda: preview.showing_parent() is not None and not preview.pipeline_busy(),
-            message="the first result's preview never landed",
-        )
         struct_g, struct_chunks = _pick(app, flat=False)
         flat_g, flat_chunks = _pick(app, flat=True)
 
@@ -151,11 +144,7 @@ async def _hold_a_cold_decode(
 ) -> tuple[FileGroup, threading.Event]:
     """Start decoding a file the preview is not showing, held until the event is set."""
     preview = app._preview
-    await wait_until(
-        pilot,
-        lambda: preview.showing_parent() is not None and not preview.pipeline_busy(),
-        message="the first result's preview never landed",
-    )
+    await first_preview_landed(pilot, app)
     searcher = app._search.searcher
     assert searcher is not None
     cold = next(
