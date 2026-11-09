@@ -169,16 +169,12 @@ def test_collection_list_counts_sources_not_roots(
 def test_the_source_help_matches_what_the_command_accepts() -> None:
     """It said "Repeat to add multiple" while the command refuses a second
     one, and the docstring three lines above said the opposite."""
-    import re
-
-    from rich.text import Text
     from typer.testing import CliRunner
 
     from fnd.cli import app
+    from tests._cli_text import plain_cli_text
 
-    # Typer forces colour under GITHUB_ACTIONS, and a style code can split a phrase.
-    out = Text.from_ansi(CliRunner().invoke(app, ["collection", "add", "--help"]).stdout).plain
-    flat = " ".join(re.sub(r"[│─╭╮╰╯]", " ", out).split())
+    flat = plain_cli_text(CliRunner().invoke(app, ["collection", "add", "--help"]).stdout)
     assert "Repeat to add multiple" not in flat
     assert "One per command" in flat, flat[:200]
 

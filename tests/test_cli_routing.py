@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from fnd.cli import _rewrite_default_command, app
+from tests._cli_text import plain_cli_text
 
 
 class TestRewriteDefaultCommand:
@@ -131,7 +132,7 @@ class TestSubcommandWordHint:
         result = CliRunner().invoke(app, _rewrite_default_command(argv))
 
         assert result.exit_code == 2
-        assert f"tui {' '.join(argv)}" in result.output
+        assert f"tui {' '.join(argv)}" in plain_cli_text(result.output)
 
     @pytest.mark.parametrize(
         "argv", [["search", "--limit", "5"], ["collection", "add"], ["tui", "--bogus"]]
@@ -140,4 +141,4 @@ class TestSubcommandWordHint:
         result = CliRunner().invoke(app, _rewrite_default_command(argv))
 
         assert result.exit_code == 2
-        assert f"tui {' '.join(argv)}" not in result.output
+        assert f"tui {' '.join(argv)}" not in plain_cli_text(result.output)
