@@ -22,6 +22,7 @@ import typer
 
 from fnd import os_labels
 from fnd.cli_output import echo, echo_data
+from fnd.cli_tui_hint import TuiHintCommand, TuiHintGroup
 from fnd.config import default_config_path, default_index_dir, is_all_collections
 from fnd.display_text import terminal_line
 from fnd.kinds import KINDS_IN_CATEGORY
@@ -40,16 +41,21 @@ Usage:
   fnd <command> <args>         Run a subcommand (see below).
 
 Note: if <query> matches a subcommand name (e.g. `version`), the
-subcommand wins. Use `fnd tui <query>` or type the query inside the TUI.
+subcommand wins, quoted or not: the shell removes the quotes. Use
+`fnd tui <query>` or type the query inside the TUI.
 """
 
 
 app = typer.Typer(name="fnd", help=_ROOT_HELP)
 
-config_app = typer.Typer(name="config", help="Manage fnd's TOML config file.")
-collection_app = typer.Typer(name="collection", help="Manage indexed collections.")
-extras_app = typer.Typer(name="extras", help="Manage opt-in feature extras.")
-cache_app = typer.Typer(name="cache", help="Manage the on-disk PDF Texture Cache.")
+config_app = typer.Typer(cls=TuiHintGroup, name="config", help="Manage fnd's TOML config file.")
+collection_app = typer.Typer(
+    cls=TuiHintGroup, name="collection", help="Manage indexed collections."
+)
+extras_app = typer.Typer(cls=TuiHintGroup, name="extras", help="Manage opt-in feature extras.")
+cache_app = typer.Typer(
+    cls=TuiHintGroup, name="cache", help="Manage the on-disk PDF Texture Cache."
+)
 app.add_typer(config_app, name="config")
 app.add_typer(collection_app, name="collection")
 app.add_typer(extras_app, name="extras")
@@ -139,7 +145,7 @@ def _migrate_config() -> None:
 # ── Top-level commands ────────────────────────────────────────────────────
 
 
-@app.command()
+@app.command(cls=TuiHintCommand)
 def version() -> None:
     """Print fnd version."""
     from fnd import __version__
@@ -147,7 +153,7 @@ def version() -> None:
     echo(__version__)
 
 
-@app.command()
+@app.command(cls=TuiHintCommand)
 def index(
     root: Path,
     collection: str = typer.Option("default", help="Collection to index into."),
@@ -345,7 +351,7 @@ def tui(
         fnd_app.run(mouse=True)
 
 
-@app.command()
+@app.command(cls=TuiHintCommand)
 def search(
     query: str,
     limit: int = 10,

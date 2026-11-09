@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from fnd.cli import _rewrite_default_command, app
+from tests._cli_text import plain_cli_text
 
 
 class TestRewriteDefaultCommand:
@@ -118,3 +119,26 @@ class TestEndToEndRouting:
 
         assert result.exit_code == 0, result.output
         assert mock_app.call_args.kwargs["initial_query"] == "pizza"
+
+
+class TestSubcommandWordHint:
+    """A subcommand name typed as a query fails to parse; the error names the TUI form."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [["search", "-c", "notes"], ["version", "-c", "notes"], ["config", "-c", "notes"]],
+    )
+    def test_usage_error_offers_the_tui_command(self, argv: list[str]) -> None:
+        result = CliRunner().invoke(app, _rewrite_default_command(argv))
+
+        assert result.exit_code == 2
+        assert f"tui {' '.join(argv)}" in plain_cli_text(result.output)
+
+    @pytest.mark.parametrize(
+        "argv", [["search", "--limit", "5"], ["collection", "add"], ["tui", "--bogus"]]
+    )
+    def test_no_hint_when_the_tui_would_refuse_it_too(self, argv: list[str]) -> None:
+        result = CliRunner().invoke(app, _rewrite_default_command(argv))
+
+        assert result.exit_code == 2
+        assert f"tui {' '.join(argv)}" not in plain_cli_text(result.output)
