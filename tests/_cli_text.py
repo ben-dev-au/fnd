@@ -6,7 +6,8 @@ import re
 
 from rich.text import Text
 
-_BOX = re.compile(r"[│─╭╮╰╯]")
+#: The Unicode Box Drawing block: Rich draws rounded panels, legacy Windows square ones.
+_BOX = re.compile("[\u2500-\u257f]")
 
 
 def plain_cli_text(output: str) -> str:
