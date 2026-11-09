@@ -8,11 +8,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Tree
+from textual.widgets import Static, Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.outline_model import NO_OUTLINE
+from fnd.tui.outline_view import EDGE_SLACK
 from fnd.tui.preview.match_row import heading_rows
 from fnd.tui.preview.tuning import MATCH_CONTEXT_FRACTION
 from fnd.tui.widgets.outline_tree import OutlineTree
@@ -638,6 +639,34 @@ async def test_a_one_poll_misread_under_a_still_view_never_moves_the_cursor(
         assert skewed, "the misread never happened, so this proves nothing"
         assert seen == ["Findings"] * 3
         assert not app._outline._owed
+
+
+@pytest.mark.asyncio
+async def test_content_laid_out_below_after_the_landing_keeps_the_matchs_heading(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """The view stays where the landing left it as the document's end moves away."""
+    app = FNDApp(index_dir=_end_notebook(tmp_path, tmp_index_dir), initial_query=TERM)
+    async with app.run_test(size=(120, 45)) as pilot:
+        await _results_ready(pilot, app)
+        await _open(pilot, app, "end.ipynb")
+        await wait_until(pilot, lambda: _cursor_title(app) == "Findings", message="no baseline")
+        pane = app.query_one("#preview_pane")
+        y = int(pane.scroll_offset.y)
+        assert y == app._preview_scroll.landing_destination(), "setup: the view is at its landing"
+        tail = Static("")
+        tail.styles.height = 2 * EDGE_SLACK + 3
+        await pane.mount(tail)
+        await wait_until(
+            pilot, lambda: pane.max_scroll_y - y > 2 * EDGE_SLACK, message="setup: no growth"
+        )
+        anchor = app._preview_scroll.anchor
+        for offset in (y, y - 1):  # a Reading View round trip can restore a row short
+            pane.scroll_to(y=offset, animate=False, immediate=True)
+            await _ticks(pilot, app)
+            assert int(pane.scroll_offset.y) == offset, "setup: the view must stay put"
+            assert _cursor_title(app) == "Findings"
+        assert app._preview_scroll.anchor is anchor, "setup: a different navigation"
 
 
 @pytest.mark.asyncio

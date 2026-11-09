@@ -9,9 +9,11 @@ Its cursor follows the reader. A navigation (every ``arm`` makes a new anchor)
 moves it to the heading holding the target; after that, the reader is at the
 reading line, the row a quarter down the preview where navigation lands
 things. The one exception is a target the end of the document keeps off that
-line: while the view still rests against that end and the target is on screen,
-the reader is at the target. Sampling waits for the landing to settle and acts only when the
-reader's heading changes. While the pane has focus the cursor is the user's:
+line: while the target is on screen and the view still sits where its landing
+left it (when the landing recorded that offset) or rests against that end, the
+reader is at the target. A document can grow below a landing that has already
+committed, so the view need not stay at the end. Sampling waits for the landing
+to settle and acts only when the reader's heading changes. While the pane has focus the cursor is the user's:
 the reader is still tracked, and the cursor catches up on leaving.
 """
 
@@ -39,8 +41,8 @@ NOTHING_PREVIEWED = "Nothing in the preview"
 LOADING = "Loading outline…"
 UNAVAILABLE = "Outline unavailable"
 PANE_ID = "outline_pane"
-# How far short of the document's end a view may sit and still rest against it:
-# a Reading View round trip restores one row short.
+# How far from the document's end, or from its landing, a view may sit and still
+# rest there: a Reading View round trip restores one row short.
 EDGE_SLACK = 2
 
 #: The scroll view (offset, height, scroll range), chunk and headings passed.
@@ -233,9 +235,10 @@ class OutlineView:
 
     def _held_off_the_line(self, target: tuple[int, int | None]) -> bool:
         """The landing's target is on screen, off the reading line, and the view
-        still rests against the end of the document that stopped it there."""
+        still sits where that landing left it or against the end that stopped it."""
         scroller = self._scroller()
-        row = self._app._preview_scroll.view_row(*target)
+        scroll = self._app._preview_scroll
+        row = scroll.view_row(*target)
         if scroller is None or row is None:
             return False
         height = scroller.size.height
@@ -243,6 +246,9 @@ class OutlineView:
             return False
         gap = row - int(height * tuning.MATCH_CONTEXT_FRACTION)
         y = scroller.scroll_offset.y
+        destination = scroll.landing_destination()
+        if gap and destination is not None and abs(int(y) - destination) <= EDGE_SLACK:
+            return True
         if gap > 0:  # below the line: the bottom of the document holds it there
             room = scroller.max_scroll_y - y
             return room < gap and room <= EDGE_SLACK

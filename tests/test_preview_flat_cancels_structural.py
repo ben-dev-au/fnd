@@ -29,6 +29,7 @@ from fnd.query import FileChunk, FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.preview_dispatcher import choose_preview_mode
 from fnd.tui.widgets.preview_container import PreviewContainer
+from tests._mount_gate import MountGate
 from tests._pilot_wait import safe_pause, wait_until
 
 
@@ -65,8 +66,7 @@ def _pick(app: FNDApp, *, flat: bool) -> tuple[FileGroup, list[FileChunk]]:
 async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index: Path) -> None:
     app = FNDApp(index_dir=mixed_index, initial_query="apples")
     async with app.run_test() as pilot:
-        await safe_pause(pilot)
-        assert app._search.groups, "setup: query produced no results"
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
         preview = app._preview
         # The app's own first preview must land first: the parked mount below
         # takes its `mount_task` slot, so a load still running there is never cancelled.
@@ -80,12 +80,7 @@ async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index:
 
         # Park a structural mount in its early-await window so it is unambiguously
         # in flight when the flat navigation lands.
-        gate = asyncio.Event()
-
-        async def _blocking_cancel_task_on(_c: object) -> None:
-            await gate.wait()
-
-        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+        gate = MountGate(app)
 
         container = PreviewContainer(
             parent_doc_id=struct_g.parent_id,
@@ -102,7 +97,7 @@ async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index:
             )
         )
         preview.mount_task = task
-        await safe_pause(pilot)
+        await gate.wait_parked(pilot, container)
         assert not task.done(), "setup: the structural mount should be parked in flight"
 
         # Navigate to the flat result.
@@ -113,7 +108,7 @@ async def test_flat_navigation_cancels_an_inflight_structural_mount(mixed_index:
             "otherwise that mount activates its container and displays the wrong file"
         )
 
-        gate.set()
+        gate.release()
         with contextlib.suppress(asyncio.CancelledError):
             await task
         for _ in range(6):

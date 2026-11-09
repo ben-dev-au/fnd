@@ -25,7 +25,8 @@ import pytest
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_pause
+from tests._mount_gate import MountGate
+from tests._pilot_wait import safe_pause, wait_until
 
 
 @pytest.fixture
@@ -40,8 +41,7 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
 ) -> None:
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
-        assert app._search.groups, "setup: query produced no results"
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
@@ -50,12 +50,7 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         # is awaited (presenter ~line 1304) BEFORE the finalise task is spawned
         # (~1352). Block it on an event we never set so the mount task sits
         # exactly in the vulnerable window.
-        gate = asyncio.Event()
-
-        async def _blocking_cancel_task_on(_container: object) -> None:
-            await gate.wait()
-
-        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+        gate = MountGate(app)
 
         g = app._search.groups[0]
         seq = g.hits[0].chunk_seq if g.hits else 0
@@ -78,23 +73,21 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         )
         preview.mount_task = task
 
-        # Let the task reach and park on the blocked early await.
-        await safe_pause(pilot)
+        await gate.wait_parked(pilot, container)
         assert getattr(container, "_finalise_task", None) is None, (
             "setup: mount must be parked BEFORE the finalise task is spawned"
         )
 
         # Cancel the mount while parked pre-finalise: the strand condition.
         preview.cancel_mount_task()
-        await safe_pause(pilot)
-        await safe_pause(pilot)
+        await wait_until(pilot, task.done, message="the cancelled mount never finished")
 
         assert preview.inflight_target is None, (
             "inflight latch not released on cancel: a same-file re-load would "
             "dedup out and never re-mount"
         )
 
-        gate.set()  # release the blocked coroutine so the loop can drain
+        gate.release()  # release the blocked coroutine so the loop can drain
 
 
 @pytest.mark.asyncio
@@ -109,8 +102,7 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
 
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
-        assert app._search.groups, "setup: query produced no results"
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
@@ -157,18 +149,12 @@ async def test_early_cancel_does_not_clobber_successor_latch(
     target."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
-        assert app._search.groups, "setup: query produced no results"
+        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
 
-        gate = asyncio.Event()
-
-        async def _blocking_cancel_task_on(_container: object) -> None:
-            await gate.wait()
-
-        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+        gate = MountGate(app)
 
         g = app._search.groups[0]
         seq = g.hits[0].chunk_seq if g.hits else 0
@@ -186,7 +172,7 @@ async def test_early_cancel_does_not_clobber_successor_latch(
             )
         )
         preview.mount_task = task
-        await safe_pause(pilot)
+        await gate.wait_parked(pilot, container)
         assert getattr(container, "_finalise_task", None) is None, "setup: must be pre-finalise"
 
         # A successor (uncached) decode now owns the loading state: a DIFFERENT
@@ -196,11 +182,10 @@ async def test_early_cancel_does_not_clobber_successor_latch(
         preview.inflight_target = successor_target
 
         preview.cancel_mount_task()  # cancels M1, nulls mount_task
-        await safe_pause(pilot)
-        await safe_pause(pilot)
+        await wait_until(pilot, task.done, message="the cancelled mount never finished")
 
         assert preview.inflight_target == successor_target, (
             "BUG: a cancelled early mount cleared the SUCCESSOR's inflight latch"
         )
 
-        gate.set()
+        gate.release()
