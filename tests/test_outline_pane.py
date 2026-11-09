@@ -18,7 +18,7 @@ from fnd.tui.preview.match_row import heading_rows
 from fnd.tui.preview.tuning import MATCH_CONTEXT_FRACTION
 from fnd.tui.widgets.outline_tree import OutlineTree
 from fnd.tui.widgets.preview_container import PreviewContainer
-from tests._pilot_wait import safe_pause, safe_press, wait_until
+from tests._pilot_wait import safe_pause, safe_press, wait_stable, wait_until
 
 TERM = "quartzfin"
 
@@ -619,6 +619,15 @@ async def test_a_one_poll_misread_under_a_still_view_never_moves_the_cursor(
         await _open(pilot, app, "end.ipynb")
         await wait_until(
             pilot, lambda: _cursor_title(app) == "Findings", message="setup: never on Findings"
+        )
+        # A notebook's end can lay out after the landing (Windows); a misread on
+        # a tick that moves the view commits at once, as it should.
+        outline = app._outline
+        await wait_stable(pilot, outline._view, message="setup: the view never held still")
+        await wait_until(
+            pilot,
+            lambda: outline._sampled is not None and outline._sampled[0] == outline._view(),
+            message="setup: the still view was never sampled",
         )
         scroll = app._preview_scroll
         real = scroll.chunk_heading_rows

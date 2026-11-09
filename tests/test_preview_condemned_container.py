@@ -32,7 +32,7 @@ from fnd.tui import FNDApp
 from fnd.tui.preview_dispatcher import choose_preview_mode
 from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._mount_gate import MountGate
-from tests._pilot_wait import safe_pause, wait_until
+from tests._pilot_wait import first_preview_landed, safe_pause, wait_until
 
 
 @pytest.fixture
@@ -62,6 +62,7 @@ def _structural_group(app: FNDApp) -> tuple[FileGroup, list[FileChunk]]:
 async def _quiesce_pane(app: FNDApp, pilot: object) -> None:
     """Drop every container and let the Prune messages actually land, so a test
     starts from a pane with no in-flight removals of its own."""
+    await first_preview_landed(pilot, app)  # type: ignore[arg-type]
     app._preview.cancel_mount_task()
     app._preview.cancel_pending_load()
     for w in list(app.query(PreviewContainer)):

@@ -192,6 +192,18 @@ async def run_search(pilot: Pilot[None], app: Any, query: str, *, timeout: float
     )
 
 
+async def first_preview_landed(pilot: Pilot[None], app: Any) -> None:
+    """Wait for results and the app's own first preview. Its decode can finish after
+    results show and dispatch over a mount the test has put in ``mount_task``."""
+    await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
+    preview = app._preview
+    await wait_until(
+        pilot,
+        lambda: preview.showing_parent() is not None and not preview.pipeline_busy(),
+        message="the first result's preview never landed",
+    )
+
+
 async def screen_ready(
     pilot: Pilot[None], app: Any, screen_type: Any = None, *, timeout: float = 30.0
 ) -> Any:
