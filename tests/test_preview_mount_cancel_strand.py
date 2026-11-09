@@ -26,7 +26,7 @@ import pytest
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from tests._mount_gate import MountGate
-from tests._pilot_wait import safe_pause, wait_until
+from tests._pilot_wait import first_preview_landed, safe_pause, wait_until
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
 ) -> None:
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
+        await first_preview_landed(pilot, app)
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
@@ -102,7 +102,7 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
 
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
+        await first_preview_landed(pilot, app)
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
@@ -149,7 +149,7 @@ async def test_early_cancel_does_not_clobber_successor_latch(
     target."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
+        await first_preview_landed(pilot, app)
 
         preview = app._preview
         from fnd.tui.widgets.preview_container import PreviewContainer
