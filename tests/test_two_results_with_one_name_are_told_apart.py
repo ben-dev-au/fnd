@@ -58,9 +58,10 @@ def test_it_does_not_grow_quadratically_with_the_result_count() -> None:
     """`_refresh_status` reaches this from twenty call sites, so a focus change
     pays it. Measured quadratic: 4.9 ms at 50 rows, 73.5 ms at 200.
 
-    Asserted as a ratio rather than a wall-clock budget: the shape is what
-    matters, and a threshold in milliseconds would be a flake on a busy box.
+    The median of interleaved per-round ratios: a runner stall slows both sizes
+    of a round alike. Measured 4.0x (max 4.07 over 100 runs); quadratic is 17x.
     """
+    import statistics
     import time
 
     from fnd.tui.results_labels import disambiguated_names
@@ -68,16 +69,15 @@ def test_it_does_not_grow_quadratically_with_the_result_count() -> None:
     def paths(n: int) -> list[str]:
         return [f"/vault/area{i // 5}/sub{i % 5}/index.md" for i in range(n)]
 
-    def best_of(n: int) -> float:
-        ps = paths(n)
-        return min(_timed(disambiguated_names, ps) for _ in range(5))
+    def best_of(arg: list[str]) -> float:
+        return min(_timed(disambiguated_names, arg) for _ in range(3))
 
     def _timed(fn: Callable[[list[str]], object], arg: list[str]) -> float:
         t0 = time.perf_counter()
         fn(arg)
         return time.perf_counter() - t0
 
-    small, large = best_of(50), best_of(200)
+    small, large = paths(50), paths(200)
+    ratios = [best_of(large) / best_of(small) for _ in range(15)]
 
-    # Quadratic would be ~16x for a 4x input; the grouped form is near-linear.
-    assert large < small * 8, f"50 rows {small * 1000:.1f} ms, 200 rows {large * 1000:.1f} ms"
+    assert statistics.median(ratios) < 8, f"200/50 row time ratios {sorted(ratios)}"
