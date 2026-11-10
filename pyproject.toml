@@ -66,6 +66,9 @@ Funding = "https://buymeacoffee.com/ben.dev.au"
 # Scope discovery to the public suite; the gitignored dev/ repo carries
 # its own standalone harnesses that aren't collectable from this root.
 testpaths = ["tests"]
+# The per-test loop async tests already run on, and pytest-asyncio's future
+# default; a wider-scoped async fixture must then name its own loop_scope.
+asyncio_default_fixture_loop_scope = "function"
 # `slow` flags long-running tests (perf benches, fuzz harness). The
 # default fast suite excludes them with `-m "not slow"`; CI's nightly
 # job runs the full set.
@@ -80,6 +83,9 @@ markers = [
 # warning is purely a test-env artifact.
 filterwarnings = [
     "ignore:coroutine 'App.call_from_thread.<locals>.run_callback' was never awaited:RuntimeWarning",
+    # PyMuPDF's SWIG-built types lack `__module__`, which Python 3.13 flags on
+    # import; nothing in fnd can fix it, and 1.28.2 is the newest 1.x.
+    "ignore:builtin type (SwigPyPacked|SwigPyObject|swigvarlink) has no __module__ attribute:DeprecationWarning",
 ]
 
 [project.scripts]

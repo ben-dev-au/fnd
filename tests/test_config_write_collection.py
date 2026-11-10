@@ -87,7 +87,7 @@ def test_write_with_frontmatter_filter(tmp_path: Path) -> None:
     write_collection(config_path=cfg_path, name="notes", collection=cc)
     out = load(cfg_path)
     s = out.collection("notes").sources[0]
-    assert s.frontmatter_filter == "Project == 'Website'"
+    assert s.legacy_frontmatter == "Project == 'Website'"
 
 
 def test_delete_collection_removes_table(tmp_path: Path) -> None:
