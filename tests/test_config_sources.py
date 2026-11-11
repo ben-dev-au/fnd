@@ -36,10 +36,10 @@ def test_new_sources_shape_loads(tmp_path: Path) -> None:
     assert len(learning.sources) == 2
     assert isinstance(learning.sources[0], SourceConfig)
     assert learning.sources[0].includes == ["**/*.md"]
-    assert learning.sources[0].frontmatter_filter == "Project == 'Website'"
+    assert learning.sources[0].legacy_frontmatter == "Project == 'Website'"
     assert learning.sources[1].filters is not None
     assert learning.sources[1].filters.kinds == ["pdf"]
-    assert learning.sources[1].frontmatter_filter is None
+    assert learning.sources[1].legacy_frontmatter is None
 
 
 def test_legacy_flat_shape_normalised_to_one_source(tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_legacy_flat_shape_normalised_to_one_source(tmp_path: Path) -> None:
     assert s.filters is not None
     assert s.filters.kinds == ["pdf"]
     assert s.excludes == ["**/Archive/**"]
-    assert s.frontmatter_filter is None
+    assert s.legacy_frontmatter is None
 
 
 def test_mixing_sources_and_roots_raises(tmp_path: Path) -> None:

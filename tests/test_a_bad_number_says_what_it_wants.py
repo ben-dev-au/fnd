@@ -63,7 +63,6 @@ async def test_a_valid_number_is_still_accepted(tmp_index_dir: Path) -> None:
     assert not message.strip(), message
 
 
-@pytest.mark.asyncio
 def test_a_non_numeric_row_keeps_its_own_message() -> None:
     """The control on scope: only int/float rows get the reworded message.
 

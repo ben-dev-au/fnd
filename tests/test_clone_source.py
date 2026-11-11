@@ -86,7 +86,7 @@ def test_clone_preserves_every_field_including_app_refs(tmp_path: Path) -> None:
     assert cloned.includes == original.includes
     assert cloned.excludes == original.excludes
     assert cloned.follow_symlinks == original.follow_symlinks
-    assert cloned.frontmatter_filter == original.frontmatter_filter
+    assert cloned.legacy_frontmatter == original.legacy_frontmatter
     assert cloned.filters == original.filters
     assert cloned.app == original.app
     assert cloned.app_for == original.app_for
