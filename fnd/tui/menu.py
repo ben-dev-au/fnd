@@ -2197,8 +2197,8 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pdf_texture.install",
             label=_pdf_install_label(),
             description=(
-                "Open the disclosure + confirm screen. Installs pymupdf4llm[layout] "
-                "(Polyform NC, ~200 MB) + docling-slim[standard] (Apache-2.0, ~700 MB). "
+                "Open the disclosure + confirm screen. Installs pymupdf4llm + pymupdf-layout "
+                "(AGPL-3.0, ~200 MB) + docling-slim[standard] (Apache-2.0, ~700 MB). "
                 "ML model weights download on first use."
             ),
             kind=KIND_ACTION,

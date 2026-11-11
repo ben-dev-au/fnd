@@ -5,9 +5,9 @@ The dialog appears once per state-transition where the pdf-structure
 extra becomes installed. After dismissal (Continue or Cancel), a marker
 file is written to ``$XDG_DATA_HOME/fnd/`` so we don't nag again.
 
-Estimation: count PDFs in the configured collection's sources × an
-average ~30s/PDF heuristic. Rough on purpose: the user just needs an
-order-of-magnitude warning before walking away from a multi-hour run.
+Estimation: PDFs in the collection's sources × the per-PDF figure from
+:mod:`fnd.tui.cost_estimate`. Rough on purpose: an order-of-magnitude
+warning before a long run.
 """
 
 from __future__ import annotations

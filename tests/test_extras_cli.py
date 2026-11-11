@@ -13,6 +13,8 @@ mutate the venv. Verifies command shape, prompt content, and exit codes.
 
 from __future__ import annotations
 
+import re
+
 from typer.testing import CliRunner
 
 from fnd.cli import app
@@ -63,10 +65,11 @@ def test_install_dry_run_discloses_indexing_time_for_pdf_structure() -> None:
     requires hours of one-time CPU on real corpora."""
     code, out = _run("extras", "install", "pdf-structure", "--dry-run")
     assert code == 0
-    assert "Indexing-time impact" in out, (
-        "must include the indexing-time section explaining the ~30s/PDF cost"
+    assert "Indexing-time impact" in out, "must include the indexing-time section"
+    assert "per plain-text page" in out, "the cost is quoted per page, not per PDF"
+    assert not re.search(r"\d\s*s per PDF|\d+ books", out), (
+        "a per-PDF figure cannot hold across PDFs of different sizes"
     )
-    assert "30s" in out or "per PDF" in out
     assert "auto-resumes" in out or "background" in out, (
         "must reassure the user that the long indexing is interruptible"
     )

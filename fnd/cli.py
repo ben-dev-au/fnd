@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import shlex
 import sys
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1068,17 +1069,11 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     else:
         echo("ML model weights (a portion of the size above) download on first use.")
     echo("")
-    # For the pdf-structure extra, also disclose the indexing-time cost
-    # the user will incur on the first big reindex after install.
     if extra.name == "pdf-structure":
-        echo(
-            "Indexing-time impact:\n"
-            "  After installing, your next `fnd collection reindex` will spend\n"
-            "  ~30s per PDF extracting structure (one-time per file; cached\n"
-            "  thereafter). Rough scale: 100 books ~50 min, 500 books ~4 hours.\n"
-            "  Subsequent reindexes only re-process changed files.\n"
-            "  Indexing can run in the background and auto-resumes if interrupted.\n"
-        )
+        echo("Indexing-time impact:")
+        for line in textwrap.wrap(extra.first_run_cost, 68):
+            echo(f"  {line}")
+        echo("  Indexing can run in the background and auto-resumes if interrupted.\n")
         echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
 
 
