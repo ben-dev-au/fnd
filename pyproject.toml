@@ -45,7 +45,7 @@ dependencies = [
     # `widgets._option_list`; re-test the preview and sidebar on a minor bump.
     "textual~=8.2.8",
     "rich~=15.0.0",
-    "typer~=0.27.3",
+    "typer>=0.27.3,<0.29.0",
     "pydantic~=2.14.1",
     "platformdirs~=4.14.0",
     "tomlkit~=0.15.2",
