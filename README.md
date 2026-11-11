@@ -525,12 +525,18 @@ recovered image-rendered tables. It installs via
 - Then run **Texturise flat PDFs** on each collection's Settings page (or
   `fnd collection reindex <name> --rebuild`); new PDFs are texturised as they
   are indexed.
-- Packages: `pymupdf4llm` (pulls `pymupdf-layout`, Polyform Noncommercial 1.0)
-  and `docling-slim[standard]` (Apache-2.0). fnd redistributes neither, so
-  Polyform's non-commercial restriction binds your use directly: check it before
-  commercial use. ML weights (~400 MB) download on first use.
-- Cost: ~30 s per PDF on an M1 Max, so 200 books take about 2 hours, once.
-  Later updates re-process only changed files.
+- Packages: `pymupdf4llm` (pulls `pymupdf-layout`, AGPL-3.0 like fnd) and
+  `docling-slim[standard]` (Apache-2.0). ML weights (~400 MB) download on first
+  use.
+- Cost: a one-off extraction, measured on an M1 Max:
+  - about 0.1 s per page of plain text;
+  - about 0.25 s (+150%) per page with tables or diagrams;
+  - quicker for pages that are mostly images or carry little text.
+- Examples, with a fifth of pages holding tables:
+  - 100 PDFs of 2 to 5 pages (about 350 pages): about a minute
+    (280 × 0.1 s + 70 × 0.25 s, plus a moment to open each file);
+  - 100 books (about 20,000 pages): about 45 minutes.
+- Later updates re-process only changed files.
 
 ### PDF Texture Cache
 

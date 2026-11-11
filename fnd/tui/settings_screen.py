@@ -4151,16 +4151,10 @@ class StructuredPdfConfirmScreen(Screen[None]):
                     "until the next Update index. " + cache_line
                 ),
             )
-        from fnd.tui.cost_estimate import estimate_per_pdf_seconds, has_calibration_data
-
         total_mb = sum(p.disk_mb for p in self._extra.packages)
-        secs_per_pdf = estimate_per_pdf_seconds()
-        first_run_note = f"First Update index spends about {secs_per_pdf:.1f} s per PDF " + (
-            "on your machine." if has_calibration_data() else "(rough estimate)."
-        )
         return build_confirm_body(
             outcome=("PDFs gain structured preview rendering (headings, lists, tables)."),
-            cost=(f"~{total_mb} MB disk + ML weights on first use. " + first_run_note),
+            cost=f"~{total_mb} MB disk + ML weights on first use. {self._extra.first_run_cost}",
             safety="Auto-resumes if interrupted. Already-indexed PDFs keep working.",
         )
 

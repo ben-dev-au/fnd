@@ -8,6 +8,7 @@ verify the disclosure + Yes/Cancel pattern.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -176,8 +177,32 @@ async def test_install_disclosure_covers_costs(built_index: Path, cfg: Config) -
         assert "Safety" in body
         assert "MB" in body
         assert "ML" in body or "weights" in body
-        assert "per PDF" in body or "s per PDF" in body
+        assert "per plain-text page" in body
         assert "structured" in body
+
+
+@pytest.mark.usefixtures("_fake_not_installed")
+@pytest.mark.asyncio
+async def test_install_disclosure_quotes_no_unmeasured_time(
+    built_index: Path, cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flat-extractor history must not pass for a structured-run figure."""
+    from fnd.tui import cost_estimate as ce
+    from fnd.tui.menu import _open_pdf_install_confirm
+
+    monkeypatch.setattr(ce, "_state_path", lambda: tmp_path / "indexer_throughput.jsonl")
+    monkeypatch.setattr(ce, "_current_signature", lambda: "flat|cfg-test")
+    for _ in range(3):
+        ce.record_run(n_pdfs=10, cache_hits=0, cache_misses=10, elapsed_s=5.0)
+
+    app = FNDApp(index_dir=built_index, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _open_pdf_install_confirm(app)
+        await pilot.pause()
+        body = str(app.screen.query_one("#confirm_summary", Static).content)
+        assert "on your machine" not in body
+        assert not re.search(r"\d\s*s per PDF", body), body
 
 
 # 4: Keyboard equivalence

@@ -76,6 +76,9 @@ class Extra:
     available: Callable[[], bool] = lambda: True
     installed_note: str = "Restart fnd, then run Update index to populate the cache."
     removed_note: str = "Restart fnd to apply."
+    # The one-off indexing cost the install disclosures state, as reference
+    # per-page rates: before install there is no run to calibrate from.
+    first_run_cost: str = ""
 
 
 PDF_STRUCTURE = Extra(
@@ -85,7 +88,7 @@ PDF_STRUCTURE = Extra(
         Package(
             install_via="pip-extra",
             spec="pdf-structure",
-            display="pymupdf4llm + pymupdf-layout (Polyform Noncommercial)",
+            display="pymupdf4llm + pymupdf-layout (AGPL-3.0)",
             disk_mb=200,
             detect="module:pymupdf4llm",
             # ``uv sync`` (no extras) doesn't reliably clean up
@@ -106,6 +109,11 @@ PDF_STRUCTURE = Extra(
     # (``~/.local/share/uv/tools/docling-slim/...``) which is already
     # walked by ``actual_disk_mb`` via ``tool_root``. cache_dirs stays empty.
     cache_dirs=_no_dirs,
+    first_run_cost=(
+        "The first index after installing extracts each PDF's layout once: about "
+        "0.1 s per plain-text page and 0.25 s per page with tables or diagrams "
+        "(M1 Max). Later runs re-process only changed files."
+    ),
 )
 
 
