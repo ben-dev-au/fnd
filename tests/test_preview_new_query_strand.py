@@ -23,7 +23,7 @@ from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._mount_gate import MountGate
-from tests._pilot_wait import run_search, safe_pause, wait_until
+from tests._pilot_wait import first_preview_landed, run_search, safe_pause
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
 ) -> None:
     app = FNDApp(index_dir=built_index, initial_query="results")
     async with app.run_test() as pilot:
-        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
+        await first_preview_landed(pilot, app)
         preview = app._preview
 
         # Gate the cold structural mount in its early-await window so it sits
@@ -102,7 +102,7 @@ async def test_superseded_mount_cancels_detached_finaliser(built_index: Path) ->
     """
     app = FNDApp(index_dir=built_index, initial_query="results")
     async with app.run_test() as pilot:
-        await wait_until(pilot, lambda: bool(app._search.groups), message="setup: no results")
+        await first_preview_landed(pilot, app)
         preview = app._preview
 
         gate = MountGate(app)
