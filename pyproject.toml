@@ -54,7 +54,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-semantic = ["onnxruntime~=1.31.0", "tokenizers~=0.23.3"]
+semantic = ["onnxruntime~=1.32.0", "tokenizers~=0.23.3"]
 
 [project.urls]
 Homepage = "https://github.com/ben-dev-au/fnd"
@@ -130,7 +130,7 @@ dev = [
 pdf-structure = ["pymupdf4llm~=1.28.2"]
 # Semantic search: opt-in, installed by ``fnd extras install semantic``. The
 # versions measured on 16 Oct 2026; onnxruntime ships macOS wheels for arm64 14+.
-semantic = ["onnxruntime~=1.31.0", "tokenizers~=0.23.3"]
+semantic = ["onnxruntime~=1.32.0", "tokenizers~=0.23.3"]
 
 [tool.uv]
 # Groups installed by ``uv sync`` when no --group flag is passed.
