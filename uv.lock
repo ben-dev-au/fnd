@@ -220,7 +220,7 @@ semantic = [
 requires-dist = [
     { name = "lxml", specifier = "~=6.1.2" },
     { name = "markdown-it-py", specifier = "~=4.2.0" },
-    { name = "onnxruntime", marker = "extra == 'semantic'", specifier = ">=1.31,<1.33" },
+    { name = "onnxruntime", marker = "extra == 'semantic'", specifier = "~=1.32.0" },
     { name = "platformdirs", specifier = "~=4.14.0" },
     { name = "pydantic", specifier = "~=2.14.1" },
     { name = "pymupdf", specifier = "~=1.28.2" },
@@ -241,7 +241,7 @@ provides-extras = ["semantic"]
 dev = [
     { name = "hypothesis", specifier = ">=6.169.4" },
     { name = "lxml-stubs", specifier = ">=0.5" },
-    { name = "onnxruntime", specifier = ">=1.31,<1.33" },
+    { name = "onnxruntime", specifier = "~=1.32.0" },
     { name = "pre-commit", specifier = ">=4.7.0" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pyte", specifier = ">=0.8.2" },
@@ -255,7 +255,7 @@ dev = [
 ]
 pdf-structure = [{ name = "pymupdf4llm", specifier = "~=1.28.2" }]
 semantic = [
-    { name = "onnxruntime", specifier = ">=1.31,<1.33" },
+    { name = "onnxruntime", specifier = "~=1.32.0" },
     { name = "tokenizers", specifier = "~=0.23.3" },
 ]
 
